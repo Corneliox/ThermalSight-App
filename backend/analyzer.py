@@ -165,22 +165,36 @@ def save_quiver_png(data: dict, out_dir: Path, stem: str) -> str:
     h, w   = temp.shape
     sub    = 15
     ys, xs = np.mgrid[0:h:sub, 0:w:sub]
+
     u = sx[ys, xs].astype(float)
-    v = -sy[ys, xs].astype(float)
-    mask   = strong[ys, xs]
-    nrm    = np.sqrt(u**2 + v**2) + 1e-8
-    u_n, v_n = u / nrm, v / nrm
-    colors = plt.cm.hsv((np.arctan2(v_n, u_n) + np.pi) / (2 * np.pi))
+    v = -sy[ys, xs].astype(float)          # flip Y for image coords
+    mask  = strong[ys, xs]
+
+    # zero-out weak arrows instead of looping
+    u[~mask] = 0.0
+    v[~mask] = 0.0
+
+    # normalise only non-zero arrows
+    nrm       = np.sqrt(u**2 + v**2)
+    nz        = nrm > 0
+    u[nz]    /= nrm[nz]
+    v[nz]    /= nrm[nz]
+
+    # per-arrow colour from angle
+    angle_flat = np.arctan2(v, u)
+    rgba       = plt.cm.hsv((angle_flat + np.pi) / (2 * np.pi))  # (rows, cols, 4)
+    # flatten for quiver C argument
+    c_flat = rgba[mask].reshape(-1, 4)
 
     fig, ax = plt.subplots(figsize=(12, 8), facecolor="black")
     ax.imshow(temp, cmap="inferno", alpha=0.85)
-    for i in range(ys.shape[0]):
-        for j in range(ys.shape[1]):
-            if mask[i, j]:
-                ax.annotate("",
-                    xy    =(xs[i,j] + u_n[i,j]*6, ys[i,j] + v_n[i,j]*6),
-                    xytext=(xs[i,j], ys[i,j]),
-                    arrowprops=dict(arrowstyle="->", color=colors[i,j], lw=1.1))
+
+    # single vectorised quiver call — orders of magnitude faster than annotate loop
+    ax.quiver(xs[mask], ys[mask], u[mask], v[mask],
+              color=c_flat,
+              angles="xy", scale_units="xy", scale=0.14,
+              width=0.002, headwidth=4, headlength=5,
+              alpha=0.9)
 
     # compass wheel
     ax_w  = fig.add_axes([0.80, 0.76, 0.16, 0.16], projection="polar")
