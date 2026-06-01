@@ -1,6 +1,6 @@
 {
   "name": "thermalsight",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Thermal Analysis Student Explorer",
   "author": "Aditya",
   "repository": "https://github.com/Aditya42069/ThermalSight-App",
@@ -16,6 +16,11 @@
       "output": "release"
     },
     "extraResources": [
+      {
+        "from": "../backend/dist/analyzer.exe",
+        "to": "backend/analyzer.exe",
+        "filter": ["**/*"]
+      },
       {
         "from": "../backend/dist/analyzer",
         "to": "backend/analyzer",
