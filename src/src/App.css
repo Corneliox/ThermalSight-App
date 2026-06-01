@@ -424,18 +424,22 @@ input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
 
 /* satellite compass point dot */
 .star-dot {
-  background: rgba(20,20,30,0.85);
+  background: rgba(10, 10, 18, 0.92);
   border: 2px solid #888;
-  width: 26px; height: 26px;
+  width: 32px; height: 32px;
   z-index: 11;
   flex-direction: column;
-  gap: 0;
+  gap: 1px;
+  box-shadow: 0 0 6px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.08);
 }
 .star-dot-label {
-  font-size: 9px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 800;
   font-family: var(--font-mono);
   line-height: 1;
+  color: #ffffff;
+  text-shadow: 0 0 4px rgba(0,0,0,1), 0 1px 2px rgba(0,0,0,1);
+  letter-spacing: -0.03em;
 }
 
 /* rotation slider */

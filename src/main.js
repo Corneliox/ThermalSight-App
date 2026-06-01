@@ -9,10 +9,17 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
+    show: false,                    // don't show until content is ready
+    backgroundColor: '#0d0d0f',    // match app bg — prevents white flash
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
     },
+  });
+
+  // Show window only when fully rendered — feels instant, no white flash
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
   });
 
   if (app.isPackaged) {
