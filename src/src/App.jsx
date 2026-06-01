@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef } from 'react';
 import './App.css';
 
 let ipcRenderer;
@@ -83,17 +83,17 @@ export default function App() {
 
   const imgRef = useRef(null);
 
-  // Keep overlay in sync when rotation slider changes during 'align' step
-  useEffect(() => {
-    if (starStep === 'align' && starOverlay) {
-      const dist_px = (parseFloat(starDist) || 2.0) * pxPerCm;
+  // Direct rotation handler — updates both starRot and overlay in one event
+  const handleRotChange = (val) => {
+    setStarRot(val);
+    if (starOverlay) {
+      const dist_px = (parseFloat(starDist) || 2.0) * (pxPerCm || 1);
       setStarOverlay(buildOverlay(
         starOverlay.cx_px, starOverlay.cy_px,
-        dist_px, starRot, results.shape
+        dist_px, val, results.shape
       ));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [starRot]);
+  };
 
   // ── coords ──────────────────────────────────────────────────────────────────
   const getCoords = (e) => {
@@ -387,11 +387,11 @@ export default function App() {
                 <>
                   <div className="rotation-header">
                     <label className="field-label">② Rotate: {starRot}°</label>
-                    <button className="btn-ghost btn-tiny" onClick={()=>setStarRot(0)}>↺ Reset</button>
+                    <button className="btn-ghost btn-tiny" onClick={() => handleRotChange(0)}>↺ Reset</button>
                   </div>
                   <input type="range" min="-180" max="180" step="1"
                          value={starRot}
-                         onChange={e=>setStarRot(Number(e.target.value))}
+                         onChange={e => handleRotChange(Number(e.target.value))}
                          className="rotation-slider w-full"/>
                   <StarPreview rotation={starRot}/>
 
