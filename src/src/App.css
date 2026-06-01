@@ -498,3 +498,63 @@ input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
 .star-dir  { font-weight: 700; font-family: var(--font-mono); font-size: 11px; }
 .star-val  { font-family: var(--font-mono); font-size: 10px; color: var(--text1); }
 .star-diff { font-family: var(--font-mono); font-size: 10px; font-weight: 500; }
+
+/* ── 3-STEP STAR UI ──────────────────────────────────────────────────────── */
+
+.step-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.step-chip {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 4px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  opacity: 0.45;
+  transition: all 0.2s;
+}
+.step-chip.active  { border-color: var(--accent2); opacity: 1; background: rgba(255,213,79,0.08); }
+.step-chip.done    { border-color: var(--green);   opacity: 1; background: rgba(105,240,174,0.06); }
+.step-num { font-size: 11px; font-weight: 700; color: var(--text1); font-family: var(--font-mono); }
+.step-chip.active .step-num { color: var(--accent2); }
+.step-chip.done   .step-num { color: var(--green); }
+.step-lbl { font-size: 9px; color: var(--text2); letter-spacing: 0.06em; text-transform: uppercase; }
+
+.step-hint {
+  font-size: 10px;
+  color: var(--accent2);
+  font-family: var(--font-mono);
+  text-align: center;
+  padding: 6px;
+  background: rgba(255,213,79,0.06);
+  border-radius: var(--radius);
+  border: 1px dashed rgba(255,213,79,0.3);
+  margin-top: 6px;
+  animation: pulse-border 1.5s ease-in-out infinite;
+}
+@keyframes pulse-border {
+  0%, 100% { border-color: rgba(255,213,79,0.3); }
+  50%       { border-color: rgba(255,213,79,0.7); }
+}
+
+.rotation-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+.align-btn-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.align-btn-row .btn-ghost    { flex: 0 0 auto; }
+.align-btn-row .btn-primary  { flex: 1; }

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import './App.css';
 
 let ipcRenderer;
@@ -15,56 +15,89 @@ const toFileUrl = (p) => {
 };
 
 const PANELS = [
-  { key: 'original',   label: 'Temperature',   icon: '🌡' },
-  { key: 'magnitude',  label: 'Gradient Mag',  icon: '〰' },
-  { key: 'mag_thresh', label: 'Strong Edges',  icon: '⚡' },
-  { key: 'angle',      label: 'Flow Angle',    icon: '🧭' },
-  { key: 'overlay',    label: 'Overlay',       icon: '🔲' },
-  { key: 'quiver',     label: 'Quiver',        icon: '↗'  },
-  { key: 'grid',       label: 'Full Grid',     icon: '⊞'  },
+  { key: 'original',   label: 'Temperature',  icon: '🌡' },
+  { key: 'magnitude',  label: 'Gradient Mag', icon: '〰' },
+  { key: 'mag_thresh', label: 'Strong Edges', icon: '⚡' },
+  { key: 'angle',      label: 'Flow Angle',   icon: '🧭' },
+  { key: 'overlay',    label: 'Overlay',      icon: '🔲' },
+  { key: 'quiver',     label: 'Quiver',       icon: '↗'  },
+  { key: 'grid',       label: 'Full Grid',    icon: '⊞'  },
 ];
 
-// 8 compass directions matching Python COMPASS list order
-const COMPASS = ['N','NE','E','SE','S','SW','W','NW'];
-const BASE_ANGLES = { N:0, NE:45, E:90, SE:135, S:180, SW:225, W:270, NW:315 };
+const COMPASS      = ['N','NE','E','SE','S','SW','W','NW'];
+const BASE_ANGLES  = {N:0,NE:45,E:90,SE:135,S:180,SW:225,W:270,NW:315};
 
-// diff colour: blue = negative (cooler), red = positive (warmer)
 const diffColor = (diff) => {
-  if (diff === undefined) return '#888';
+  if (diff === undefined || diff === null) return '#888';
   const abs = Math.min(Math.abs(diff), 5);
   const t   = abs / 5;
-  if (diff < 0) return `rgba(100,160,255,${0.4 + t*0.6})`;
-  if (diff > 0) return `rgba(255,100,80,${0.4 + t*0.6})`;
+  if (diff < 0) return `rgba(100,160,255,${0.4 + t * 0.6})`;
+  if (diff > 0) return `rgba(255,100,80,${0.4 + t * 0.6})`;
   return '#888';
 };
 
+// Pure function — builds star overlay from pixel coords + params
+function buildOverlay(cx_px, cy_px, dist_px, rot_deg, shape) {
+  const [H, W] = shape;
+  const pts = {};
+  COMPASS.forEach(name => {
+    const rad = (BASE_ANGLES[name] + rot_deg) * Math.PI / 180;
+    const px  = cx_px + dist_px * Math.sin(rad);
+    const py  = cy_px - dist_px * Math.cos(rad);
+    pts[name] = { pct: { x: (px / W) * 100, y: (py / H) * 100 }, px, py };
+  });
+  return {
+    cx: (cx_px / W) * 100, cy: (cy_px / H) * 100,
+    cx_px, cy_px, points: pts,
+  };
+}
+
+// ── STAR STEPS ────────────────────────────────────────────────────────────────
+// null     → idle (no star active)
+// 'place'  → waiting for user click on image
+// 'align'  → star placed, user adjusting rotation
+// 'saving' → backend call in flight
+// 'done'   → results shown
+
 export default function App() {
-  const [filePath,      setFilePath]      = useState(null);
-  const [isProcessing,  setIsProcessing]  = useState(null);
-  const [results,       setResults]       = useState(null);
-  const [activePanel,   setActivePanel]   = useState('original');
-  const [imgTs,         setImgTs]         = useState(0);
+  const [filePath,     setFilePath]     = useState(null);
+  const [isAnalysing,  setIsAnalysing]  = useState(false);
+  const [results,      setResults]      = useState(null);
+  const [activePanel,  setActivePanel]  = useState('original');
+  const [imgTs,        setImgTs]        = useState(0);
 
   // calibration
-  const [calibMode,     setCalibMode]     = useState('idle');
-  const [calibPt1,      setCalibPt1]      = useState(null);
-  const [calibPt2,      setCalibPt2]      = useState(null);
-  const [pxPerCm,       setPxPerCm]       = useState(null);
-  const [calibDist,     setCalibDist]     = useState('10');
-  const [showDistInput, setShowDistInput] = useState(false);
+  const [calibMode,    setCalibMode]    = useState('idle'); // idle|pt1|pt2
+  const [calibPt1,     setCalibPt1]     = useState(null);
+  const [calibPt2,     setCalibPt2]     = useState(null);
+  const [pxPerCm,      setPxPerCm]      = useState(null);
+  const [calibDist,    setCalibDist]    = useState('10');
+  const [showDistInput,setShowDistInput]= useState(false);
 
-  // star measurement
-  const [starMode,      setStarMode]      = useState(false);
-  const [starDist,      setStarDist]      = useState('2.0');
-  const [starRotation,  setStarRotation]  = useState(0);
-  const [starOverlay,   setStarOverlay]   = useState(null); // { cx%, cy%, points[] }
-  const [starResults,   setStarResults]   = useState(null);
+  // star
+  const [starStep,     setStarStep]     = useState(null);
+  const [starDist,     setStarDist]     = useState('2.0');
+  const [starRot,      setStarRot]      = useState(0);
+  const [starOverlay,  setStarOverlay]  = useState(null);
+  const [starResults,  setStarResults]  = useState(null);
 
   const imgRef = useRef(null);
 
-  // ── pixel + % coords from mouse event ──────────────────────────────────────
+  // Keep overlay in sync when rotation slider changes during 'align' step
+  useEffect(() => {
+    if (starStep === 'align' && starOverlay) {
+      const dist_px = (parseFloat(starDist) || 2.0) * pxPerCm;
+      setStarOverlay(buildOverlay(
+        starOverlay.cx_px, starOverlay.cy_px,
+        dist_px, starRot, results.shape
+      ));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [starRot]);
+
+  // ── coords ──────────────────────────────────────────────────────────────────
   const getCoords = (e) => {
-    const img  = imgRef.current;
+    const img = imgRef.current;
     if (!img || !results) return null;
     const rect = img.getBoundingClientRect();
     return {
@@ -83,16 +116,13 @@ export default function App() {
 
   // ── analysis ────────────────────────────────────────────────────────────────
   const runAnalysis = async () => {
-    if (!filePath) return;
-    setIsProcessing('analysis');
+    setIsAnalysing(true);
     try {
       const res = await ipcRenderer.invoke('run-analysis', filePath, filePath + '_analysis');
-      setResults(res);
-      setImgTs(Date.now());
-      setActivePanel('original');
-      resetCalib(); setStarOverlay(null); setStarResults(null);
+      setResults(res); setImgTs(Date.now()); setActivePanel('original');
+      resetCalib(); resetStar();
     } catch (err) { alert(`Analysis failed:\n${err}`); }
-    setIsProcessing(null);
+    setIsAnalysing(false);
   };
 
   // ── calibration ─────────────────────────────────────────────────────────────
@@ -100,76 +130,67 @@ export default function App() {
   const startCalib = () => { resetCalib(); setPxPerCm(null); setCalibMode('pt1'); };
   const confirmCalib = () => {
     if (!calibPt1 || !calibPt2) return;
-    const d = Math.hypot(calibPt2.px - calibPt1.px, calibPt2.py - calibPt1.py);
+    const d  = Math.hypot(calibPt2.px - calibPt1.px, calibPt2.py - calibPt1.py);
     const cm = parseFloat(calibDist);
     if (!cm || cm <= 0) { alert('Enter a valid distance > 0'); return; }
-    setPxPerCm(d / cm);
-    setShowDistInput(false); setCalibMode('idle');
+    setPxPerCm(d / cm); setShowDistInput(false); setCalibMode('idle');
   };
 
-  // ── compute star overlay positions in % for SVG ─────────────────────────────
-  const buildStarOverlay = (cx_px, cy_px, dist_px, rot_deg, shape) => {
-    const [H, W] = shape;
-    const pts = {};
-    COMPASS.forEach(name => {
-      const angle = (BASE_ANGLES[name] + rot_deg) * Math.PI / 180;
-      const px = cx_px + dist_px * Math.sin(angle);
-      const py = cy_px - dist_px * Math.cos(angle);
-      pts[name] = { pct: { x: (px/W)*100, y: (py/H)*100 }, px, py };
-    });
-    return {
-      cx: (cx_px / W) * 100,
-      cy: (cy_px / H) * 100,
-      points: pts,
-    };
+  // ── star ────────────────────────────────────────────────────────────────────
+  const resetStar  = () => { setStarStep(null); setStarOverlay(null); setStarResults(null); };
+  const startStar  = () => { if (!pxPerCm) { alert('Calibrate first!'); return; } resetStar(); setStarStep('place'); };
+
+  const saveStar = async () => {
+    if (!starOverlay) return;
+    setStarStep('saving');
+    const dist_cm = parseFloat(starDist) || 2.0;
+    try {
+      const res = await ipcRenderer.invoke(
+        'measure-star', filePath,
+        starOverlay.cx_px, starOverlay.cy_px,
+        dist_cm, starRot, pxPerCm, results.out_dir
+      );
+      setStarResults(res);
+      setStarStep('done');
+    } catch (err) {
+      alert(`Star failed:\n${err}`);
+      setStarStep('align');
+    }
   };
 
   // ── image click ─────────────────────────────────────────────────────────────
-  const handleImageClick = async (e) => {
+  const handleImageClick = (e) => {
     const c = getCoords(e);
     if (!c) return;
 
     if (calibMode === 'pt1') { setCalibPt1(c); setCalibMode('pt2'); return; }
     if (calibMode === 'pt2') { setCalibPt2(c); setCalibMode('idle'); setShowDistInput(true); return; }
 
-    if (starMode) {
-      if (!pxPerCm) { alert('Calibrate first!'); setStarMode(false); return; }
-      const dist_cm = parseFloat(starDist) || 2.0;
-      const dist_px = dist_cm * pxPerCm;
-      const rot     = parseFloat(starRotation) || 0;
-
-      // draw overlay immediately
-      const ov = buildStarOverlay(c.px, c.py, dist_px, rot, results.shape);
-      setStarOverlay({ ...ov, cx_px: c.px, cy_px: c.py });
-      setStarMode(false);
-      setIsProcessing('star');
-
-      try {
-        const res = await ipcRenderer.invoke(
-          'measure-star', filePath, c.px, c.py,
-          dist_cm, rot, pxPerCm, results.out_dir
-        );
-        setStarResults(res);
-      } catch (err) { alert(`Star failed:\n${err}`); }
-      setIsProcessing(null);
+    if (starStep === 'place') {
+      const dist_px = (parseFloat(starDist) || 2.0) * pxPerCm;
+      setStarOverlay(buildOverlay(c.px, c.py, dist_px, starRot, results.shape));
+      setStarStep('align');
     }
   };
 
-  const openFolder = () => { try { window.require('electron').shell.openPath(results.out_dir); } catch(e) { alert(results.out_dir); } };
-  const showCsv = (p) => { try { window.require('electron').shell.showItemInFolder(p); } catch(e) { alert(p); } };
-
+  // ── status bar ──────────────────────────────────────────────────────────────
   const statusText = () => {
-    if (calibMode === 'pt1') return '📍 Click point 1 on image';
-    if (calibMode === 'pt2') return '📍 Click point 2 on image';
-    if (starMode)            return `⊙ Click the centre point  (dist = ${starDist} cm, rot = ${starRotation}°)`;
-    if (isProcessing==='star') return '⏳ Computing star gradients…';
-    if (pxPerCm)             return `✓ Calibrated — ${pxPerCm.toFixed(2)} px/cm`;
+    if (calibMode === 'pt1')  return '📍 Click point 1 on image';
+    if (calibMode === 'pt2')  return '📍 Click point 2 on image';
+    if (starStep === 'place') return `⊙ Click centre point  (dist=${starDist}cm)`;
+    if (starStep === 'align') return '↻ Adjust rotation then press Save Star';
+    if (starStep === 'saving')return '⏳ Computing…';
+    if (starStep === 'done')  return `✓ Saved — dominant: ${starResults?.dominant}`;
+    if (pxPerCm)              return `✓ ${pxPerCm.toFixed(2)} px/cm`;
     return 'Not calibrated';
   };
 
-  const cursor = (calibMode !== 'idle' || starMode) ? 'crosshair' : 'default';
+  const activeCursor = (calibMode !== 'idle' || starStep === 'place') ? 'crosshair' : 'default';
   const imgSrc = results?.images?.[activePanel]
     ? `${toFileUrl(results.images[activePanel])}?v=${imgTs}` : null;
+
+  const openFolder = () => { try { window.require('electron').shell.openPath(results.out_dir); } catch(e){alert(results.out_dir);} };
+  const showCsv    = (p) => { try { window.require('electron').shell.showItemInFolder(p); } catch(e){alert(p);} };
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
@@ -188,7 +209,7 @@ export default function App() {
         )}
       </header>
 
-      {/* UPLOAD */}
+      {/* UPLOAD SCREEN */}
       {!results && (
         <main className="upload-screen">
           <div className="upload-hero">
@@ -202,13 +223,13 @@ export default function App() {
               : <><p className="drop-title">Drop a thermal image here</p><p className="drop-sub">or click to browse · .jpg .png .tiff</p></>
             }
           </div>
-          <button className="btn-primary btn-xl" disabled={!filePath || isProcessing==='analysis'} onClick={runAnalysis}>
-            {isProcessing==='analysis' ? <><span className="spinner"/>Analysing…</> : 'Analyse Image'}
+          <button className="btn-primary btn-xl" disabled={!filePath || isAnalysing} onClick={runAnalysis}>
+            {isAnalysing ? <><span className="spinner"/>Analysing…</> : 'Analyse Image'}
           </button>
         </main>
       )}
 
-      {/* RESULTS */}
+      {/* RESULTS SCREEN */}
       {results && (
         <div className="results-layout">
 
@@ -234,11 +255,11 @@ export default function App() {
             <div className="image-wrapper">
               {imgSrc && (
                 <img ref={imgRef} src={imgSrc} alt={activePanel}
-                     className="thermal-img" style={{cursor}} draggable={false}
-                     onClick={handleImageClick}/>
+                     className="thermal-img" style={{cursor: activeCursor}}
+                     draggable={false} onClick={handleImageClick}/>
               )}
 
-              {/* SVG overlays */}
+              {/* SVG layer */}
               <svg className="ov-svg">
                 {/* calibration line */}
                 {calibPt1 && calibPt2 && (
@@ -246,17 +267,15 @@ export default function App() {
                         x2={`${calibPt2.pct.x}%`} y2={`${calibPt2.pct.y}%`}
                         stroke="#00e5ff" strokeWidth="1.5" strokeDasharray="5 3"/>
                 )}
-
                 {/* star spokes */}
                 {starOverlay && COMPASS.map(name => {
-                  const pt = starOverlay.points[name];
+                  const pt   = starOverlay.points[name];
                   const diff = starResults?.points?.[name]?.diff;
-                  const col  = diffColor(diff);
                   return (
                     <line key={name}
                           x1={`${starOverlay.cx}%`} y1={`${starOverlay.cy}%`}
                           x2={`${pt.pct.x}%`}       y2={`${pt.pct.y}%`}
-                          stroke={col} strokeWidth="1.5" opacity="0.85"/>
+                          stroke={diffColor(diff)} strokeWidth="1.5" opacity="0.85"/>
                   );
                 })}
               </svg>
@@ -269,22 +288,20 @@ export default function App() {
               {starOverlay && (
                 <div className="ov-dot centre-dot" style={{left:`${starOverlay.cx}%`,top:`${starOverlay.cy}%`}}>+</div>
               )}
-
               {/* star compass points */}
               {starOverlay && COMPASS.map(name => {
                 const pt   = starOverlay.points[name];
                 const diff = starResults?.points?.[name]?.diff;
-                const col  = diffColor(diff);
                 return (
                   <div key={name} className="ov-dot star-dot"
-                       style={{left:`${pt.pct.x}%`, top:`${pt.pct.y}%`, borderColor: col}}>
+                       style={{left:`${pt.pct.x}%`, top:`${pt.pct.y}%`, borderColor: diffColor(diff)}}>
                     <span className="star-dot-label">{name}</span>
                   </div>
                 );
               })}
 
               {/* status bar */}
-              <div className={`img-statusbar ${calibMode!=='idle'||starMode?'active':''}`}>
+              <div className={`img-statusbar ${(calibMode!=='idle'||starStep)?'active':''}`}>
                 {statusText()}
               </div>
             </div>
@@ -324,49 +341,91 @@ export default function App() {
               )}
             </div>
 
-            {/* star measurement */}
+            {/* star — 3-step card */}
             <div className="tool-card">
               <h4 className="card-title">⊙ 8-Point Star</h4>
 
-              <label className="field-label">Distance (cm)</label>
-              <input className="field-input" type="number" min="0.1" step="0.5"
-                     value={starDist} onChange={e=>setStarDist(e.target.value)}/>
-
-              <label className="field-label" style={{marginTop:'6px'}}>Rotation: {starRotation}°</label>
-              <div className="rotation-wrap">
-                <input type="range" min="-180" max="180" step="1"
-                       value={starRotation}
-                       onChange={e=>setStarRotation(Number(e.target.value))}
-                       className="rotation-slider"/>
-                <button className="btn-ghost btn-tiny" onClick={()=>setStarRotation(0)}>↺</button>
+              {/* Step indicators */}
+              <div className="step-row">
+                {['Place','Align','Save'].map((label, i) => {
+                  const stepKeys = [['place'], ['align'], ['saving','done']];
+                  const active   = starStep && stepKeys[i].includes(starStep);
+                  const done     = (i === 0 && ['align','saving','done'].includes(starStep)) ||
+                                   (i === 1 && ['saving','done'].includes(starStep)) ||
+                                   (i === 2 && starStep === 'done');
+                  return (
+                    <div key={label} className={`step-chip ${active?'active':''} ${done?'done':''}`}>
+                      <span className="step-num">{done ? '✓' : i+1}</span>
+                      <span className="step-lbl">{label}</span>
+                    </div>
+                  );
+                })}
               </div>
 
-              {/* live mini compass preview */}
-              <StarPreview rotation={starRotation}/>
+              <label className="field-label">Distance (cm)</label>
+              <input className="field-input" type="number" min="0.1" step="0.5"
+                     value={starDist}
+                     disabled={starStep === 'align' || starStep === 'saving' || starStep === 'done'}
+                     onChange={e=>setStarDist(e.target.value)}/>
 
-              <button className={`btn-secondary w-full ${starMode?'btn-active':''}`}
-                      disabled={!pxPerCm || isProcessing==='star'}
-                      onClick={()=>setStarMode(v=>!v)} style={{marginTop:'8px'}}>
-                {isProcessing==='star' ? <><span className="spinner"/>Computing…</>
-                  : starMode ? '…click centre on image' : 'Place star'}
-              </button>
+              {/* Step 1: Place button */}
+              {(!starStep || starStep === 'done') && (
+                <button className={`btn-secondary w-full ${starStep==='place'?'btn-active':''}`}
+                        disabled={!pxPerCm}
+                        onClick={startStar}
+                        style={{marginTop:'8px'}}>
+                  {starStep === 'done' ? '↺ Place new star' : '① Place star on image'}
+                </button>
+              )}
+
+              {starStep === 'place' && (
+                <div className="step-hint">Click anywhere on the image to place the centre</div>
+              )}
+
+              {/* Step 2: Align — rotation slider + live preview */}
+              {(starStep === 'align' || starStep === 'saving') && (
+                <>
+                  <div className="rotation-header">
+                    <label className="field-label">② Rotate: {starRot}°</label>
+                    <button className="btn-ghost btn-tiny" onClick={()=>setStarRot(0)}>↺ Reset</button>
+                  </div>
+                  <input type="range" min="-180" max="180" step="1"
+                         value={starRot}
+                         onChange={e=>setStarRot(Number(e.target.value))}
+                         className="rotation-slider w-full"/>
+                  <StarPreview rotation={starRot}/>
+
+                  <div className="align-btn-row">
+                    <button className="btn-ghost" onClick={resetStar}>✕ Cancel</button>
+                    <button className="btn-primary"
+                            disabled={starStep === 'saving'}
+                            onClick={saveStar}>
+                      {starStep === 'saving'
+                        ? <><span className="spinner"/>Saving…</>
+                        : '③ Save Star'}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* star results */}
-            {starResults && (
+            {starResults && starStep === 'done' && (
               <div className="tool-card">
                 <h4 className="card-title">Star Results</h4>
                 <div className="kv"><span>Centre temp</span>
                   <span>{starResults.temp_centre?.toFixed(4)} °C</span></div>
+                <div className="kv"><span>Rotation</span>
+                  <span>{starResults.rotation_deg?.toFixed(1)}°</span></div>
                 <div className="kv"><span>Dominant</span>
-                  <span style={{color: diffColor(starResults.points?.[starResults.dominant]?.diff)}}>
+                  <span style={{color:diffColor(starResults.points?.[starResults.dominant]?.diff)}}>
                     {starResults.dominant}
                   </span>
                 </div>
 
                 <div className="star-table">
                   <div className="star-table-head">
-                    <span>Dir</span><span>Temp (°C)</span><span>Δ from centre</span>
+                    <span>Dir</span><span>Temp °C</span><span>Δ centre</span>
                   </div>
                   {COMPASS.map(name => {
                     const p = starResults.points?.[name];
@@ -374,9 +433,9 @@ export default function App() {
                     const isDom = name === starResults.dominant;
                     return (
                       <div key={name} className={`star-row ${isDom?'dominant':''}`}>
-                        <span className="star-dir" style={{color: diffColor(p.diff)}}>{name}</span>
+                        <span className="star-dir" style={{color:diffColor(p.diff)}}>{name}</span>
                         <span className="star-val">{p.temp?.toFixed(4)}</span>
-                        <span className="star-diff" style={{color: diffColor(p.diff)}}>
+                        <span className="star-diff" style={{color:diffColor(p.diff)}}>
                           {p.diff >= 0 ? '+' : ''}{p.diff?.toFixed(4)}
                         </span>
                       </div>
@@ -386,7 +445,7 @@ export default function App() {
 
                 <button className="btn-secondary w-full" style={{marginTop:'8px'}}
                         onClick={()=>showCsv(starResults.csv_path)}>
-                  📄 Show CSV in folder
+                  📄 Show CSV
                 </button>
               </div>
             )}
@@ -398,27 +457,26 @@ export default function App() {
   );
 }
 
-// Mini compass rose preview showing current rotation
+// Mini live compass preview
 function StarPreview({ rotation }) {
-  const size = 72;
-  const cx = size / 2, cy = size / 2, r = 26, rdot = 3;
+  const size = 72, cx = 36, cy = 36, r = 26;
   return (
-    <svg width={size} height={size} style={{display:'block',margin:'6px auto'}}>
+    <svg width={size} height={size} style={{display:'block',margin:'4px auto'}}>
       <circle cx={cx} cy={cy} r={r} fill="none" stroke="#2e2e3a" strokeWidth="1"/>
       <circle cx={cx} cy={cy} r={2} fill="#888"/>
       {COMPASS.map(name => {
-        const angle = (BASE_ANGLES[name] + rotation) * Math.PI / 180;
-        const px = cx + r * Math.sin(angle);
-        const py = cy - r * Math.cos(angle);
+        const ang = (BASE_ANGLES[name] + rotation) * Math.PI / 180;
+        const px  = cx + r * Math.sin(ang);
+        const py  = cy - r * Math.cos(ang);
         const isCard = ['N','S','E','W'].includes(name);
         return (
           <g key={name}>
             <line x1={cx} y1={cy} x2={px} y2={py}
-                  stroke={isCard?"#ff6b35":"#555"} strokeWidth={isCard?1.2:0.8}/>
-            <circle cx={px} cy={py} r={rdot}
-                    fill={isCard?"#ff6b35":"#3a3a50"} stroke={isCard?"#ff6b35":"#555"} strokeWidth="0.5"/>
-            <text x={px + (px-cx)*0.35} y={py + (py-cy)*0.35 + 1}
-                  fontSize="6" fill={isCard?"#ff6b35":"#666"}
+                  stroke={isCard?'#ff6b35':'#555'} strokeWidth={isCard?1.2:0.8}/>
+            <circle cx={px} cy={py} r={3}
+                    fill={isCard?'#ff6b35':'#3a3a50'} stroke={isCard?'#ff6b35':'#555'} strokeWidth="0.5"/>
+            <text x={px+(px-cx)*0.35} y={py+(py-cy)*0.35+1}
+                  fontSize="6" fill={isCard?'#ff6b35':'#666'}
                   textAnchor="middle" dominantBaseline="middle">{name}</text>
           </g>
         );
