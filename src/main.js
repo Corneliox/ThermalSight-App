@@ -27,9 +27,9 @@ app.whenReady().then(createWindow);
 // ── helper: resolve the Python executable / script path ──────────────────────
 function getBackendArgs(command, extraArgs) {
   if (app.isPackaged) {
-    // PyInstaller --onedir bundle lands at: resources/backend/analyzer/analyzer(.exe)
-    const ext     = process.platform === 'win32' ? '.exe' : '';
-    const exePath = path.join(process.resourcesPath, 'backend', 'analyzer', `analyzer${ext}`);
+    // PyInstaller onedir bundle: resources/backend/analyzer(.exe)
+    const ext      = process.platform === 'win32' ? '.exe' : '';
+    const exePath  = path.join(process.resourcesPath, 'backend', `analyzer${ext}`);
     return { executable: exePath, args: [command, ...extraArgs] };
   } else {
     // Development: run the Python script directly
@@ -87,16 +87,17 @@ ipcMain.handle('run-analysis', async (_event, imagePath, outputDir) => {
   return runPython('analyze', [imagePath, outputDir]);
 });
 
-// ── IPC: measure-roi ──────────────────────────────────────────────────────────
+// ── IPC: measure-star ─────────────────────────────────────────────────────────
 // Called by React with:
-//   ipcRenderer.invoke('measure-roi', imagePath, cx, cy, r_cm, pxPerCm, outputDir)
-// Returns JSON: { status, csv_path, directional, stats, dominant, grad_per_cm, … }
-ipcMain.handle('measure-roi', async (_event, imagePath, cx, cy, r_cm, pxPerCm, outputDir) => {
-  return runPython('roi', [
+//   ipcRenderer.invoke('measure-star', imagePath, cx, cy, dist_cm, rotation_deg, pxPerCm, outputDir)
+// Returns JSON: { status, csv_path, points, dominant, temp_centre, … }
+ipcMain.handle('measure-star', async (_event, imagePath, cx, cy, dist_cm, rotation_deg, pxPerCm, outputDir) => {
+  return runPython('star', [
     imagePath,
-    String(Math.round(cx)),
-    String(Math.round(cy)),
-    String(r_cm),
+    String(cx),
+    String(cy),
+    String(dist_cm),
+    String(rotation_deg),
     String(pxPerCm),
     outputDir,
   ]);

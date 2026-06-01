@@ -241,76 +241,115 @@ def save_full_csvs(data: dict, out_dir: Path, stem: str) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  ROI helpers
+#  Star measurement — 8 compass points around a chosen centre
 # ─────────────────────────────────────────────────────────────────────────────
 
-def directional_grad(mag, sx_raw, sy_raw, cx, cy, r_px):
-    h, w = mag.shape
-    Y, X = np.ogrid[:h, :w]
-    in_c = (X - cx)**2 + (Y - cy)**2 <= r_px**2
-    dx   = X - cx;  dy = Y - cy
+import math
 
-    result = {}
-    for name, m in {"N": in_c & (dy < 0), "S": in_c & (dy > 0),
-                     "E": in_c & (dx > 0), "W": in_c & (dx < 0)}.items():
-        v = mag[m].ravel().astype(float)
-        result[name] = float(v.mean()) if v.size else 0.0
-
-    in_flat      = in_c.ravel()
-    result["net_x"] = float(sx_raw.ravel()[in_flat].mean())
-    result["net_y"] = float(sy_raw.ravel()[in_flat].mean())
-    return result
+# 8 compass directions with base angle from North, clockwise
+COMPASS = [
+    ("N",   0),
+    ("NE", 45),
+    ("E",  90),
+    ("SE", 135),
+    ("S",  180),
+    ("SW", 225),
+    ("W",  270),
+    ("NW", 315),
+]
 
 
-def circle_stats(arr2d, cx, cy, r_px):
-    Y, X = np.ogrid[:arr2d.shape[0], :arr2d.shape[1]]
-    mask = (X - cx)**2 + (Y - cy)**2 <= r_px**2
-    v    = arr2d[mask].ravel().astype(float)
-    if v.size == 0:
-        return {}
-    return dict(n=int(v.size), min=float(v.min()), max=float(v.max()),
-                mean=float(v.mean()), std=float(v.std()),
-                p25=float(np.percentile(v, 25)), p75=float(np.percentile(v, 75)))
+def bilinear_sample(arr: np.ndarray, x: float, y: float) -> float:
+    """Bilinear interpolation at float pixel (x, y)."""
+    h, w = arr.shape
+    x = max(0.0, min(float(x), w - 1))
+    y = max(0.0, min(float(y), h - 1))
+    x0, y0 = int(x), int(y)
+    x1, y1 = min(x0 + 1, w - 1), min(y0 + 1, h - 1)
+    fx, fy = x - x0, y - y0
+    return float(
+        arr[y0, x0] * (1 - fx) * (1 - fy) +
+        arr[y0, x1] * fx       * (1 - fy) +
+        arr[y1, x0] * (1 - fx) * fy       +
+        arr[y1, x1] * fx       * fy
+    )
 
 
-def save_roi_csv(data, cx, cy, r_px, r_cm, px_cm, direc,
-                 out_dir: Path, stem: str) -> dict:
-    h, w  = data["temp"].shape
-    Y, X  = np.ogrid[:h, :w]
-    mask  = (X - cx)**2 + (Y - cy)**2 <= r_px**2
-    ys, xs = np.where(mask)
-    dx_cm  = (xs - cx) / px_cm
-    dy_cm  = (ys - cy) / px_cm
+def compute_star(temp: np.ndarray, cx: float, cy: float,
+                 dist_px: float, rotation_deg: float) -> dict:
+    """
+    Place 8 compass points at distance dist_px from (cx, cy), rotated
+    by rotation_deg clockwise. Return coords + temps + diffs from centre.
+    Image coords: +x = East, +y = South  →  North = -y direction.
+    """
+    temp_centre = bilinear_sample(temp, cx, cy)
+    points = {}
+    for name, base_angle in COMPASS:
+        angle_rad = math.radians(base_angle + rotation_deg)
+        px = cx + dist_px * math.sin(angle_rad)
+        py = cy - dist_px * math.cos(angle_rad)
+        t  = bilinear_sample(temp, px, py)
+        points[name] = {
+            "px":        round(px, 2),
+            "py":        round(py, 2),
+            "angle_deg": round((base_angle + rotation_deg) % 360, 2),
+            "temp":      round(t, 6),
+            "diff":      round(t - temp_centre, 6),
+        }
+    return {
+        "centre":       {"px": round(cx, 2), "py": round(cy, 2),
+                         "temp": round(temp_centre, 6)},
+        "points":       points,
+        "temp_centre":  round(temp_centre, 6),
+        "rotation_deg": rotation_deg,
+        "dist_px":      round(dist_px, 2),
+    }
 
-    scalar_keys = ["temp", "sobelx_raw", "sobely_raw"]
-    tag      = f"roi_x{cx}_y{cy}_r{r_cm:.1f}cm"
+
+def save_star_csv(star: dict, cx: float, cy: float, dist_cm: float,
+                  dist_px: float, rotation_deg: float, px_cm: float,
+                  out_dir: Path, stem: str) -> str:
+    tag      = (f"star_x{int(cx)}_y{int(cy)}"
+                f"_d{dist_cm:.1f}cm_r{rotation_deg:.0f}deg")
     csv_path = out_dir / f"{stem}_{tag}.csv"
 
     with open(csv_path, "w", newline="") as f:
-        w_csv = csv.writer(f)
-        # metadata header
-        w_csv.writerow(["# METADATA"])
-        w_csv.writerow(["# centre_px",  f"{cx},{cy}"])
-        w_csv.writerow(["# centre_cm",  f"{cx/px_cm:.4f},{cy/px_cm:.4f}"])
-        w_csv.writerow(["# radius_cm",  f"{r_cm:.4f}"])
-        w_csv.writerow(["# radius_px",  f"{r_px:.2f}"])
-        w_csv.writerow(["# px_per_cm",  f"{px_cm:.6f}"])
-        w_csv.writerow(["# n_pixels",   int(mask.sum())])
-        w_csv.writerow(["#"])
-        w_csv.writerow(["# DIRECTIONAL GRADIENTS"])
-        for d in ["N", "S", "E", "W"]:
-            w_csv.writerow([f"# grad_{d}", f"{direc[d]:.6f}",
-                            "per_cm", f"{direc[d]/r_cm:.6f}"])
-        w_csv.writerow(["# net_EW", f"{direc['net_x']:+.6f}"])
-        w_csv.writerow(["# net_NS", f"{direc['net_y']:+.6f}"])
-        w_csv.writerow(["#"])
-        # data
-        w_csv.writerow(["px_x","px_y","dx_cm","dy_cm"] + scalar_keys)
-        arrays = {k: data[k][mask].ravel() for k in scalar_keys}
-        for i in range(len(xs)):
-            row = [xs[i], ys[i], f"{dx_cm[i]:.4f}", f"{dy_cm[i]:.4f}"]
-            row += [f"{arrays[k][i]:.6f}" for k in scalar_keys]
-            w_csv.writerow(row)
+        w = csv.writer(f)
+        w.writerow(["# STAR MEASUREMENT"])
+        w.writerow(["# centre_px",    f"{cx:.2f},{cy:.2f}"])
+        w.writerow(["# centre_cm",    f"{cx/px_cm:.4f},{cy/px_cm:.4f}"])
+        w.writerow(["# dist_cm",      f"{dist_cm:.4f}"])
+        w.writerow(["# dist_px",      f"{dist_px:.2f}"])
+        w.writerow(["# rotation_deg", f"{rotation_deg:.2f}"])
+        w.writerow(["# px_per_cm",    f"{px_cm:.6f}"])
+        w.writerow(["# temp_centre",  f"{star['temp_centre']:.6f}"])
+        w.writerow(["#"])
+        w.writerow(["# GRADIENT VECTORS (diff = point_temp - centre_temp)"])
+        for name, _ in COMPASS:
+            p = star["points"][name]
+            w.writerow([f"# {name}",
+                        f"temp={p['temp']:.6f}",
+                        f"diff={p['diff']:+.6f}",
+                        f"diff_per_cm={p['diff']/dist_cm:+.6f}"])
+        w.writerow(["#"])
+        w.writerow(["direction", "px_x", "px_y", "x_cm", "y_cm",
+                    "angle_deg", "temp", "diff_from_centre", "diff_per_cm"])
+        # centre row
+        w.writerow(["CENTER",
+                    f"{cx:.2f}", f"{cy:.2f}",
+                    f"{cx/px_cm:.4f}", f"{cy/px_cm:.4f}",
+                    "—",
+                    f"{star['temp_centre']:.6f}",
+                    "0.000000", "0.000000"])
+        for name, _ in COMPASS:
+            p = star["points"][name]
+            w.writerow([name,
+                        f"{p['px']:.2f}", f"{p['py']:.2f}",
+                        f"{p['px']/px_cm:.4f}", f"{p['py']/px_cm:.4f}",
+                        f"{p['angle_deg']:.1f}",
+                        f"{p['temp']:.6f}",
+                        f"{p['diff']:+.6f}",
+                        f"{p['diff']/dist_cm:+.6f}"])
 
     log(f"  saved {csv_path.name}")
     return str(csv_path)
@@ -351,54 +390,35 @@ def cmd_analyze(image_path: str, out_dir_str: str):
     })
 
 
-def cmd_roi(image_path: str, cx: int, cy: int,
-            r_cm: float, px_cm: float, out_dir_str: str):
+def cmd_star(image_path: str, cx: float, cy: float,
+             dist_cm: float, rotation_deg: float,
+             px_cm: float, out_dir_str: str):
     out_dir = Path(out_dir_str)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = Path(image_path).stem
 
-    log(f"ROI: loading {image_path}")
+    log(f"STAR: loading {image_path}")
     temp = load_temperature(image_path)
-    data = compute(temp)
 
-    r_px  = r_cm * px_cm
-    direc = directional_grad(data["magnitude"], data["sobelx_raw"],
-                             data["sobely_raw"], cx, cy, r_px)
+    dist_px = dist_cm * px_cm
+    star    = compute_star(temp, cx, cy, dist_px, rotation_deg)
+    csv_path = save_star_csv(star, cx, cy, dist_cm, dist_px,
+                             rotation_deg, px_cm, out_dir, stem)
 
-    stats_temp = circle_stats(data["temp"],      cx, cy, r_px)
-    stats_mag  = circle_stats(data["magnitude"], cx, cy, r_px)
-    stats_gx   = circle_stats(data["sobelx_raw"], cx, cy, r_px)
-    stats_gy   = circle_stats(data["sobely_raw"], cx, cy, r_px)
-
-    csv_path = save_roi_csv(data, cx, cy, r_px, r_cm, px_cm,
-                            direc, out_dir, stem)
-
-    dom = max(["N","S","E","W"], key=lambda d: direc[d])
+    # dominant direction = point with largest absolute diff
+    dom = max(COMPASS, key=lambda nd: abs(star["points"][nd[0]]["diff"]))[0]
 
     emit({
-        "status"     : "ok",
-        "csv_path"   : csv_path,
-        "centre_px"  : [cx, cy],
-        "centre_cm"  : [round(cx / px_cm, 3), round(cy / px_cm, 3)],
-        "radius_cm"  : r_cm,
-        "radius_px"  : round(r_px, 1),
-        "n_pixels"   : stats_temp.get("n", 0),
-        "dominant"   : dom,
-        "directional": {
-            "N"    : direc["N"],
-            "S"    : direc["S"],
-            "E"    : direc["E"],
-            "W"    : direc["W"],
-            "net_x": direc["net_x"],
-            "net_y": direc["net_y"],
-        },
-        "grad_per_cm": round(stats_mag.get("mean", 0) / r_cm, 6),
-        "stats": {
-            "temp"      : stats_temp,
-            "magnitude" : stats_mag,
-            "sobelx_raw": stats_gx,
-            "sobely_raw": stats_gy,
-        },
+        "status":       "ok",
+        "csv_path":     csv_path,
+        "centre_px":    [round(cx), round(cy)],
+        "centre_cm":    [round(cx / px_cm, 3), round(cy / px_cm, 3)],
+        "temp_centre":  star["temp_centre"],
+        "dist_cm":      dist_cm,
+        "dist_px":      round(dist_px, 1),
+        "rotation_deg": rotation_deg,
+        "dominant":     dom,
+        "points":       star["points"],
     })
 
 
@@ -417,17 +437,18 @@ if __name__ == "__main__":
             fail("Usage: analyzer.py analyze <imagePath> <outputDir>")
         cmd_analyze(sys.argv[2], sys.argv[3])
 
-    elif command == "roi":
-        if len(sys.argv) < 8:
-            fail("Usage: analyzer.py roi <imagePath> <cx> <cy> <r_cm> <px_per_cm> <outputDir>")
-        cmd_roi(
-            image_path  = sys.argv[2],
-            cx          = int(sys.argv[3]),
-            cy          = int(sys.argv[4]),
-            r_cm        = float(sys.argv[5]),
-            px_cm       = float(sys.argv[6]),
-            out_dir_str = sys.argv[7],
+    elif command == "star":
+        if len(sys.argv) < 9:
+            fail("Usage: analyzer.py star <imagePath> <cx> <cy> <dist_cm> <rotation_deg> <px_per_cm> <outputDir>")
+        cmd_star(
+            image_path   = sys.argv[2],
+            cx           = float(sys.argv[3]),
+            cy           = float(sys.argv[4]),
+            dist_cm      = float(sys.argv[5]),
+            rotation_deg = float(sys.argv[6]),
+            px_cm        = float(sys.argv[7]),
+            out_dir_str  = sys.argv[8],
         )
 
     else:
-        fail(f"Unknown command: {command}. Use 'analyze' or 'roi'.")
+        fail(f"Unknown command: {command}. Use 'analyze' or 'star'.")

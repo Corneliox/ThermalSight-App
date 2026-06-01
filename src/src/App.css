@@ -409,3 +409,92 @@ input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-h); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text2); }
+
+/* ── STAR MEASUREMENT ──────────────────────────────────────────────────────── */
+
+/* centre crosshair dot */
+.centre-dot {
+  background: #ffd54f;
+  color: #000;
+  font-size: 14px;
+  font-weight: 900;
+  width: 20px; height: 20px;
+  z-index: 12;
+}
+
+/* satellite compass point dot */
+.star-dot {
+  background: rgba(20,20,30,0.85);
+  border: 2px solid #888;
+  width: 26px; height: 26px;
+  z-index: 11;
+  flex-direction: column;
+  gap: 0;
+}
+.star-dot-label {
+  font-size: 9px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  line-height: 1;
+}
+
+/* rotation slider */
+.rotation-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rotation-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  height: 4px;
+  background: var(--bg3);
+  border-radius: 2px;
+  outline: none;
+}
+.rotation-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+.btn-tiny {
+  padding: 3px 7px;
+  font-size: 13px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+/* star results table */
+.star-table {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin: 6px 0;
+}
+.star-table-head {
+  display: grid;
+  grid-template-columns: 30px 1fr 1fr;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--bg3);
+  font-size: 9px;
+  color: var(--text2);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+}
+.star-row {
+  display: grid;
+  grid-template-columns: 30px 1fr 1fr;
+  gap: 4px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  transition: background 0.1s;
+}
+.star-row:hover    { background: rgba(255,255,255,0.03); }
+.star-row.dominant { background: rgba(255,213,79,0.06); }
+.star-dir  { font-weight: 700; font-family: var(--font-mono); font-size: 11px; }
+.star-val  { font-family: var(--font-mono); font-size: 10px; color: var(--text1); }
+.star-diff { font-family: var(--font-mono); font-size: 10px; font-weight: 500; }
