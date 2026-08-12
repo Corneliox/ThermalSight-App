@@ -84,6 +84,10 @@ export default function App() {
   const [activeLabelId, setActiveLabelId]  = useState('l1');
   const [newLabelName,  setNewLabelName]   = useState('');
   const [newLabelKey,   setNewLabelKey]    = useState('');
+  const [editingLabelId, setEditingLabelId] = useState(null);
+  const [editName,       setEditName]       = useState('');
+  const [editKey,        setEditKey]        = useState('');
+  const [editColor,      setEditColor]      = useState('#00e5ff');
   const [drawMode,      setDrawMode]       = useState('polygon'); // 'polygon' | 'box'
   const [drawingPts,    setDrawingPts]     = useState([]);
 
@@ -129,7 +133,19 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [segmentations, labels, folderPath, imageList]);
 
-  // ── Keyboard Shortcuts Listener (a-z for labels, Arrow Left/Right for navigation)
+  const undoLastPolygon = () => {
+    if (!activeImagePath) return;
+    setSegmentations(prev => {
+      const currentList = prev[activeImagePath] || [];
+      if (currentList.length === 0) return prev;
+      return {
+        ...prev,
+        [activeImagePath]: currentList.slice(0, -1)
+      };
+    });
+  };
+
+  // ── Keyboard Shortcuts Listener (a-z for labels, Arrow Left/Right, Backspace to undo)
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
@@ -144,6 +160,16 @@ export default function App() {
         return;
       }
 
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        e.preventDefault();
+        if (drawingPts.length > 0) {
+          setDrawingPts(prev => prev.slice(0, -1));
+        } else {
+          undoLastPolygon();
+        }
+        return;
+      }
+
       const matchedLabel = labels.find(l => l.key.toLowerCase() === pressedKey);
       if (matchedLabel) {
         setActiveLabelId(matchedLabel.id);
@@ -152,7 +178,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [labels, drawingPts, currentIndex, imageList]);
+  }, [labels, drawingPts, currentIndex, imageList, segmentations, activeImagePath]);
 
   // ── Coordinate conversion ───────────────────────────────────────────────────
   const getCoords = (e) => {
@@ -390,6 +416,60 @@ export default function App() {
   const removeLabel = (id) => {
     if (labels.length <= 1) { alert('At least 1 label is required'); return; }
     setLabels(prev => prev.filter(l => l.id !== id));
+  };
+
+  const startEditLabel = (labelObj) => {
+    setEditingLabelId(labelObj.id);
+    setEditName(labelObj.name);
+    setEditKey(labelObj.key);
+    setEditColor(labelObj.color);
+  };
+
+  const cancelLabelEdit = () => {
+    setEditingLabelId(null);
+  };
+
+  const saveLabelEdit = () => {
+    if (!editName.trim()) { alert('Label name cannot be empty'); return; }
+    if (!editKey.trim())  { alert('Shortcut key is required'); return; }
+
+    const keyLower = editKey.trim().toLowerCase();
+    if (!/^[a-z]$/.test(keyLower)) { alert('Shortcut key must be a single letter a-z'); return; }
+
+    const duplicate = labels.find(l => l.id !== editingLabelId && l.key.toLowerCase() === keyLower);
+    if (duplicate) {
+      alert(`Shortcut key '${keyLower}' is already assigned to '${duplicate.name}'!`);
+      return;
+    }
+
+    const targetLabel = labels.find(l => l.id === editingLabelId);
+    if (!targetLabel) return;
+    const oldName = targetLabel.name;
+    const newName = editName.trim();
+
+    setLabels(prev => prev.map(l => l.id === editingLabelId ? {
+      ...l,
+      name: newName,
+      key: keyLower,
+      color: editColor
+    } : l));
+
+    if (oldName !== newName || targetLabel.color !== editColor) {
+      setSegmentations(prev => {
+        const updated = {};
+        Object.keys(prev).forEach(img => {
+          updated[img] = (prev[img] || []).map(roi => {
+            if (roi.labelName === oldName) {
+              return { ...roi, labelName: newName, color: editColor };
+            }
+            return roi;
+          });
+        });
+        return updated;
+      });
+    }
+
+    setEditingLabelId(null);
   };
 
   // ── Save Label & Master Export Action ────────────────────────────────────────
@@ -709,15 +789,33 @@ export default function App() {
               
               <div className="label-list">
                 {labels.map(l => (
-                  <div key={l.id} className={`label-item ${activeLabelId === l.id ? 'active' : ''}`}
-                       onClick={() => setActiveLabelId(l.id)}>
-                    <span className="label-color-dot" style={{ backgroundColor: l.color }}/>
-                    <span className="label-name-text">{l.name}</span>
-                    <kbd className="label-key-badge">[{l.key.toUpperCase()}]</kbd>
-                    {labels.length > 1 && (
-                      <button className="btn-ghost btn-tiny" onClick={(e) => { e.stopPropagation(); removeLabel(l.id); }}>✕</button>
-                    )}
-                  </div>
+                  editingLabelId === l.id ? (
+                    <div key={l.id} className="label-edit-box">
+                      <div className="label-edit-inputs">
+                        <input className="field-input-sm" type="text" value={editName}
+                               onChange={e => setEditName(e.target.value)} placeholder="Label Name"/>
+                        <input className="field-input-sm key-input" type="text" maxLength={1} value={editKey}
+                               onChange={e => setEditKey(e.target.value)} placeholder="a-z"/>
+                        <input type="color" className="color-picker-input" value={editColor}
+                               onChange={e => setEditColor(e.target.value)} title="Pick Color"/>
+                      </div>
+                      <div className="label-edit-actions">
+                        <button className="btn-primary btn-tiny" onClick={saveLabelEdit}>✓ Save</button>
+                        <button className="btn-ghost btn-tiny" onClick={cancelLabelEdit}>✕ Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div key={l.id} className={`label-item ${activeLabelId === l.id ? 'active' : ''}`}
+                         onClick={() => setActiveLabelId(l.id)}>
+                      <span className="label-color-dot" style={{ backgroundColor: l.color }}/>
+                      <span className="label-name-text">{l.name}</span>
+                      <kbd className="label-key-badge">[{l.key.toUpperCase()}]</kbd>
+                      <button className="btn-ghost btn-tiny" title="Edit Label" onClick={(e) => { e.stopPropagation(); startEditLabel(l); }}>✎ Edit</button>
+                      {labels.length > 1 && (
+                        <button className="btn-ghost btn-tiny" title="Delete Label" onClick={(e) => { e.stopPropagation(); removeLabel(l.id); }}>✕</button>
+                      )}
+                    </div>
+                  )
                 ))}
               </div>
 
