@@ -593,12 +593,12 @@ export default function App() {
               )}
 
               {/* SVG OVERLAYS */}
-              <svg className="ov-svg">
+              <svg className="ov-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
                 {/* Calibration Line */}
                 {calibPt1 && calibPt2 && (
-                  <line x1={`${calibPt1.pct.x}%`} y1={`${calibPt1.pct.y}%`}
-                        x2={`${calibPt2.pct.x}%`} y2={`${calibPt2.pct.y}%`}
-                        stroke="#00e5ff" strokeWidth="2" strokeDasharray="5 3"/>
+                  <line x1={calibPt1.pct.x} y1={calibPt1.pct.y}
+                        x2={calibPt2.pct.x} y2={calibPt2.pct.y}
+                        stroke="#00e5ff" strokeWidth="0.5" strokeDasharray="1 0.6"/>
                 )}
 
                 {/* Star Spokes */}
@@ -607,34 +607,53 @@ export default function App() {
                   const diff = starResults?.points?.[name]?.diff;
                   const col  = diffColor(diff);
                   return (
-                    <line key={name} x1={`${starOverlay.cx}%`} y1={`${starOverlay.cy}%`}
-                          x2={`${pt.pct.x}%`} y2={`${pt.pct.y}%`}
-                          stroke={col} strokeWidth="1.5" opacity="0.85"/>
+                    <line key={name} x1={starOverlay.cx} y1={starOverlay.cy}
+                          x2={pt.pct.x} y2={pt.pct.y}
+                          stroke={col} strokeWidth="0.4" opacity="0.85"/>
                   );
                 })}
 
                 {/* Saved ROI Polygons in RAM State */}
                 {currentResults && currentRois.map(roi => {
                   const [H, W] = currentResults.shape;
-                  const ptsStr = roi.points.map(p => `${(p.x/W)*100}%,${(p.y/H)*100}%`).join(' ');
+                  const ptsStr = roi.points.map(p => `${(p.x/W)*100},${(p.y/H)*100}`).join(' ');
                   return (
                     <polygon key={roi.id} points={ptsStr}
-                             fill={roi.color} fillOpacity="0.25"
-                             stroke={roi.color} strokeWidth="2"/>
+                             fill={roi.color} fillOpacity="0.3"
+                             stroke={roi.color} strokeWidth="0.6"/>
                   );
                 })}
 
                 {/* Current Drawing Polygon Draft */}
                 {currentResults && drawingPts.length > 0 && (
                   <g>
-                    <polyline points={drawingPts.map(p => `${p.pct.x}%,${p.pct.y}%`).join(' ')}
-                              fill="none" stroke={activeLabelObj.color} strokeWidth="2" strokeDasharray="3 3"/>
+                    <polyline points={drawingPts.map(p => `${p.pct.x},${p.pct.y}`).join(' ')}
+                              fill="none" stroke={activeLabelObj.color} strokeWidth="0.6" strokeDasharray="1 1"/>
                     {drawingPts.map((p, idx) => (
-                      <circle key={idx} cx={`${p.pct.x}%`} cy={`${p.pct.y}%`} r="4" fill={activeLabelObj.color}/>
+                      <circle key={idx} cx={p.pct.x} cy={p.pct.y} r="0.8" fill={activeLabelObj.color}/>
                     ))}
                   </g>
                 )}
               </svg>
+
+              {/* Saved ROI Polygon Text Label Badges */}
+              {currentResults && currentRois.map(roi => {
+                const [H, W] = currentResults.shape;
+                const cxPct = (roi.points.reduce((sum, p) => sum + p.x, 0) / roi.points.length / W) * 100;
+                const cyPct = (roi.points.reduce((sum, p) => sum + p.y, 0) / roi.points.length / H) * 100;
+                return (
+                  <div key={`lbl-${roi.id}`} className="polygon-label-tag"
+                       style={{
+                         left: `${cxPct}%`,
+                         top: `${cyPct}%`,
+                         borderColor: roi.color,
+                         boxShadow: `0 0 8px ${roi.color}88`
+                       }}>
+                    <span className="polygon-label-dot" style={{ backgroundColor: roi.color }}/>
+                    <span>{roi.labelName}</span>
+                  </div>
+                );
+              })}
 
               {/* Calibration Dots */}
               {calibPt1 && <div className="ov-dot calib-dot" style={{left:`${calibPt1.pct.x}%`,top:`${calibPt1.pct.y}%`}}>1</div>}

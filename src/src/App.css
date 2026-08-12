@@ -694,7 +694,32 @@ input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
   text-align: center;
 }
 
-/* ROI LIST */
+/* ROI LIST & CANVAS LABELS */
+.polygon-label-tag {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background: rgba(15, 15, 22, 0.92);
+  border: 1.5px solid var(--cyan);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--text0);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  z-index: 15;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+  white-space: nowrap;
+}
+.polygon-label-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
 .roi-list {
   display: flex;
   flex-direction: column;
