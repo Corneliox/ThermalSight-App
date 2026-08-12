@@ -37,13 +37,22 @@ const PANELS = [
 const COMPASS = ['N','NE','E','SE','S','SW','W','NW'];
 const BASE_ANGLES = { N:0, NE:45, E:90, SE:135, S:180, SW:225, W:270, NW:315 };
 
+const diffColor = (diff) => {
+  if (diff === undefined) return '#888';
+  const abs = Math.min(Math.abs(diff), 5);
+  const t   = abs / 5;
+  if (diff < 0) return `rgba(100,160,255,${0.4 + t*0.6})`;
+  if (diff > 0) return `rgba(255,100,80,${0.4 + t*0.6})`;
+  return '#888';
+};
+
 const COLOR_PALETTE = ['#ff4444', '#00e5ff', '#44ff44', '#ffbb00', '#e044ff', '#00ffaa', '#ff44aa', '#aaff00'];
 
 export default function App() {
   // Mode & File State
   const [appMode,        setAppMode]        = useState('bulk'); // 'single' | 'bulk'
   const [folderPath,     setFolderPath]     = useState(null);
-  const [imageList,      setImageList]      = useState([]); // [path1, path2, ...]
+  const [imageList,      setImageList]      = useState([]);
   const [currentIndex,   setCurrentIndex]   = useState(0);
   const [filePath,       setFilePath]       = useState(null);
   const [isProcessing,   setIsProcessing]   = useState(null);
@@ -59,10 +68,11 @@ export default function App() {
   const [calibDist,      setCalibDist]      = useState('10');
   const [showDistInput,  setShowDistInput]  = useState(false);
 
-  // Star measurement
-  const [starMode,       setStarMode]       = useState(false);
+  // 8-Point Star measurement (Full 3-Step Interactive Workflow)
+  const [starStep,       setStarStep]       = useState(null); // null | 'place' | 'align' | 'saving' | 'done'
+  const [starCentre,     setStarCentre]     = useState(null); // { px, py, pct: {x,y} }
   const [starDist,       setStarDist]       = useState('2.0');
-  const [starRotation,   setStarRotation]   = useState(0);
+  const [starRot,        setStarRot]        = useState(0);
   const [starOverlay,    setStarOverlay]    = useState(null);
   const [starResults,    setStarResults]    = useState(null);
 
@@ -75,8 +85,7 @@ export default function App() {
   const [newLabelName,  setNewLabelName]   = useState('');
   const [newLabelKey,   setNewLabelKey]    = useState('');
   const [drawMode,      setDrawMode]       = useState('polygon'); // 'polygon' | 'box'
-  const [drawingPts,    setDrawingPts]     = useState([]); // current polygon draft
-  const [boxStart,      setBoxStart]       = useState(null);
+  const [drawingPts,    setDrawingPts]     = useState([]);
 
   // RAM state storing annotations per image: { [imagePath]: [ { id, labelName, color, points: [{x, y}, ...] } ] }
   const [segmentations, setSegmentations] = useState({});
@@ -88,6 +97,10 @@ export default function App() {
   const [analyticsData,    setAnalyticsData]    = useState(null);
 
   const imgRef = useRef(null);
+
+  // Active image path & results
+  const activeImagePath = appMode === 'bulk' ? imageList[currentIndex] : filePath;
+  const currentResults  = activeImagePath ? resultsMap[activeImagePath] : null;
 
   // ── Startup Crash Recovery Check ─────────────────────────────────────────────
   useEffect(() => {
@@ -141,9 +154,6 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [labels, drawingPts, currentIndex, imageList]);
 
-  const activeImagePath = appMode === 'bulk' ? imageList[currentIndex] : filePath;
-  const currentResults  = activeImagePath ? resultsMap[activeImagePath] : null;
-
   // ── Coordinate conversion ───────────────────────────────────────────────────
   const getCoords = (e) => {
     const img = imgRef.current;
@@ -159,7 +169,16 @@ export default function App() {
     };
   };
 
-  // ── File & Folder Loading ────────────────────────────────────────────────────
+  // ── Drag & Drop + File Explorer Handlers ─────────────────────────────────────
+  const handleDrop = (e) => {
+    e.preventDefault();
+    const f = e.dataTransfer.files[0];
+    if (f) {
+      setFilePath(f.path);
+      setAppMode('single');
+    }
+  };
+
   const handleBrowseSingle = async () => {
     const p = await api.openFileDialog();
     if (p) {
@@ -205,7 +224,6 @@ export default function App() {
   const handleNextImage = () => {
     if (currentIndex < imageList.length - 1) {
       setDrawingPts([]);
-      setBoxStart(null);
       setCurrentIndex(prev => prev + 1);
     }
   };
@@ -213,7 +231,6 @@ export default function App() {
   const handlePrevImage = () => {
     if (currentIndex > 0) {
       setDrawingPts([]);
-      setBoxStart(null);
       setCurrentIndex(prev => prev - 1);
     }
   };
@@ -230,6 +247,67 @@ export default function App() {
     setShowDistInput(false); setCalibMode('idle');
   };
 
+  // ── Star Measurement 3-Step Interactive Workflow ────────────────────────────
+  const buildStarOverlay = (cx_px, cy_px, dist_px, rot_deg, shape) => {
+    const [H, W] = shape;
+    const pts = {};
+    COMPASS.forEach(name => {
+      const angle = (BASE_ANGLES[name] + rot_deg) * Math.PI / 180;
+      const px = cx_px + dist_px * Math.sin(angle);
+      const py = cy_px - dist_px * Math.cos(angle);
+      pts[name] = { pct: { x: (px/W)*100, y: (py/H)*100 }, px, py };
+    });
+    return {
+      cx: (cx_px / W) * 100,
+      cy: (cy_px / H) * 100,
+      points: pts,
+    };
+  };
+
+  const startStar = () => {
+    if (!pxPerCm) { alert('Please calibrate pixel scale first!'); return; }
+    setStarStep('place');
+    setStarCentre(null);
+    setStarOverlay(null);
+    setStarResults(null);
+    setStarRot(0);
+  };
+
+  const resetStar = () => {
+    setStarStep(null);
+    setStarCentre(null);
+    setStarOverlay(null);
+    setStarResults(null);
+    setStarRot(0);
+  };
+
+  const handleRotChange = (newRot) => {
+    setStarRot(newRot);
+    if (starCentre && currentResults) {
+      const dist_cm = parseFloat(starDist) || 2.0;
+      const dist_px = dist_cm * pxPerCm;
+      const ov = buildStarOverlay(starCentre.px, starCentre.py, dist_px, newRot, currentResults.shape);
+      setStarOverlay(ov);
+    }
+  };
+
+  const saveStar = async () => {
+    if (!starCentre || !currentResults) return;
+    setStarStep('saving');
+    const dist_cm = parseFloat(starDist) || 2.0;
+    try {
+      const res = await api.measureStar(
+        activeImagePath, starCentre.px, starCentre.py,
+        dist_cm, starRot, pxPerCm, currentResults.out_dir
+      );
+      setStarResults(res);
+      setStarStep('done');
+    } catch (err) {
+      alert(`Star calculation failed:\n${err}`);
+      setStarStep('align');
+    }
+  };
+
   // ── Segmentation Drawing Handlers ──────────────────────────────────────────
   const activeLabelObj = labels.find(l => l.id === activeLabelId) || labels[0];
 
@@ -240,35 +318,19 @@ export default function App() {
     if (calibMode === 'pt1') { setCalibPt1(c); setCalibMode('pt2'); return; }
     if (calibMode === 'pt2') { setCalibPt2(c); setCalibMode('idle'); setShowDistInput(true); return; }
 
-    if (starMode) {
-      if (!pxPerCm) { alert('Calibrate first!'); setStarMode(false); return; }
+    // Star Placement Step 1
+    if (starStep === 'place') {
       const dist_cm = parseFloat(starDist) || 2.0;
       const dist_px = dist_cm * pxPerCm;
-      const rot     = parseFloat(starRotation) || 0;
-
-      const [H, W] = currentResults.shape;
-      const pts = {};
-      COMPASS.forEach(name => {
-        const angle = (BASE_ANGLES[name] + rot) * Math.PI / 180;
-        const px = c.px + dist_px * Math.sin(angle);
-        const py = c.py - dist_px * Math.cos(angle);
-        pts[name] = { pct: { x: (px/W)*100, y: (py/H)*100 }, px, py };
-      });
-      setStarOverlay({ cx: (c.px/W)*100, cy: (c.py/H)*100, points: pts });
-      setStarMode(false);
-      setIsProcessing('star');
-
-      try {
-        const res = await api.measureStar(
-          activeImagePath, c.px, c.py, dist_cm, rot, pxPerCm, currentResults.out_dir
-        );
-        setStarResults(res);
-      } catch (err) { alert(`Star failed:\n${err}`); }
-      setIsProcessing(null);
+      setStarCentre(c);
+      const ov = buildStarOverlay(c.px, c.py, dist_px, starRot, currentResults.shape);
+      setStarOverlay(ov);
+      setStarStep('align');
       return;
     }
 
-    if (drawMode === 'polygon') {
+    // Polygon ROI Drawing Mode
+    if (drawMode === 'polygon' && !starStep) {
       setDrawingPts(prev => [...prev, c]);
     }
   };
@@ -410,7 +472,10 @@ export default function App() {
     setShowRestoreModal(false);
   };
 
-  const cursor = (calibMode !== 'idle' || starMode || drawMode) ? 'crosshair' : 'default';
+  const openFolder = () => { if (currentResults?.out_dir) api.openPath(currentResults.out_dir); };
+  const showCsv = (p) => { if (p) api.showItemInFolder(p); };
+
+  const cursor = (calibMode !== 'idle' || starStep === 'place' || drawMode) ? 'crosshair' : 'default';
   const imgSrc = currentResults?.images?.[activePanel]
     ? `${toFileUrl(currentResults.images[activePanel])}?v=${imgTs}` : null;
 
@@ -419,6 +484,7 @@ export default function App() {
   return (
     <div className="app">
 
+      {/* RESTORE DRAFT MODAL */}
       {showRestoreModal && (
         <div className="modal-overlay">
           <div className="modal-card">
@@ -432,10 +498,12 @@ export default function App() {
         </div>
       )}
 
+      {/* ANALYTICS MODAL */}
       {showAnalytics && (
         <AnalyticsView analyticsData={analyticsData} onClose={() => setShowAnalytics(false)} />
       )}
 
+      {/* HEADER */}
       <header className="app-header">
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
@@ -450,12 +518,13 @@ export default function App() {
           )}
           {activeImagePath && (
             <button className="btn-ghost" onClick={() => { setResultsMap({}); setFilePath(null); setImageList([]); }}>
-              ← Reset Image
+              ← New Image
             </button>
           )}
         </div>
       </header>
 
+      {/* UPLOAD SCREEN */}
       {!activeImagePath && (
         <main className="upload-screen">
           <div className="upload-hero">
@@ -470,18 +539,20 @@ export default function App() {
               <p className="drop-sub">Select folder to analyze & label sequential images (1–N)</p>
             </div>
 
-            <div className="drop-zone" onClick={handleBrowseSingle}>
+            <div className="drop-zone" onDragOver={e=>e.preventDefault()} onDrop={handleDrop} onClick={handleBrowseSingle}>
               <div className="drop-icon">📷</div>
-              <p className="drop-title">Open Single Image</p>
-              <p className="drop-sub">Browse for individual thermal image file</p>
+              <p className="drop-title">Open Single Thermal Image</p>
+              <p className="drop-sub">Drop or click to browse · .jpg .png .tiff</p>
             </div>
           </div>
         </main>
       )}
 
+      {/* WORKSPACE RESULTS */}
       {activeImagePath && (
         <div className="results-layout">
 
+          {/* LEFT SIDEBAR: PANELS & FOLDER NAVIGATION */}
           <aside className="left-sidebar">
             {appMode === 'bulk' && imageList.length > 0 && (
               <div className="bulk-nav-box">
@@ -504,8 +575,15 @@ export default function App() {
                 <span className="panel-label">{p.label}</span>
               </button>
             ))}
+
+            <div className="sidebar-sep"/>
+            <button className="panel-btn" onClick={openFolder}>
+              <span className="panel-icon">📁</span>
+              <span className="panel-label">Output Folder</span>
+            </button>
           </aside>
 
+          {/* CENTRE AREA: THERMAL IMAGE CANVAS & OVERLAYS */}
           <div className="image-area">
             <div className="image-wrapper">
               {imgSrc && (
@@ -514,22 +592,28 @@ export default function App() {
                      onClick={handleImageClick}/>
               )}
 
+              {/* SVG OVERLAYS */}
               <svg className="ov-svg">
+                {/* Calibration Line */}
                 {calibPt1 && calibPt2 && (
                   <line x1={`${calibPt1.pct.x}%`} y1={`${calibPt1.pct.y}%`}
                         x2={`${calibPt2.pct.x}%`} y2={`${calibPt2.pct.y}%`}
                         stroke="#00e5ff" strokeWidth="2" strokeDasharray="5 3"/>
                 )}
 
+                {/* Star Spokes */}
                 {starOverlay && COMPASS.map(name => {
                   const pt = starOverlay.points[name];
+                  const diff = starResults?.points?.[name]?.diff;
+                  const col  = diffColor(diff);
                   return (
                     <line key={name} x1={`${starOverlay.cx}%`} y1={`${starOverlay.cy}%`}
                           x2={`${pt.pct.x}%`} y2={`${pt.pct.y}%`}
-                          stroke="#ff4444" strokeWidth="1.5"/>
+                          stroke={col} strokeWidth="1.5" opacity="0.85"/>
                   );
                 })}
 
+                {/* Saved ROI Polygons in RAM State */}
                 {currentResults && currentRois.map(roi => {
                   const [H, W] = currentResults.shape;
                   const ptsStr = roi.points.map(p => `${(p.x/W)*100}%,${(p.y/H)*100}%`).join(' ');
@@ -540,6 +624,7 @@ export default function App() {
                   );
                 })}
 
+                {/* Current Drawing Polygon Draft */}
                 {currentResults && drawingPts.length > 0 && (
                   <g>
                     <polyline points={drawingPts.map(p => `${p.pct.x}%,${p.pct.y}%`).join(' ')}
@@ -551,6 +636,27 @@ export default function App() {
                 )}
               </svg>
 
+              {/* Calibration Dots */}
+              {calibPt1 && <div className="ov-dot calib-dot" style={{left:`${calibPt1.pct.x}%`,top:`${calibPt1.pct.y}%`}}>1</div>}
+              {calibPt2 && <div className="ov-dot calib-dot" style={{left:`${calibPt2.pct.x}%`,top:`${calibPt2.pct.y}%`}}>2</div>}
+
+              {/* Star Dots */}
+              {starOverlay && (
+                <div className="ov-dot centre-dot" style={{left:`${starOverlay.cx}%`,top:`${starOverlay.cy}%`}}>+</div>
+              )}
+              {starOverlay && COMPASS.map(name => {
+                const pt   = starOverlay.points[name];
+                const diff = starResults?.points?.[name]?.diff;
+                const col  = diffColor(diff);
+                return (
+                  <div key={name} className="ov-dot star-dot"
+                       style={{left:`${pt.pct.x}%`, top:`${pt.pct.y}%`, borderColor: col}}>
+                    <span className="star-dot-label">{name}</span>
+                  </div>
+                );
+              })}
+
+              {/* Current Drawing Action Bar */}
               {drawingPts.length > 0 && (
                 <div className="drawing-toolbar">
                   <span>Drawing <strong>{activeLabelObj.name}</strong> ({drawingPts.length} pts)</span>
@@ -563,8 +669,22 @@ export default function App() {
             </div>
           </div>
 
+          {/* RIGHT SIDEBAR: TOOLS & CARDS */}
           <aside className="right-sidebar">
 
+            {/* IMAGE INFO CARD */}
+            {currentResults && (
+              <div className="tool-card">
+                <h4 className="card-title">Image Info</h4>
+                <div className="kv"><span>File</span><span>{currentResults.stem}</span></div>
+                <div className="kv"><span>Size</span><span>{currentResults.shape[1]}×{currentResults.shape[0]}</span></div>
+                <div className="kv"><span>Min</span><span>{currentResults.temp_min?.toFixed(1)} °C</span></div>
+                <div className="kv"><span>Max</span><span>{currentResults.temp_max?.toFixed(1)} °C</span></div>
+                <div className="kv"><span>Mean</span><span>{currentResults.temp_mean?.toFixed(1)} °C</span></div>
+              </div>
+            )}
+
+            {/* SEGMENTATION LABELING PANEL */}
             <div className="tool-card">
               <h4 className="card-title">🏷 Segmentation Labels</h4>
               
@@ -582,6 +702,7 @@ export default function App() {
                 ))}
               </div>
 
+              {/* Add Label Form */}
               <div className="add-label-box">
                 <input className="field-input-sm" type="text" placeholder="Label (e.g. m1)"
                        value={newLabelName} onChange={e => setNewLabelName(e.target.value)}/>
@@ -591,6 +712,7 @@ export default function App() {
               </div>
             </div>
 
+            {/* DRAWN ROIs LIST FOR ACTIVE IMAGE */}
             <div className="tool-card">
               <h4 className="card-title">📌 Image ROIs ({currentRois.length})</h4>
               {currentRois.length === 0 ? (
@@ -608,6 +730,7 @@ export default function App() {
               )}
             </div>
 
+            {/* CALIBRATION TOOL CARD */}
             <div className="tool-card">
               <h4 className="card-title">📏 Calibration</h4>
               <p className={`calib-status ${pxPerCm ? 'ok' : 'none'}`}>
@@ -628,22 +751,146 @@ export default function App() {
               )}
             </div>
 
+            {/* STAR MEASUREMENT — 3-STEP INTERACTIVE CARD */}
             <div className="tool-card">
               <h4 className="card-title">⊙ 8-Point Star</h4>
+
+              {/* Step indicators */}
+              <div className="step-row">
+                {['Place','Align','Save'].map((label, i) => {
+                  const stepKeys = [['place'], ['align'], ['saving','done']];
+                  const active   = starStep && stepKeys[i].includes(starStep);
+                  const done     = (i === 0 && ['align','saving','done'].includes(starStep)) ||
+                                   (i === 1 && ['saving','done'].includes(starStep)) ||
+                                   (i === 2 && starStep === 'done');
+                  return (
+                    <div key={label} className={`step-chip ${active?'active':''} ${done?'done':''}`}>
+                      <span className="step-num">{done ? '✓' : i+1}</span>
+                      <span className="step-lbl">{label}</span>
+                    </div>
+                  );
+                })}
+              </div>
+
               <label className="field-label">Distance (cm)</label>
               <input className="field-input" type="number" min="0.1" step="0.5"
-                     value={starDist} onChange={e=>setStarDist(e.target.value)}/>
-              
-              <button className={`btn-secondary w-full ${starMode?'btn-active':''}`}
-                      disabled={!pxPerCm || isProcessing==='star'}
-                      onClick={()=>setStarMode(v=>!v)} style={{marginTop:'8px'}}>
-                {starMode ? '…click centre on image' : 'Place star'}
-              </button>
+                     value={starDist}
+                     disabled={starStep === 'align' || starStep === 'saving' || starStep === 'done'}
+                     onChange={e=>setStarDist(e.target.value)}/>
+
+              {/* Step 1: Place button */}
+              {(!starStep || starStep === 'done') && (
+                <button className={`btn-secondary w-full ${starStep==='place'?'btn-active':''}`}
+                        disabled={!pxPerCm}
+                        onClick={startStar}
+                        style={{marginTop:'8px'}}>
+                  {starStep === 'done' ? '↺ Place new star' : '① Place star on image'}
+                </button>
+              )}
+
+              {starStep === 'place' && (
+                <div className="step-hint">Click anywhere on the image to place the centre</div>
+              )}
+
+              {/* Step 2: Align — rotation slider + live preview */}
+              {(starStep === 'align' || starStep === 'saving') && (
+                <>
+                  <div className="rotation-header">
+                    <label className="field-label">② Rotate: {starRot}°</label>
+                    <button className="btn-ghost btn-tiny" onClick={() => handleRotChange(0)}>↺ Reset</button>
+                  </div>
+                  <input type="range" min="-180" max="180" step="1"
+                         value={starRot}
+                         onChange={e => handleRotChange(Number(e.target.value))}
+                         className="rotation-slider w-full"/>
+                  <StarPreview rotation={starRot}/>
+
+                  <div className="align-btn-row">
+                    <button className="btn-ghost" onClick={resetStar}>✕ Cancel</button>
+                    <button className="btn-primary"
+                            disabled={starStep === 'saving'}
+                            onClick={saveStar}>
+                      {starStep === 'saving'
+                        ? <><span className="spinner"/>Saving…</>
+                        : '③ Save Star'}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
+
+            {/* Star Results Table */}
+            {starResults && starStep === 'done' && (
+              <div className="tool-card">
+                <h4 className="card-title">Star Results</h4>
+                <div className="kv"><span>Centre temp</span>
+                  <span>{starResults.temp_centre?.toFixed(4)} °C</span></div>
+                <div className="kv"><span>Rotation</span>
+                  <span>{starResults.rotation_deg?.toFixed(1)}°</span></div>
+                <div className="kv"><span>Dominant</span>
+                  <span style={{color:diffColor(starResults.points?.[starResults.dominant]?.diff)}}>
+                    {starResults.dominant}
+                  </span>
+                </div>
+
+                <div className="star-table">
+                  <div className="star-table-head">
+                    <span>Dir</span><span>Temp °C</span><span>Δ centre</span>
+                  </div>
+                  {COMPASS.map(name => {
+                    const p = starResults.points?.[name];
+                    if (!p) return null;
+                    const isDom = name === starResults.dominant;
+                    return (
+                      <div key={name} className={`star-row ${isDom?'dominant':''}`}>
+                        <span className="star-dir" style={{color:diffColor(p.diff)}}>{name}</span>
+                        <span className="star-val">{p.temp?.toFixed(4)}</span>
+                        <span className="star-diff" style={{color:diffColor(p.diff)}}>
+                          {p.diff >= 0 ? '+' : ''}{p.diff?.toFixed(4)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <button className="btn-secondary w-full" style={{marginTop:'8px'}}
+                        onClick={()=>showCsv(starResults.csv_path)}>
+                  📄 Show CSV
+                </button>
+              </div>
+            )}
 
           </aside>
         </div>
       )}
     </div>
+  );
+}
+
+// Mini live compass rose preview showing current rotation
+function StarPreview({ rotation }) {
+  const size = 72, cx = 36, cy = 36, r = 26;
+  return (
+    <svg width={size} height={size} style={{display:'block',margin:'4px auto'}}>
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="#2e2e3a" strokeWidth="1"/>
+      <circle cx={cx} cy={cy} r={2} fill="#888"/>
+      {COMPASS.map(name => {
+        const ang = (BASE_ANGLES[name] + rotation) * Math.PI / 180;
+        const px  = cx + r * Math.sin(ang);
+        const py  = cy - r * Math.cos(ang);
+        const isCard = ['N','S','E','W'].includes(name);
+        return (
+          <g key={name}>
+            <line x1={cx} y1={cy} x2={px} y2={py}
+                  stroke={isCard?'#ff6b35':'#555'} strokeWidth={isCard?1.2:0.8}/>
+            <circle cx={px} cy={py} r={3}
+                    fill={isCard?'#ff6b35':'#3a3a50'} stroke={isCard?'#ff6b35':'#555'} strokeWidth="0.5"/>
+            <text x={px+(px-cx)*0.35} y={py+(py-cy)*0.35+1}
+                  fontSize="6" fill={isCard?'#ff6b35':'#666'}
+                  textAnchor="middle" dominantBaseline="middle">{name}</text>
+          </g>
+        );
+      })}
+    </svg>
   );
 }
