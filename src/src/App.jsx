@@ -508,7 +508,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">v1.1.0</span>
+          <span className="brand-badge">v1.2.0</span>
         </div>
         <div className="header-actions">
           {activeImagePath && (
