@@ -29,9 +29,10 @@ app.whenReady().then(createWindow);
 // ── helper: resolve the Python executable / script path ──────────────────────
 function getBackendArgs(command, extraArgs) {
   if (app.isPackaged) {
-    // PyInstaller onedir bundle output path: resources/backend/analyzer/analyzer(.exe)
-    const ext     = process.platform === 'win32' ? '.exe' : '';
-    const exePath = path.join(process.resourcesPath, 'backend', 'analyzer', `analyzer${ext}`);
+    const ext = process.platform === 'win32' ? '.exe' : '';
+    const dirExe  = path.join(process.resourcesPath, 'backend', 'analyzer', `analyzer${ext}`);
+    const fileExe = path.join(process.resourcesPath, 'backend', `analyzer${ext}`);
+    const exePath = fs.existsSync(dirExe) ? dirExe : fileExe;
     return { executable: exePath, args: [command, ...extraArgs] };
   } else {
     // Development: run the Python script directly
