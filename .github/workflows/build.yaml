@@ -27,8 +27,10 @@ jobs:
       # ── System dependencies (Linux) ──────────────────────────────────────────
       - name: Install System Dependencies (Linux)
         if: runner.os == 'Linux'
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
+          sudo apt-get update -y
           sudo apt-get install -y libgl1-mesa-glx libglib2.0-0 libarchive-tools
 
       # ── Python backend ───────────────────────────────────────────────────────
@@ -80,4 +82,4 @@ jobs:
         working-directory: ./src
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --publish always
+        run: npx electron-builder --publish onTagOrDraft
