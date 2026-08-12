@@ -12,6 +12,9 @@ Commands
       Recompute gradients, extract ROI circle stats, save ROI CSV.
       Prints a single JSON object to stdout.
 
+  crop <imagePath> <pointsJson> <labelName> <roiIndex> <outputDir>
+      Crop ROI polygon, mask temperature matrix, save isolated CSV + stats.
+
 All output goes to stdout as JSON.
 All log/debug goes to stderr (never stdout, or the JSON parse breaks).
 Exit 0 = ok, Exit 1 = error (error key in JSON).
@@ -165,36 +168,22 @@ def save_quiver_png(data: dict, out_dir: Path, stem: str) -> str:
     h, w   = temp.shape
     sub    = 15
     ys, xs = np.mgrid[0:h:sub, 0:w:sub]
-
     u = sx[ys, xs].astype(float)
-    v = -sy[ys, xs].astype(float)          # flip Y for image coords
-    mask  = strong[ys, xs]
-
-    # zero-out weak arrows instead of looping
-    u[~mask] = 0.0
-    v[~mask] = 0.0
-
-    # normalise only non-zero arrows
-    nrm       = np.sqrt(u**2 + v**2)
-    nz        = nrm > 0
-    u[nz]    /= nrm[nz]
-    v[nz]    /= nrm[nz]
-
-    # per-arrow colour from angle
-    angle_flat = np.arctan2(v, u)
-    rgba       = plt.cm.hsv((angle_flat + np.pi) / (2 * np.pi))  # (rows, cols, 4)
-    # flatten for quiver C argument
-    c_flat = rgba[mask].reshape(-1, 4)
+    v = -sy[ys, xs].astype(float)
+    mask   = strong[ys, xs]
+    nrm    = np.sqrt(u**2 + v**2) + 1e-8
+    u_n, v_n = u / nrm, v / nrm
+    colors = plt.cm.hsv((np.arctan2(v_n, u_n) + np.pi) / (2 * np.pi))
 
     fig, ax = plt.subplots(figsize=(12, 8), facecolor="black")
     ax.imshow(temp, cmap="inferno", alpha=0.85)
-
-    # single vectorised quiver call — orders of magnitude faster than annotate loop
-    ax.quiver(xs[mask], ys[mask], u[mask], v[mask],
-              color=c_flat,
-              angles="xy", scale_units="xy", scale=0.14,
-              width=0.002, headwidth=4, headlength=5,
-              alpha=0.9)
+    for i in range(ys.shape[0]):
+        for j in range(ys.shape[1]):
+            if mask[i, j]:
+                ax.annotate("",
+                    xy    =(xs[i,j] + u_n[i,j]*6, ys[i,j] + v_n[i,j]*6),
+                    xytext=(xs[i,j], ys[i,j]),
+                    arrowprops=dict(arrowstyle="->", color=colors[i,j], lw=1.1))
 
     # compass wheel
     ax_w  = fig.add_axes([0.80, 0.76, 0.16, 0.16], projection="polar")
@@ -260,7 +249,6 @@ def save_full_csvs(data: dict, out_dir: Path, stem: str) -> dict:
 
 import math
 
-# 8 compass directions with base angle from North, clockwise
 COMPASS = [
     ("N",   0),
     ("NE", 45),
@@ -291,11 +279,6 @@ def bilinear_sample(arr: np.ndarray, x: float, y: float) -> float:
 
 def compute_star(temp: np.ndarray, cx: float, cy: float,
                  dist_px: float, rotation_deg: float) -> dict:
-    """
-    Place 8 compass points at distance dist_px from (cx, cy), rotated
-    by rotation_deg clockwise. Return coords + temps + diffs from centre.
-    Image coords: +x = East, +y = South  →  North = -y direction.
-    """
     temp_centre = bilinear_sample(temp, cx, cy)
     points = {}
     for name, base_angle in COMPASS:
@@ -348,7 +331,6 @@ def save_star_csv(star: dict, cx: float, cy: float, dist_cm: float,
         w.writerow(["#"])
         w.writerow(["direction", "px_x", "px_y", "x_cm", "y_cm",
                     "angle_deg", "temp", "diff_from_centre", "diff_per_cm"])
-        # centre row
         w.writerow(["CENTER",
                     f"{cx:.2f}", f"{cy:.2f}",
                     f"{cx/px_cm:.4f}", f"{cy/px_cm:.4f}",
@@ -419,7 +401,6 @@ def cmd_star(image_path: str, cx: float, cy: float,
     csv_path = save_star_csv(star, cx, cy, dist_cm, dist_px,
                              rotation_deg, px_cm, out_dir, stem)
 
-    # dominant direction = point with largest absolute diff
     dom = max(COMPASS, key=lambda nd: abs(star["points"][nd[0]]["diff"]))[0]
 
     emit({
@@ -436,13 +417,113 @@ def cmd_star(image_path: str, cx: float, cy: float,
     })
 
 
+def cmd_crop(image_path: str, points_json_str: str, label_name: str,
+             roi_index_str: str, out_dir_str: str):
+    out_dir = Path(out_dir_str)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = Path(image_path).stem
+
+    log(f"CROP: loading {image_path}")
+    temp = load_temperature(image_path)
+    h, w = temp.shape
+
+    try:
+        pts_data = json.loads(points_json_str)
+    except Exception as e:
+        fail(f"Invalid JSON for ROI points: {e}")
+
+    raw_pts = []
+    if isinstance(pts_data, list):
+        for p in pts_data:
+            if isinstance(p, dict) and "x" in p and "y" in p:
+                raw_pts.append((float(p["x"]), float(p["y"])))
+            elif isinstance(p, (list, tuple)) and len(p) >= 2:
+                raw_pts.append((float(p[0]), float(p[1])))
+
+    if len(raw_pts) == 2:
+        x0, y0 = raw_pts[0]
+        x1, y1 = raw_pts[1]
+        raw_pts = [
+            (min(x0, x1), min(y0, y1)),
+            (max(x0, x1), min(y0, y1)),
+            (max(x0, x1), max(y0, y1)),
+            (min(x0, x1), max(y0, y1))
+        ]
+
+    if len(raw_pts) < 3:
+        fail("ROI points must form at least 3 vertices or 2 bounding box corners")
+
+    pts_arr = np.array([[int(round(x)), int(round(y))] for x, y in raw_pts], dtype=np.int32)
+    pts_arr[:, 0] = np.clip(pts_arr[:, 0], 0, w - 1)
+    pts_arr[:, 1] = np.clip(pts_arr[:, 1], 0, h - 1)
+
+    mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.fillPoly(mask, [pts_arr], 255)
+
+    rx, ry, rw, rh = cv2.boundingRect(pts_arr)
+    rw = max(1, rw)
+    rh = max(1, rh)
+
+    temp_crop = temp[ry:ry+rh, rx:rx+rw].copy()
+    mask_crop = mask[ry:ry+rh, rx:rx+rw]
+
+    valid_pixels = temp_crop[mask_crop > 0]
+    if len(valid_pixels) == 0:
+        valid_pixels = temp_crop.flatten()
+
+    mean_v = float(np.mean(valid_pixels))
+    min_v  = float(np.min(valid_pixels))
+    max_v  = float(np.max(valid_pixels))
+    std_v  = float(np.std(valid_pixels))
+
+    safe_label = "".join([c if c.isalnum() else "_" for c in label_name])
+    csv_filename = f"isolated_{stem}_{safe_label}_{roi_index_str}.csv"
+    csv_path = out_dir / csv_filename
+
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([f"# ISOLATED SEGMENTATION ROI - {stem} - {label_name}"])
+        writer.writerow(["# label", safe_label])
+        writer.writerow(["# roi_index", roi_index_str])
+        writer.writerow(["# mean_temp", f"{mean_v:.6f}"])
+        writer.writerow(["# min_temp",  f"{min_v:.6f}"])
+        writer.writerow(["# max_temp",  f"{max_v:.6f}"])
+        writer.writerow(["# std_temp",  f"{std_v:.6f}"])
+        writer.writerow(["# pixel_count", len(valid_pixels)])
+        writer.writerow(["#"])
+
+        for r_idx in range(rh):
+            row_vals = []
+            for c_idx in range(rw):
+                if mask_crop[r_idx, c_idx] > 0:
+                    row_vals.append(f"{temp_crop[r_idx, c_idx]:.6f}")
+                else:
+                    row_vals.append("NaN")
+            writer.writerow(row_vals)
+
+    log(f"  saved isolated ROI CSV: {csv_path.name}")
+
+    emit({
+        "status":       "ok",
+        "csv_path":     str(csv_path),
+        "stem":         stem,
+        "label":        label_name,
+        "roi_index":    int(roi_index_str),
+        "mean_temp":    mean_v,
+        "min_temp":     min_v,
+        "max_temp":     max_v,
+        "std_temp":     std_v,
+        "pixel_count":  len(valid_pixels),
+    })
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        fail("Usage: analyzer.py analyze <imagePath> <outputDir>")
+        fail("Usage: analyzer.py <analyze|star|crop> ...")
 
     command = sys.argv[1].lower()
 
@@ -464,5 +545,16 @@ if __name__ == "__main__":
             out_dir_str  = sys.argv[8],
         )
 
+    elif command == "crop":
+        if len(sys.argv) < 7:
+            fail("Usage: analyzer.py crop <imagePath> <pointsJson> <labelName> <roiIndex> <outputDir>")
+        cmd_crop(
+            image_path      = sys.argv[2],
+            points_json_str = sys.argv[3],
+            label_name      = sys.argv[4],
+            roi_index_str   = sys.argv[5],
+            out_dir_str     = sys.argv[6],
+        )
+
     else:
-        fail(f"Unknown command: {command}. Use 'analyze' or 'star'.")
+        fail(f"Unknown command: {command}. Use 'analyze', 'star', or 'crop'.")

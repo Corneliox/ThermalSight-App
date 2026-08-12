@@ -1,25 +1,20 @@
 // src/main.js
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { spawn } = require('child_process');
 
 let mainWindow;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    show: false,                    // don't show until content is ready
-    backgroundColor: '#0d0d0f',    // match app bg — prevents white flash
+    width: 1360,
+    height: 860,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
     },
-  });
-
-  // Show window only when fully rendered — feels instant, no white flash
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
   });
 
   if (app.isPackaged) {
@@ -34,12 +29,9 @@ app.whenReady().then(createWindow);
 // ── helper: resolve the Python executable / script path ──────────────────────
 function getBackendArgs(command, extraArgs) {
   if (app.isPackaged) {
-    // --onefile produces a single binary:
-    //   Windows : resources/backend/analyzer.exe
-    //   Mac/Linux: resources/backend/analyzer
+    // PyInstaller onedir bundle output path: resources/backend/analyzer/analyzer(.exe)
     const ext     = process.platform === 'win32' ? '.exe' : '';
-    const exePath = path.join(process.resourcesPath, 'backend', `analyzer${ext}`);
-    console.log(`[backend] resolved exe: ${exePath}`);
+    const exePath = path.join(process.resourcesPath, 'backend', 'analyzer', `analyzer${ext}`);
     return { executable: exePath, args: [command, ...extraArgs] };
   } else {
     // Development: run the Python script directly
@@ -74,7 +66,6 @@ function runPython(command, extraArgs) {
           reject(`JSON parse error: ${e.message}\nRaw output: ${stdout}`);
         }
       } else {
-        // Try to parse the error JSON the script emits on failure
         try {
           const errObj = JSON.parse(stdout.trim());
           reject(errObj.error || `Process exited with code ${code}`);
@@ -85,22 +76,17 @@ function runPython(command, extraArgs) {
     });
 
     proc.on('error', (err) => {
-      reject(`Failed to start backend: ${err.message}`);
+      reject(`Failed to start backend executable (${executable}): ${err.message}`);
     });
   });
 }
 
 // ── IPC: run-analysis ─────────────────────────────────────────────────────────
-// Called by React with: ipcRenderer.invoke('run-analysis', imagePath, outputDir)
-// Returns JSON: { status, stem, out_dir, shape, temp_min, temp_max, images, csvs }
 ipcMain.handle('run-analysis', async (_event, imagePath, outputDir) => {
   return runPython('analyze', [imagePath, outputDir]);
 });
 
 // ── IPC: measure-star ─────────────────────────────────────────────────────────
-// Called by React with:
-//   ipcRenderer.invoke('measure-star', imagePath, cx, cy, dist_cm, rotation_deg, pxPerCm, outputDir)
-// Returns JSON: { status, csv_path, points, dominant, temp_centre, … }
 ipcMain.handle('measure-star', async (_event, imagePath, cx, cy, dist_cm, rotation_deg, pxPerCm, outputDir) => {
   return runPython('star', [
     imagePath,
@@ -113,8 +99,19 @@ ipcMain.handle('measure-star', async (_event, imagePath, cx, cy, dist_cm, rotati
   ]);
 });
 
+// ── IPC: crop-labels ──────────────────────────────────────────────────────────
+ipcMain.handle('crop-labels', async (_event, imagePath, roiPoints, labelName, roiIndex, outputDir) => {
+  const pointsJson = JSON.stringify(roiPoints);
+  return runPython('crop', [
+    imagePath,
+    pointsJson,
+    labelName,
+    String(roiIndex),
+    outputDir,
+  ]);
+});
+
 // ── IPC: open-file-dialog ─────────────────────────────────────────────────────
-// Convenience so React can open a native file picker without nodeIntegration hacks
 ipcMain.handle('open-file-dialog', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Select FLIR / thermal image',
@@ -130,8 +127,81 @@ ipcMain.handle('open-file-dialog', async () => {
 // ── IPC: open-folder-dialog ───────────────────────────────────────────────────
 ipcMain.handle('open-folder-dialog', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Select output folder',
+    title: 'Select folder containing thermal images',
     properties: ['openDirectory', 'createDirectory'],
   });
   return result.canceled ? null : result.filePaths[0];
+});
+
+// ── IPC: list-folder-images ───────────────────────────────────────────────────
+ipcMain.handle('list-folder-images', async (_event, folderPath) => {
+  if (!folderPath || !fs.existsSync(folderPath)) return [];
+  const files = fs.readdirSync(folderPath);
+  const exts  = ['.jpg', '.jpeg', '.png', '.tiff', '.tif'];
+  
+  const validFiles = files.filter(f => exts.includes(path.extname(f).toLowerCase()));
+  
+  // Natural sorting (e.g. img_1, img_2, ..., img_10)
+  validFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+
+  return validFiles.map(f => path.join(folderPath, f));
+});
+
+// ── IPC: Draft recovery session file operations ────────────────────────────────
+const getDraftPath = () => path.join(app.getPath('userData'), 'draft_session.json');
+
+ipcMain.handle('save-draft', async (_event, draftData) => {
+  try {
+    fs.writeFileSync(getDraftPath(), JSON.stringify(draftData, null, 2), 'utf-8');
+    return { status: 'ok' };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle('load-draft', async () => {
+  const p = getDraftPath();
+  if (fs.existsSync(p)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      return data;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+});
+
+ipcMain.handle('clear-draft', async () => {
+  const p = getDraftPath();
+  if (fs.existsSync(p)) {
+    try {
+      fs.unlinkSync(p);
+      return { status: 'ok' };
+    } catch (e) {
+      return { error: e.message };
+    }
+  }
+  return { status: 'ok' };
+});
+
+ipcMain.handle('save-master-json', async (_event, outDir, masterData) => {
+  try {
+    if (!fs.existsSync(outDir)) {
+      fs.mkdirSync(outDir, { recursive: true });
+    }
+    const targetFile = path.join(outDir, 'annotations_session.json');
+    fs.writeFileSync(targetFile, JSON.stringify(masterData, null, 2), 'utf-8');
+    return { status: 'ok', path: targetFile };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle('open-path', async (_event, p) => {
+  if (p) shell.openPath(p);
+});
+
+ipcMain.handle('show-item-in-folder', async (_event, p) => {
+  if (p) shell.showItemInFolder(p);
 });
