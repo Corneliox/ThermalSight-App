@@ -1,7 +1,10 @@
 name: Build and Release ThermalSight
 
 on:
+  workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
