@@ -94,17 +94,29 @@ export default function App() {
   // RAM state storing annotations per image: { [imagePath]: [ { id, labelName, color, points: [{x, y}, ...] } ] }
   const [segmentations, setSegmentations] = useState({});
 
-  // Crash Recovery & Analytics State
-  const [showRestoreModal, setShowRestoreModal] = useState(false);
-  const [draftToRestore,   setDraftToRestore]   = useState(null);
-  const [showAnalytics,    setShowAnalytics]    = useState(false);
-  const [analyticsData,    setAnalyticsData]    = useState(null);
+  // Crash Recovery, Settings & About State
+  const [showRestoreModal,  setShowRestoreModal]  = useState(false);
+  const [draftToRestore,    setDraftToRestore]    = useState(null);
+  const [showAnalytics,     setShowAnalytics]     = useState(false);
+  const [analyticsData,     setAnalyticsData]     = useState(null);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showAboutModal,    setShowAboutModal]    = useState(false);
 
   const imgRef = useRef(null);
 
   // Active image path & results
   const activeImagePath = appMode === 'bulk' ? imageList[currentIndex] : filePath;
   const currentResults  = activeImagePath ? resultsMap[activeImagePath] : null;
+
+  // ── Menu Bar Event IPC Listeners ──────────────────────────────────────────────
+  useEffect(() => {
+    if (api.onMenuOpenSettings) api.onMenuOpenSettings(() => setShowSettingsModal(true));
+    if (api.onMenuOpenAbout)    api.onMenuOpenAbout(() => setShowAboutModal(true));
+    if (api.onMenuTriggerUndo)  api.onMenuTriggerUndo(() => undoLastPolygon());
+    if (api.onMenuOpenSingle)   api.onMenuOpenSingle(() => handleBrowseSingle());
+    if (api.onMenuOpenFolder)   api.onMenuOpenFolder(() => handleBrowseFolder());
+    if (api.onMenuOpenProject)  api.onMenuOpenProject(() => openFolder());
+  }, [segmentations, activeImagePath, imageList, currentIndex, filePath]);
 
   // ── Startup Crash Recovery Check ─────────────────────────────────────────────
   useEffect(() => {
@@ -583,14 +595,149 @@ export default function App() {
         <AnalyticsView analyticsData={analyticsData} onClose={() => setShowAnalytics(false)} />
       )}
 
+      {/* SETTINGS MODAL */}
+      {showSettingsModal && (
+        <div className="modal-overlay">
+          <div className="analytics-card" style={{ maxWidth: '640px' }}>
+            <div className="analytics-header">
+              <div>
+                <h2>⚙ ThermalSight Settings & Configurations</h2>
+                <p className="subtext">Configure segmentation label variables, assigned shortcuts (a-z), and project output directories</p>
+              </div>
+              <button className="btn-ghost btn-tiny" onClick={() => setShowSettingsModal(false)}>✕</button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {/* Label Management Section */}
+              <div className="tool-card">
+                <h4 className="card-title">🏷 Label & Single-Key Shortcut Assignments</h4>
+                <div className="label-list">
+                  {labels.map(l => (
+                    editingLabelId === l.id ? (
+                      <div key={l.id} className="label-edit-box">
+                        <div className="label-edit-inputs">
+                          <input className="field-input-sm" type="text" value={editName}
+                                 onChange={e => setEditName(e.target.value)} placeholder="Label Name"/>
+                          <input className="field-input-sm key-input" type="text" maxLength={1} value={editKey}
+                                 onChange={e => setEditKey(e.target.value)} placeholder="a-z"/>
+                          <input type="color" className="color-picker-input" value={editColor}
+                                 onChange={e => setEditColor(e.target.value)} title="Pick Color"/>
+                        </div>
+                        <div className="label-edit-actions">
+                          <button className="btn-primary btn-tiny" onClick={saveLabelEdit}>✓ Save</button>
+                          <button className="btn-ghost btn-tiny" onClick={cancelLabelEdit}>✕ Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div key={l.id} className="label-item">
+                        <span className="label-color-dot" style={{ backgroundColor: l.color }}/>
+                        <span className="label-name-text">{l.name}</span>
+                        <kbd className="label-key-badge">[{l.key.toUpperCase()}]</kbd>
+                        <button className="btn-ghost btn-tiny" title="Edit Label" onClick={() => startEditLabel(l)}>✎ Edit</button>
+                        {labels.length > 1 && (
+                          <button className="btn-ghost btn-tiny" title="Delete Label" onClick={() => removeLabel(l.id)}>✕</button>
+                        )}
+                      </div>
+                    )
+                  ))}
+                </div>
+
+                <div className="add-label-box" style={{ marginTop: '8px' }}>
+                  <input className="field-input-sm" type="text" placeholder="New Label (e.g. Component A)"
+                         value={newLabelName} onChange={e => setNewLabelName(e.target.value)}/>
+                  <input className="field-input-sm key-input" type="text" maxLength={1} placeholder="Key (a-z)"
+                         value={newLabelKey} onChange={e => setNewLabelKey(e.target.value)}/>
+                  <button className="btn-secondary btn-tiny" onClick={handleAddLabel}>+ Add Label</button>
+                </div>
+              </div>
+
+              {/* Active Project & Output Path */}
+              <div className="tool-card">
+                <h4 className="card-title">📁 Currently Active Project & Outputs</h4>
+                <div className="kv"><span>App Mode</span><span>{appMode === 'bulk' ? `Bulk Folder (${imageList.length} images)` : 'Single Image'}</span></div>
+                <div className="kv"><span>Active Folder</span><span style={{ fontSize: '10px', wordBreak: 'break-all' }}>{folderPath || (filePath ? filePath.split(/[\\/]/).slice(0, -1).join('/') : 'None')}</span></div>
+                {currentResults?.out_dir && (
+                  <div className="kv"><span>Output Directory</span><span style={{ fontSize: '10px', wordBreak: 'break-all' }}>{currentResults.out_dir}</span></div>
+                )}
+                <div style={{ marginTop: '10px', display: 'flex', gap: '8px' }}>
+                  <button className="btn-secondary btn-tiny" disabled={!currentResults?.out_dir} onClick={openFolder}>
+                    📁 Open Output Directory in File Explorer
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="analytics-footer" style={{ marginTop: '12px', justifyContent: 'flex-end' }}>
+              <button className="btn-primary" onClick={() => setShowSettingsModal(false)}>Close Settings</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ABOUT POPUP MODAL */}
+      {showAboutModal && (
+        <div className="modal-overlay">
+          <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
+            <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
+            <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.2.5</span>
+            
+            <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
+              Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
+            </p>
+
+            <div style={{ background: 'var(--bg1)', border: '1px solid var(--border)', borderRadius: '8px', padding: '16px', textAlign: 'left', marginBottom: '20px' }}>
+              <h4 style={{ fontSize: '11px', color: 'var(--text2)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '10px' }}>
+                👨‍💻 Development Team & Github Links
+              </h4>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <span style={{ fontWeight: '600', color: 'var(--text0)' }}>Corneliox</span>
+                    <span style={{ fontSize: '11px', color: 'var(--cyan)', marginLeft: '8px' }}>(Lead Developer)</span>
+                  </div>
+                  <button className="btn-secondary btn-tiny" onClick={() => api.openExternal('https://github.com/Corneliox')}>
+                    🌐 github.com/Corneliox
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <span style={{ fontWeight: '600', color: 'var(--text0)' }}>Aditya42069</span>
+                    <span style={{ fontSize: '11px', color: 'var(--accent2)', marginLeft: '8px' }}>(Co-Developer)</span>
+                  </div>
+                  <button className="btn-secondary btn-tiny" onClick={() => api.openExternal('https://github.com/Aditya42069')}>
+                    🌐 github.com/Aditya42069
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+              <button className="btn-primary" onClick={() => api.openExternal('https://github.com/Corneliox/ThermalSight-App/releases')}>
+                📦 Check Releases & Downloads
+              </button>
+              <button className="btn-ghost" onClick={() => setShowAboutModal(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* HEADER */}
       <header className="app-header">
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">v1.2.0</span>
+          <span className="brand-badge">v1.2.5</span>
         </div>
         <div className="header-actions">
+          <button className="btn-ghost" title="Settings / Variable Configurations" onClick={() => setShowSettingsModal(true)}>
+            ⚙ Settings
+          </button>
+          <button className="btn-ghost" title="About ThermalSight & Developer Credits" onClick={() => setShowAboutModal(true)}>
+            ❓ About
+          </button>
           {activeImagePath && (
             <button className="btn-primary btn-save" disabled={isProcessing === 'saving'} onClick={handleSaveLabels}>
               {isProcessing === 'saving' ? <><span className="spinner"/>Saving…</> : '💾 Save Label & Export'}

@@ -22,4 +22,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveMasterJson: (outDir, masterData) => ipcRenderer.invoke('save-master-json', outDir, masterData),
   openPath: (p) => ipcRenderer.invoke('open-path', p),
   showItemInFolder: (p) => ipcRenderer.invoke('show-item-in-folder', p),
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
+
+  // Menu Event Listeners
+  onMenuOpenSettings: (callback) => ipcRenderer.on('menu-open-settings', () => callback()),
+  onMenuOpenAbout: (callback) => ipcRenderer.on('menu-open-about', () => callback()),
+  onMenuTriggerUndo: (callback) => ipcRenderer.on('menu-trigger-undo', () => callback()),
+  onMenuOpenSingle: (callback) => ipcRenderer.on('menu-open-single', () => callback()),
+  onMenuOpenFolder: (callback) => ipcRenderer.on('menu-open-folder', () => callback()),
+  onMenuOpenProject: (callback) => ipcRenderer.on('menu-open-project', () => callback()),
 });

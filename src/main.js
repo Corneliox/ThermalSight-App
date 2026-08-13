@@ -1,21 +1,114 @@
 // src/main.js
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 
 let mainWindow;
 
+function createApplicationMenu() {
+  const isMac = process.platform === 'darwin';
+
+  const template = [
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'Open Single Thermal Image...',
+          accelerator: 'CmdOrCtrl+O',
+          click: () => {
+            if (mainWindow) mainWindow.webContents.send('menu-open-single');
+          }
+        },
+        {
+          label: 'Open Image Folder (Bulk Mode)...',
+          accelerator: 'CmdOrCtrl+Shift+O',
+          click: () => {
+            if (mainWindow) mainWindow.webContents.send('menu-open-folder');
+          }
+        },
+        {
+          label: 'Open Active Project Output Folder',
+          accelerator: 'CmdOrCtrl+Alt+O',
+          click: () => {
+            if (mainWindow) mainWindow.webContents.send('menu-open-project');
+          }
+        },
+        { type: 'separator' },
+        isMac ? { role: 'close' } : { role: 'quit' }
+      ]
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        {
+          label: 'Undo Last ROI',
+          accelerator: 'CmdOrCtrl+Z',
+          click: () => {
+            if (mainWindow) mainWindow.webContents.send('menu-trigger-undo');
+          }
+        },
+        { type: 'separator' },
+        {
+          label: 'Settings / Variable Configurations...',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => {
+            if (mainWindow) mainWindow.webContents.send('menu-open-settings');
+          }
+        }
+      ]
+    },
+    {
+      label: 'Help',
+      submenu: [
+        {
+          label: 'About ThermalSight...',
+          accelerator: 'F1',
+          click: () => {
+            if (mainWindow) mainWindow.webContents.send('menu-open-about');
+          }
+        },
+        { type: 'separator' },
+        {
+          label: 'Lead Developer GitHub (Corneliox)',
+          click: async () => {
+            await shell.openExternal('https://github.com/Corneliox');
+          }
+        },
+        {
+          label: 'Co-Developer GitHub (Aditya42069)',
+          click: async () => {
+            await shell.openExternal('https://github.com/Aditya42069');
+          }
+        },
+        {
+          label: 'Download Releases',
+          click: async () => {
+            await shell.openExternal('https://github.com/Corneliox/ThermalSight-App/releases');
+          }
+        }
+      ]
+    }
+  ];
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1360,
     height: 860,
+    title: 'ThermalSight',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
     },
   });
+
+  mainWindow.setTitle('ThermalSight');
+  createApplicationMenu();
 
   if (app.isPackaged) {
     mainWindow.loadFile(path.join(__dirname, 'dist/index.html'));
@@ -205,4 +298,10 @@ ipcMain.handle('open-path', async (_event, p) => {
 
 ipcMain.handle('show-item-in-folder', async (_event, p) => {
   if (p) shell.showItemInFolder(p);
+});
+
+ipcMain.handle('open-external', async (_event, url) => {
+  if (url && url.startsWith('http')) {
+    shell.openExternal(url);
+  }
 });
