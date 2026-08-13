@@ -157,15 +157,19 @@ export default function App() {
     });
   };
 
-  // ── Keyboard Shortcuts Listener (a-z for labels, Arrow Left/Right, Backspace to undo)
+  // ── Keyboard Shortcuts Listener (a-z for labels, Arrow Left/Right, [, ], Backspace to undo)
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
 
       const pressedKey = e.key.toLowerCase();
 
-      if (e.key === 'ArrowLeft')  handlePrevImage();
-      if (e.key === 'ArrowRight') handleNextImage();
+      if (e.key === 'ArrowLeft' || e.key === '[' || (pressedKey === 'b' && !labels.some(l => l.key.toLowerCase() === 'b'))) {
+        handlePrevImage();
+      }
+      if (e.key === 'ArrowRight' || e.key === ']' || (pressedKey === 'n' && !labels.some(l => l.key.toLowerCase() === 'n'))) {
+        handleNextImage();
+      }
 
       if (e.key === 'Enter' && drawingPts.length >= 3) {
         finishPolygon();
@@ -712,7 +716,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.2.7</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.2.8</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -761,9 +765,22 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">v1.2.7</span>
+          <span className="brand-badge">v1.2.8</span>
         </div>
         <div className="header-actions">
+          {appMode === 'bulk' && imageList.length > 0 && (
+            <div style={{ display: 'flex', gap: '4px', alignItems: 'center', background: 'var(--bg1)', padding: '2px 6px', borderRadius: '6px', border: '1px solid var(--border)' }}>
+              <button className="btn-ghost btn-tiny" disabled={currentIndex === 0} onClick={handlePrevImage} title="Previous Image (ArrowLeft / [ / b)">
+                ◄ Prev
+              </button>
+              <span style={{ fontSize: '11px', color: 'var(--cyan)', fontWeight: '600', padding: '0 4px' }}>
+                {currentIndex + 1} / {imageList.length}
+              </span>
+              <button className="btn-ghost btn-tiny" disabled={currentIndex === imageList.length - 1} onClick={handleNextImage} title="Next Image (ArrowRight / ] / n)">
+                Next ►
+              </button>
+            </div>
+          )}
           <button className="btn-ghost" title="Settings / Variable Configurations" onClick={() => setShowSettingsModal(true)}>
             ⚙ Settings
           </button>
