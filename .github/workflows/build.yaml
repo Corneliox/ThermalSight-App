@@ -54,7 +54,7 @@ jobs:
       - name: Build analyzer executable
         run: >-
           pyinstaller
-          --onefile
+          --onedir
           --console
           --name analyzer
           --distpath backend/dist

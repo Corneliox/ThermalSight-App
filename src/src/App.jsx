@@ -236,27 +236,59 @@ export default function App() {
     }
   };
 
-  // ── Analysis Trigger ────────────────────────────────────────────────────────
-  const runAnalysisForPath = async (targetPath) => {
-    if (!targetPath) return;
-    setIsProcessing('analysis');
-    try {
-      const outDir = targetPath + '_analysis';
-      const res = await api.runAnalysis(targetPath, outDir);
-      setResultsMap(prev => ({ ...prev, [targetPath]: res }));
-      setImgTs(Date.now());
-      setActivePanel('original');
-    } catch (err) {
-      alert(`Analysis failed for ${targetPath}:\n${err}`);
-    }
-    setIsProcessing(null);
-  };
-
+  // ── Background Image Analysis & Pre-fetch Queue ────────────────────────────────
   useEffect(() => {
-    if (activeImagePath && !resultsMap[activeImagePath]) {
-      runAnalysisForPath(activeImagePath);
+    let isSubscribed = true;
+
+    async function processAnalysisQueue() {
+      if (!activeImagePath) return;
+
+      // 1. Prioritize currently active image if not analyzed yet
+      if (!resultsMap[activeImagePath]) {
+        setIsProcessing('analysis');
+        try {
+          const outDir = activeImagePath + '_analysis';
+          const res = await api.runAnalysis(activeImagePath, outDir);
+          if (isSubscribed) {
+            setResultsMap(prev => ({ ...prev, [activeImagePath]: res }));
+            setImgTs(Date.now());
+            setActivePanel('original');
+          }
+        } catch (err) {
+          console.error(`Analysis error for ${activeImagePath}:`, err);
+        } finally {
+          if (isSubscribed) setIsProcessing(null);
+        }
+      }
+
+      // 2. In bulk mode, pre-analyze all remaining images in the background queue
+      if (appMode === 'bulk' && imageList.length > 0) {
+        const queue = [
+          ...imageList.slice(currentIndex + 1),
+          ...imageList.slice(0, currentIndex)
+        ];
+
+        for (const targetPath of queue) {
+          if (!isSubscribed) break;
+          if (resultsMap[targetPath]) continue;
+
+          try {
+            const outDir = targetPath + '_analysis';
+            const res = await api.runAnalysis(targetPath, outDir);
+            if (isSubscribed) {
+              setResultsMap(prev => ({ ...prev, [targetPath]: res }));
+            }
+          } catch (err) {
+            console.error(`Background pre-fetch analysis error for ${targetPath}:`, err);
+          }
+        }
+      }
     }
-  }, [activeImagePath]);
+
+    processAnalysisQueue();
+
+    return () => { isSubscribed = false; };
+  }, [activeImagePath, appMode, imageList, currentIndex]);
 
   // ── Navigation ──────────────────────────────────────────────────────────────
   const handleNextImage = () => {
@@ -680,7 +712,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.2.6</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.2.7</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -729,7 +761,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">v1.2.6</span>
+          <span className="brand-badge">v1.2.7</span>
         </div>
         <div className="header-actions">
           <button className="btn-ghost" title="Settings / Variable Configurations" onClick={() => setShowSettingsModal(true)}>
@@ -790,6 +822,13 @@ export default function App() {
                 </div>
                 <div className="image-filename-tag">
                   {imageList[currentIndex].split(/[\\/]/).pop()}
+                </div>
+                <div style={{ fontSize: '10px', marginTop: '6px', textAlign: 'center' }}>
+                  {Object.keys(resultsMap).length >= imageList.length ? (
+                    <span style={{ color: 'var(--green)', fontWeight: '600' }}>✓ All {imageList.length} Ready</span>
+                  ) : (
+                    <span style={{ color: 'var(--cyan)' }}>⚡ Background: {Object.keys(resultsMap).length}/{imageList.length} ready</span>
+                  )}
                 </div>
               </div>
             )}
