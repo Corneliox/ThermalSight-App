@@ -2,7 +2,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 
 let mainWindow;
 
@@ -134,8 +134,15 @@ function getBackendArgs(command, extraArgs) {
     const fileExe = path.join(process.resourcesPath, 'backend', `analyzer${ext}`);
     const exePath = fs.existsSync(dirExe) ? dirExe : fileExe;
 
-    // Grant executable permissions on macOS / Linux
-    if (process.platform !== 'win32' && fs.existsSync(exePath)) {
+    // Grant executable permissions and remove quarantine on macOS / Linux
+    if (process.platform === 'darwin' && fs.existsSync(exePath)) {
+      try {
+        execSync(`xattr -d com.apple.quarantine "${exePath}" 2>/dev/null || true`);
+        execSync(`chmod -R +x "${path.dirname(exePath)}" 2>/dev/null || true`);
+      } catch (e) {
+        console.error('macOS quarantine/chmod error:', e);
+      }
+    } else if (process.platform !== 'win32' && fs.existsSync(exePath)) {
       try {
         fs.chmodSync(exePath, 0o755);
       } catch (e) {
@@ -169,14 +176,16 @@ function runPython(command, extraArgs) {
     proc.stdout.on('data', (d) => {
       const str = d.toString();
       stdout += str;
-      sendLogToRenderer('stdout', str.trim());
+      if (str.trim()) sendLogToRenderer('stdout', str.trim());
     });
 
     proc.stderr.on('data', (d) => {
       const str = d.toString();
       stderr += str;
-      console.error(`[python] ${str.trim()}`);
-      sendLogToRenderer('stderr', str.trim());
+      if (str.trim()) {
+        console.error(`[python] ${str.trim()}`);
+        sendLogToRenderer('stderr', str.trim());
+      }
     });
 
     proc.on('close', (code) => {
@@ -191,6 +200,31 @@ function runPython(command, extraArgs) {
           reject(errStr);
         }
       } else {
+        // macOS Fallback: if packaged standalone binary was suspended/failed, try system python3 with analyzer.py
+        if (app.isPackaged && process.platform === 'darwin' && executable.includes('analyzer')) {
+          const scriptPath = path.join(process.resourcesPath, 'backend', 'analyzer.py');
+          if (fs.existsSync(scriptPath)) {
+            sendLogToRenderer('stderr', `[FALLBACK] Standalone executable returned code ${code}. Trying python3 fallback on ${scriptPath}...`);
+            const pyProc = spawn('python3', [scriptPath, command, ...extraArgs]);
+            let pyStdout = '', pyStderr = '';
+            pyProc.stdout.on('data', d => { pyStdout += d.toString(); if (d.toString().trim()) sendLogToRenderer('stdout', d.toString().trim()); });
+            pyProc.stderr.on('data', d => { pyStderr += d.toString(); if (d.toString().trim()) sendLogToRenderer('stderr', d.toString().trim()); });
+            pyProc.on('close', pyCode => {
+              if (pyCode === 0) {
+                try {
+                  const parsed = JSON.parse(pyStdout.trim());
+                  sendLogToRenderer('info', `[SUCCESS via python3] Command '${command}' returned code 0`);
+                  return resolve(parsed);
+                } catch {}
+              }
+              const errStr = pyStderr || `python3 fallback exited with code ${pyCode}`;
+              sendLogToRenderer('error', `[CRASH] ${errStr}`);
+              reject(errStr);
+            });
+            return;
+          }
+        }
+
         let errStr = `Process exited with code ${code}`;
         try {
           const errObj = JSON.parse(stdout.trim());

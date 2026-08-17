@@ -21,7 +21,9 @@ const api = window.electronAPI || {
 const toFileUrl = (p) => {
   if (!p) return '';
   const s = p.replace(/\\/g, '/');
-  return s.startsWith('/') ? `file://${s}` : `file:///${s}`;
+  const encodedParts = s.split('/').map(part => encodeURIComponent(part));
+  const encodedPath = encodedParts.join('/');
+  return s.startsWith('/') ? `file://${encodedPath}` : `file:///${encodedPath}`;
 };
 
 const PANELS = [
@@ -262,6 +264,8 @@ export default function App() {
     }
   };
 
+  const inFlightRef = useRef(new Set());
+
   // ── Background Image Analysis & Pre-fetch Queue ────────────────────────────────
   useEffect(() => {
     let isSubscribed = true;
@@ -269,8 +273,9 @@ export default function App() {
     async function processAnalysisQueue() {
       if (!activeImagePath) return;
 
-      // 1. Prioritize currently active image if not analyzed yet
-      if (!resultsMap[activeImagePath]) {
+      // 1. Prioritize currently active image if not analyzed yet and not currently in flight
+      if (!resultsMap[activeImagePath] && !inFlightRef.current.has(activeImagePath)) {
+        inFlightRef.current.add(activeImagePath);
         setIsProcessing('analysis');
         try {
           const outDir = activeImagePath + '_analysis';
@@ -283,11 +288,12 @@ export default function App() {
         } catch (err) {
           console.error(`Analysis error for ${activeImagePath}:`, err);
         } finally {
+          inFlightRef.current.delete(activeImagePath);
           if (isSubscribed) setIsProcessing(null);
         }
       }
 
-      // 2. In bulk mode, pre-analyze all remaining images in the background queue
+      // 2. In bulk mode, pre-analyze all remaining images in background queue sequentially
       if (appMode === 'bulk' && imageList.length > 0) {
         const queue = [
           ...imageList.slice(currentIndex + 1),
@@ -296,8 +302,9 @@ export default function App() {
 
         for (const targetPath of queue) {
           if (!isSubscribed) break;
-          if (resultsMap[targetPath]) continue;
+          if (resultsMap[targetPath] || inFlightRef.current.has(targetPath)) continue;
 
+          inFlightRef.current.add(targetPath);
           try {
             const outDir = targetPath + '_analysis';
             const res = await api.runAnalysis(targetPath, outDir);
@@ -306,6 +313,8 @@ export default function App() {
             }
           } catch (err) {
             console.error(`Background pre-fetch analysis error for ${targetPath}:`, err);
+          } finally {
+            inFlightRef.current.delete(targetPath);
           }
         }
       }
@@ -738,7 +747,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.3.0</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.3.1</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -787,7 +796,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">v1.3.0</span>
+          <span className="brand-badge">v1.3.1</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (
