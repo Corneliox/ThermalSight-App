@@ -1,6 +1,6 @@
 {
   "name": "thermalsight",
-  "version": "1.2.8",
+  "version": "1.2.9",
   "description": "Thermal Analysis Student Explorer",
   "author": "Aditya",
   "repository": "https://github.com/Aditya42069/ThermalSight-App",
@@ -27,7 +27,14 @@
         "filter": ["**/*"]
       }
     ],
-    "mac": { "target": "dmg" },
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "minimumSystemVersion": "10.15.0",
+      "category": "public.app-category.education"
+    },
     "win": { "target": "nsis" },
     "linux": { "target": "AppImage" }
   },

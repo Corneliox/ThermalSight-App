@@ -64,6 +64,11 @@ jobs:
           --hidden-import numpy
           backend/analyzer.py
 
+      - name: Grant Executable Permissions (Linux / macOS)
+        if: runner.os != 'Windows'
+        run: |
+          chmod -R +x backend/dist/analyzer || true
+
       # ── Electron frontend ────────────────────────────────────────────────────
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -90,6 +95,7 @@ jobs:
           files: |
             src/release/*.exe
             src/release/*.dmg
+            src/release/*.zip
             src/release/*.AppImage
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
