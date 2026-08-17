@@ -6,6 +6,13 @@ const { spawn } = require('child_process');
 
 let mainWindow;
 
+function sendLogToRenderer(type, text) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const timestamp = new Date().toLocaleTimeString();
+    mainWindow.webContents.send('backend-log', { type, text, timestamp });
+  }
+}
+
 function createApplicationMenu() {
   const isMac = process.platform === 'darwin';
 
@@ -126,6 +133,16 @@ function getBackendArgs(command, extraArgs) {
     const dirExe  = path.join(process.resourcesPath, 'backend', 'analyzer', `analyzer${ext}`);
     const fileExe = path.join(process.resourcesPath, 'backend', `analyzer${ext}`);
     const exePath = fs.existsSync(dirExe) ? dirExe : fileExe;
+
+    // Grant executable permissions on macOS / Linux
+    if (process.platform !== 'win32' && fs.existsSync(exePath)) {
+      try {
+        fs.chmodSync(exePath, 0o755);
+      } catch (e) {
+        console.error('chmod error:', e);
+      }
+    }
+
     return { executable: exePath, args: [command, ...extraArgs] };
   } else {
     // Development: run the Python script directly
@@ -141,36 +158,55 @@ function runPython(command, extraArgs) {
   return new Promise((resolve, reject) => {
     const { executable, args } = getBackendArgs(command, extraArgs);
 
-    console.log(`[backend] ${executable} ${args.join(' ')}`);
+    const cmdLine = `${executable} ${args.join(' ')}`;
+    console.log(`[backend] ${cmdLine}`);
+    sendLogToRenderer('info', `[EXEC] ${cmdLine}`);
+
     const proc = spawn(executable, args);
 
     let stdout = '';
     let stderr = '';
-    proc.stdout.on('data', (d) => { stdout += d.toString(); });
+    proc.stdout.on('data', (d) => {
+      const str = d.toString();
+      stdout += str;
+      sendLogToRenderer('stdout', str.trim());
+    });
+
     proc.stderr.on('data', (d) => {
-      stderr += d.toString();
-      console.error(`[python] ${d.toString().trim()}`);
+      const str = d.toString();
+      stderr += str;
+      console.error(`[python] ${str.trim()}`);
+      sendLogToRenderer('stderr', str.trim());
     });
 
     proc.on('close', (code) => {
       if (code === 0) {
         try {
-          resolve(JSON.parse(stdout.trim()));
+          const parsed = JSON.parse(stdout.trim());
+          sendLogToRenderer('info', `[SUCCESS] Command '${command}' returned code 0`);
+          resolve(parsed);
         } catch (e) {
-          reject(`JSON parse error: ${e.message}\nRaw output: ${stdout}`);
+          const errStr = `JSON parse error: ${e.message}\nRaw output: ${stdout}`;
+          sendLogToRenderer('error', `[ERROR] ${errStr}`);
+          reject(errStr);
         }
       } else {
+        let errStr = `Process exited with code ${code}`;
         try {
           const errObj = JSON.parse(stdout.trim());
-          reject(errObj.error || `Process exited with code ${code}`);
+          errStr = errObj.error || errStr;
         } catch {
-          reject(`Process exited with code ${code}.\nStderr: ${stderr}`);
+          errStr = `Process exited with code ${code}.\nStderr: ${stderr}`;
         }
+        sendLogToRenderer('error', `[CRASH] ${errStr}`);
+        reject(errStr);
       }
     });
 
     proc.on('error', (err) => {
-      reject(`Failed to start backend executable (${executable}): ${err.message}`);
+      const errStr = `Failed to start backend executable (${executable}): ${err.message}`;
+      sendLogToRenderer('error', `[SPAWN ERROR] ${errStr}`);
+      reject(errStr);
     });
   });
 }

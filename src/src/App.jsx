@@ -102,11 +102,33 @@ export default function App() {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showAboutModal,    setShowAboutModal]    = useState(false);
 
+  // Live Terminal Logs State
+  const [terminalLogs, setTerminalLogs] = useState([
+    { id: 1, type: 'info', text: 'ThermalSight v1.3.0 Engine Initialized', timestamp: new Date().toLocaleTimeString() }
+  ]);
+  const [isTerminalOpen, setIsTerminalOpen] = useState(true);
+  const terminalEndRef = useRef(null);
+
   const imgRef = useRef(null);
 
   // Active image path & results
   const activeImagePath = appMode === 'bulk' ? imageList[currentIndex] : filePath;
   const currentResults  = activeImagePath ? resultsMap[activeImagePath] : null;
+
+  // ── Live Backend Terminal Listener ───────────────────────────────────────────
+  useEffect(() => {
+    if (api.onBackendLog) {
+      api.onBackendLog((log) => {
+        setTerminalLogs(prev => [...prev.slice(-200), { ...log, id: Date.now() + Math.random() }]);
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isTerminalOpen && terminalEndRef.current) {
+      terminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [terminalLogs, isTerminalOpen]);
 
   // ── Menu Bar Event IPC Listeners ──────────────────────────────────────────────
   useEffect(() => {
@@ -716,7 +738,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.2.9</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.3.0</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -765,7 +787,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">v1.2.9</span>
+          <span className="brand-badge">v1.3.0</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (
@@ -864,6 +886,45 @@ export default function App() {
               <span className="panel-icon">📁</span>
               <span className="panel-label">Output Folder</span>
             </button>
+
+            {/* LIVE PROCESS TERMINAL CARD */}
+            <div className="tool-card terminal-card">
+              <div className="terminal-header" onClick={() => setIsTerminalOpen(!isTerminalOpen)} style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h4 className="card-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  💻 Live Terminal
+                  <span className="terminal-badge">{terminalLogs.length}</span>
+                </h4>
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  <button className="btn-ghost btn-tiny" title="Clear Console" onClick={(e) => { e.stopPropagation(); setTerminalLogs([]); }}>🗑</button>
+                  <button className="btn-ghost btn-tiny">{isTerminalOpen ? '▲' : '▼'}</button>
+                </div>
+              </div>
+
+              {isTerminalOpen && (
+                <div className="terminal-body">
+                  <div className="terminal-logs">
+                    {terminalLogs.length === 0 ? (
+                      <div className="terminal-log-line info">Waiting for processing logs...</div>
+                    ) : (
+                      terminalLogs.map((log) => (
+                        <div key={log.id} className={`terminal-log-line ${log.type}`}>
+                          <span className="log-time">[{log.timestamp}]</span>
+                          <span className="log-text">{log.text}</span>
+                        </div>
+                      ))
+                    )}
+                    <div ref={terminalEndRef} />
+                  </div>
+                  <div className="terminal-footer">
+                    <button className="btn-ghost btn-tiny" onClick={() => {
+                      const text = terminalLogs.map(l => `[${l.timestamp}] [${l.type.toUpperCase()}] ${l.text}`).join('\n');
+                      navigator.clipboard.writeText(text);
+                      alert('Terminal logs copied to clipboard!');
+                    }}>📋 Copy Logs</button>
+                  </div>
+                </div>
+              )}
+            </div>
           </aside>
 
           {/* CENTRE AREA: THERMAL IMAGE CANVAS & OVERLAYS */}

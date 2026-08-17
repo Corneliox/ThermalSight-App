@@ -898,3 +898,67 @@ input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
   display: flex;
   justify-content: space-between;
 }
+
+/* ── LIVE PROCESS TERMINAL ─────────────────────────────────────────────────── */
+.terminal-card {
+  border-top: 1px solid var(--border);
+  background: var(--bg0) !important;
+  margin-top: 12px;
+}
+
+.terminal-badge {
+  background: var(--bg2);
+  color: var(--cyan);
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-family: var(--font-mono);
+}
+
+.terminal-body {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.terminal-logs {
+  background: #0b0c10;
+  border: 1px solid #1f2330;
+  border-radius: 6px;
+  padding: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.terminal-log-line {
+  display: flex;
+  gap: 6px;
+  word-break: break-all;
+  margin-bottom: 3px;
+}
+
+.terminal-log-line .log-time {
+  color: #4a5270;
+  flex-shrink: 0;
+}
+
+.terminal-log-line.info .log-text {
+  color: #00e5ff;
+}
+
+.terminal-log-line.stdout .log-text {
+  color: #b0c4de;
+}
+
+.terminal-log-line.stderr .log-text {
+  color: #ff9e64;
+}
+
+.terminal-log-line.error .log-text {
+  color: #ff5252;
+  font-weight: 700;
+}

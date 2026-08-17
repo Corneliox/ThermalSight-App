@@ -31,4 +31,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onMenuOpenSingle: (callback) => ipcRenderer.on('menu-open-single', () => callback()),
   onMenuOpenFolder: (callback) => ipcRenderer.on('menu-open-folder', () => callback()),
   onMenuOpenProject: (callback) => ipcRenderer.on('menu-open-project', () => callback()),
+
+  // Terminal & Live Diagnostics Log Listener
+  onBackendLog: (callback) => ipcRenderer.on('backend-log', (_event, log) => callback(log)),
 });
