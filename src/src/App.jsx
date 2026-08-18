@@ -21,6 +21,9 @@ const api = window.electronAPI || {
   loadAnnotationFile: async () => null,
   checkExistingAnnotation: async () => null,
   exportResultPackage: async () => {},
+  getPlatformInfo: async () => ({ platform: 'win32', isMac: false, isPackaged: false, arch: 'x64' }),
+  runMacPermissionFix: async () => ({ status: 'skipped' }),
+  testBackendConnection: async () => ({ success: true }),
 };
 
 const toFileUrl = (p) => {
@@ -108,10 +111,13 @@ export default function App() {
   const [analyticsData,     setAnalyticsData]     = useState(null);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showAboutModal,    setShowAboutModal]    = useState(false);
+  const [isMacPlatform,     setIsMacPlatform]     = useState(false);
+  const [showMacGuideModal, setShowMacGuideModal] = useState(false);
+  const [backendDiagnostics, setBackendDiagnostics] = useState(null);
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
-    { id: 1, type: 'info', text: 'ThermalSight v1.3.0 Engine Initialized', timestamp: new Date().toLocaleTimeString() }
+    { id: 1, type: 'info', text: 'ThermalSight v1.3.4 Engine Initialized', timestamp: new Date().toLocaleTimeString() }
   ]);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const terminalEndRef = useRef(null);
@@ -121,6 +127,32 @@ export default function App() {
   // Active image path & results
   const activeImagePath = appMode === 'bulk' ? imageList[currentIndex] : filePath;
   const currentResults  = activeImagePath ? resultsMap[activeImagePath] : null;
+
+  // ── macOS Platform & Backend Health Check on Startup ────────────────────────
+  useEffect(() => {
+    async function initPlatformAndDiagnostics() {
+      if (api.getPlatformInfo) {
+        try {
+          const info = await api.getPlatformInfo();
+          if (info && info.isMac) {
+            setIsMacPlatform(true);
+            if (api.testBackendConnection) {
+              const diag = await api.testBackendConnection();
+              if (!diag.success) {
+                setShowMacGuideModal(true);
+                setBackendDiagnostics({ status: 'error', error: diag.error });
+              } else {
+                setBackendDiagnostics({ status: 'ok', msg: 'Backend verified' });
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Platform check error:', err);
+        }
+      }
+    }
+    initPlatformAndDiagnostics();
+  }, []);
 
   // ── Live Backend Terminal Listener ───────────────────────────────────────────
   useEffect(() => {
@@ -141,6 +173,7 @@ export default function App() {
   useEffect(() => {
     if (api.onMenuOpenSettings)   api.onMenuOpenSettings(() => setShowSettingsModal(true));
     if (api.onMenuOpenAbout)      api.onMenuOpenAbout(() => setShowAboutModal(true));
+    if (api.onMenuOpenMacGuide)   api.onMenuOpenMacGuide(() => setShowMacGuideModal(true));
     if (api.onMenuTriggerUndo)    api.onMenuTriggerUndo(() => undoLastPolygon());
     if (api.onMenuOpenSingle)     api.onMenuOpenSingle(() => handleBrowseSingle());
     if (api.onMenuOpenFolder)     api.onMenuOpenFolder(() => handleBrowseFolder());
@@ -748,6 +781,47 @@ export default function App() {
     }
   };
 
+  // ── macOS Gatekeeper & Permission Handlers ────────────────────────────────────
+  const handleRunMacFix = async () => {
+    if (!api.runMacPermissionFix) return;
+    try {
+      setBackendDiagnostics({ status: 'testing' });
+      const res = await api.runMacPermissionFix();
+      if (res.status === 'ok') {
+        const diag = await api.testBackendConnection();
+        if (diag.success) {
+          setBackendDiagnostics({ status: 'ok', msg: 'Backend verified' });
+          alert('✓ Auto-fix applied and Python backend successfully verified!');
+        } else {
+          setBackendDiagnostics({ status: 'error', error: diag.error });
+          alert(`Auto-fix executed, but Gatekeeper might still block terminal execution.\n\nPlease copy and run this command in Terminal:\n${res.command}`);
+        }
+      } else {
+        alert(`Could not clear quarantine automatically:\n${res.error || res.message}\n\nPlease run the command in Terminal.`);
+      }
+    } catch (e) {
+      alert(`Error running permission fix: ${e.message}`);
+    }
+  };
+
+  const handleCopyMacCommand = (cmd = 'xattr -cr /Applications/thermalsight.app') => {
+    navigator.clipboard.writeText(cmd);
+    alert(`✓ Copied command to clipboard:\n\n${cmd}\n\n1. Open Terminal.app on your Mac\n2. Paste (Cmd+V) and press Return ↵\n3. Relaunch ThermalSight`);
+  };
+
+  const handleTestBackend = async () => {
+    if (!api.testBackendConnection) return;
+    setBackendDiagnostics({ status: 'testing' });
+    const diag = await api.testBackendConnection();
+    if (diag.success) {
+      setBackendDiagnostics({ status: 'ok', msg: 'Backend verified' });
+      alert('✓ Success! Python analyzer backend is active and functioning properly.');
+    } else {
+      setBackendDiagnostics({ status: 'error', error: diag.error });
+      alert(`Backend test failed:\n${diag.error}\n\nPlease run the Terminal fix command.`);
+    }
+  };
+
   const restoreDraft = async () => {
     if (draftToRestore) {
       await applyLoadedSession(draftToRestore);
@@ -876,7 +950,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.3.3</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.3.4</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -910,11 +984,110 @@ export default function App() {
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
+              <button className="btn-secondary btn-tiny" onClick={() => { setShowAboutModal(false); setShowMacGuideModal(true); }}>
+                🍎 macOS Permission Guide
+              </button>
               <button className="btn-primary" onClick={() => api.openExternal('https://github.com/Corneliox/ThermalSight-App/releases')}>
                 📦 Check Releases & Downloads
               </button>
               <button className="btn-ghost" onClick={() => setShowAboutModal(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* macOS FIRST-LAUNCH & PERMISSIONS MODAL */}
+      {showMacGuideModal && (
+        <div className="modal-overlay">
+          <div className="modal-card" style={{ maxWidth: '640px', padding: '24px', textAlign: 'left' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '28px' }}>🍎</span>
+                <div>
+                  <h3 style={{ fontSize: '18px', fontWeight: '700', color: 'var(--text0)', margin: 0 }}>
+                    macOS First-Launch & Permissions Guide
+                  </h3>
+                  <span style={{ fontSize: '11px', color: 'var(--text2)' }}>Gatekeeper & Quarantine Setup for MacBook (Intel & Apple Silicon)</span>
+                </div>
+              </div>
+              <button className="btn-ghost btn-tiny" onClick={() => setShowMacGuideModal(false)}>✕</button>
+            </div>
+
+            {/* Backend Status Banner */}
+            {backendDiagnostics && (
+              <div style={{
+                padding: '10px 14px',
+                borderRadius: '6px',
+                marginBottom: '16px',
+                background: backendDiagnostics.status === 'ok' ? 'rgba(0, 230, 118, 0.12)' : 'rgba(255, 68, 68, 0.12)',
+                border: `1px solid ${backendDiagnostics.status === 'ok' ? 'var(--green)' : 'var(--accent)'}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between'
+              }}>
+                <div>
+                  <span style={{ fontWeight: '600', fontSize: '12px', color: backendDiagnostics.status === 'ok' ? 'var(--green)' : 'var(--accent)' }}>
+                    {backendDiagnostics.status === 'ok' ? '✓ Python Analyzer Status: Connected & Verified' : '⚠️ Python Analyzer Status: Blocked by Gatekeeper'}
+                  </span>
+                  <p style={{ margin: '2px 0 0', fontSize: '11px', color: 'var(--text1)' }}>
+                    {backendDiagnostics.status === 'ok' ? 'Your Mac has granted execution access. All thermal panels are ready.' : 'macOS quarantined the backend binary. Run the 1-click terminal command below.'}
+                  </p>
+                </div>
+                <button className="btn-secondary btn-tiny" onClick={handleTestBackend}>
+                  {backendDiagnostics.status === 'testing' ? <span className="spinner"/> : '🧪 Test Again'}
+                </button>
+              </div>
+            )}
+
+            {/* Section 1: 1-Click Terminal Command */}
+            <div style={{ background: 'var(--bg1)', border: '1px solid var(--border)', borderRadius: '8px', padding: '14px', marginBottom: '14px' }}>
+              <h4 style={{ fontSize: '12px', color: 'var(--text0)', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span>⚡ Method 1: Instant 1-Click Terminal Fix (Recommended)</span>
+              </h4>
+              <p style={{ fontSize: '11px', color: 'var(--text2)', marginBottom: '8px', lineHeight: '1.5' }}>
+                Open <strong>Terminal.app</strong>, paste this command, and press Enter to instantly remove Apple quarantine from the entire app bundle:
+              </p>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', background: 'var(--bg0)', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border-h)' }}>
+                <code style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--cyan)' }}>
+                  xattr -cr /Applications/thermalsight.app
+                </code>
+                <button className="btn-primary btn-tiny" onClick={() => handleCopyMacCommand('xattr -cr /Applications/thermalsight.app')}>
+                  📋 Copy
+                </button>
+              </div>
+            </div>
+
+            {/* Section 2: In-App Auto Fix */}
+            <div style={{ background: 'var(--bg1)', border: '1px solid var(--border)', borderRadius: '8px', padding: '14px', marginBottom: '16px' }}>
+              <h4 style={{ fontSize: '12px', color: 'var(--text0)', marginBottom: '6px' }}>
+                ⚡ Method 2: In-App Automatic Permission Fix
+              </h4>
+              <p style={{ fontSize: '11px', color: 'var(--text2)', marginBottom: '10px' }}>
+                Attempts to grant chmod execution permissions and strip quarantine attributes internally.
+              </p>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button className="btn-secondary btn-tiny" onClick={handleRunMacFix}>
+                  ⚡ Run Auto-Fix Permissions
+                </button>
+                <button className="btn-secondary btn-tiny" onClick={handleTestBackend}>
+                  🧪 Run Backend Diagnostics
+                </button>
+              </div>
+            </div>
+
+            {/* Section 3: Manual Gatekeeper Override */}
+            <div style={{ fontSize: '11px', color: 'var(--text2)', lineHeight: '1.6', marginBottom: '16px' }}>
+              <strong>If the app fails to open initially on macOS:</strong>
+              <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                <li>Right-click (Control-click) <code>thermalsight.app</code> in <code>/Applications</code> and select <strong>Open</strong>.</li>
+                <li>Click <strong>Open Anyway</strong> in the dialog.</li>
+                <li>Or open <strong>System Settings ➔ Privacy & Security</strong> and click <strong>Open Anyway</strong> at the bottom.</li>
+              </ul>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button className="btn-primary" onClick={() => setShowMacGuideModal(false)}>Got It / Close</button>
             </div>
           </div>
         </div>
@@ -925,7 +1098,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">v1.3.3</span>
+          <span className="brand-badge">v1.3.4</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (
@@ -949,6 +1122,17 @@ export default function App() {
           </button>
           <button className="btn-ghost" title="About ThermalSight & Developer Credits" onClick={() => setShowAboutModal(true)}>
             ❓ About
+          </button>
+          <button
+            className={`btn-ghost ${backendDiagnostics?.status === 'error' ? 'btn-danger' : ''}`}
+            title="macOS Gatekeeper Permissions & Backend Setup Guide"
+            onClick={() => setShowMacGuideModal(true)}
+            style={{
+              borderColor: backendDiagnostics?.status === 'error' ? 'var(--accent)' : undefined,
+              color: backendDiagnostics?.status === 'error' ? 'var(--accent)' : undefined
+            }}
+          >
+            🍎 Mac Setup
           </button>
           {activeImagePath && (
             <button className="btn-primary btn-save" disabled={isProcessing === 'saving'} onClick={handleSaveLabels}>

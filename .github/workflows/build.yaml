@@ -16,8 +16,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        include:
+          - os: windows-latest
+            platform_name: Windows x64
+            builder_cmd: npx electron-builder --win --x64 --publish never
+          - os: macos-13
+            platform_name: macOS Intel (x64)
+            builder_cmd: npx electron-builder --mac --x64 --publish never
+          - os: macos-14
+            platform_name: macOS Apple Silicon (arm64)
+            builder_cmd: npx electron-builder --mac --arm64 --publish never
+          - os: ubuntu-latest
+            platform_name: Linux AppImage
+            builder_cmd: npx electron-builder --linux --x64 --publish never
 
+    name: Build on ${{ matrix.platform_name }}
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -85,7 +98,7 @@ jobs:
 
       - name: Package with Electron Builder
         working-directory: ./src
-        run: npx electron-builder --publish never
+        run: ${{ matrix.builder_cmd }}
 
       # ── Publish Release Artifacts to GitHub ──────────────────────────────────
       - name: Upload Release Artifacts

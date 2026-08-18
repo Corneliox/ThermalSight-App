@@ -31,9 +31,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadAnnotationFile: (filePath) => ipcRenderer.invoke('load-annotation-file', filePath),
   checkExistingAnnotation: (folderPath) => ipcRenderer.invoke('check-existing-annotation', folderPath),
 
+  // macOS Permission & Diagnostics APIs
+  getPlatformInfo: () => ipcRenderer.invoke('get-platform-info'),
+  runMacPermissionFix: () => ipcRenderer.invoke('run-mac-permission-fix'),
+  testBackendConnection: () => ipcRenderer.invoke('test-backend-connection'),
+
   // Menu Event Listeners
   onMenuOpenSettings: (callback) => ipcRenderer.on('menu-open-settings', () => callback()),
   onMenuOpenAbout: (callback) => ipcRenderer.on('menu-open-about', () => callback()),
+  onMenuOpenMacGuide: (callback) => ipcRenderer.on('menu-open-mac-guide', () => callback()),
   onMenuTriggerUndo: (callback) => ipcRenderer.on('menu-trigger-undo', () => callback()),
   onMenuOpenSingle: (callback) => ipcRenderer.on('menu-open-single', () => callback()),
   onMenuOpenFolder: (callback) => ipcRenderer.on('menu-open-folder', () => callback()),

@@ -82,6 +82,13 @@ function createApplicationMenu() {
             if (mainWindow) mainWindow.webContents.send('menu-open-about');
           }
         },
+        {
+          label: 'macOS First-Launch & Permission Guide...',
+          accelerator: 'CmdOrCtrl+M',
+          click: () => {
+            if (mainWindow) mainWindow.webContents.send('menu-open-mac-guide');
+          }
+        },
         { type: 'separator' },
         {
           label: 'Lead Developer GitHub (Corneliox)',
@@ -131,7 +138,20 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  if (process.platform === 'darwin') {
+    try {
+      const backendDir = path.join(process.resourcesPath, 'backend');
+      if (fs.existsSync(backendDir)) {
+        execSync(`xattr -dr com.apple.quarantine "${backendDir}" 2>/dev/null || true`);
+        execSync(`chmod -R 755 "${backendDir}" 2>/dev/null || true`);
+      }
+    } catch (e) {
+      console.error('macOS startup self-healing warning:', e);
+    }
+  }
+  createWindow();
+});
 
 // ── helper: resolve the Python executable / script path ──────────────────────
 function getBackendArgs(command, extraArgs) {
@@ -451,5 +471,68 @@ ipcMain.handle('export-result-package', async (_event, resultDir, filesMap) => {
     return { status: 'ok', path: resultDir };
   } catch (e) {
     return { error: e.message };
+  }
+});
+
+// ── IPC: macOS Diagnostics & Permission Management ────────────────────────────
+ipcMain.handle('get-platform-info', async () => {
+  return {
+    platform: process.platform,
+    isMac: process.platform === 'darwin',
+    isPackaged: app.isPackaged,
+    arch: process.arch,
+  };
+});
+
+ipcMain.handle('run-mac-permission-fix', async () => {
+  if (process.platform !== 'darwin') {
+    return { status: 'skipped', message: 'Not running on macOS.' };
+  }
+  const logs = [];
+  try {
+    if (app.isPackaged) {
+      const backendDir = path.join(process.resourcesPath, 'backend');
+      if (fs.existsSync(backendDir)) {
+        execSync(`xattr -dr com.apple.quarantine "${backendDir}" 2>/dev/null || true`);
+        execSync(`chmod -R 755 "${backendDir}" 2>/dev/null || true`);
+        logs.push(`✓ Cleared quarantine & set chmod 755 on ${backendDir}`);
+      }
+    }
+    const defaultAppPath = '/Applications/thermalsight.app';
+    if (fs.existsSync(defaultAppPath)) {
+      execSync(`xattr -dr com.apple.quarantine "${defaultAppPath}" 2>/dev/null || true`);
+      logs.push(`✓ Cleared quarantine on ${defaultAppPath}`);
+    }
+    sendLogToRenderer('info', '[MAC PERMISSIONS] Auto-fix applied successfully.');
+    return { status: 'ok', logs, command: 'xattr -cr /Applications/thermalsight.app' };
+  } catch (err) {
+    sendLogToRenderer('error', `[MAC PERMISSIONS ERROR] ${err.message}`);
+    return { status: 'error', error: err.message, logs, command: 'xattr -cr /Applications/thermalsight.app' };
+  }
+});
+
+ipcMain.handle('test-backend-connection', async () => {
+  sendLogToRenderer('info', '[DIAGNOSTICS] Testing Python backend connectivity...');
+  const { executable } = getBackendArgs('analyze', ['--help']);
+  try {
+    const out = execSync(`"${executable}" --help 2>&1`, { timeout: 8000 }).toString();
+    sendLogToRenderer('info', `[DIAGNOSTICS SUCCESS] Backend binary responded:\n${out.slice(0, 200)}`);
+    return { success: true, output: out, executable };
+  } catch (err) {
+    if (process.platform === 'darwin' && app.isPackaged) {
+      const scriptPath = path.join(process.resourcesPath, 'backend', 'analyzer.py');
+      if (fs.existsSync(scriptPath)) {
+        try {
+          const pyOut = execSync(`python3 "${scriptPath}" --help 2>&1`, { timeout: 8000 }).toString();
+          sendLogToRenderer('info', `[DIAGNOSTICS SUCCESS via python3] Fallback script responded:\n${pyOut.slice(0, 200)}`);
+          return { success: true, output: pyOut, executable: `python3 ${scriptPath}`, mode: 'python3-fallback' };
+        } catch (pyErr) {
+          sendLogToRenderer('error', `[DIAGNOSTICS ERROR] python3 fallback test failed: ${pyErr.message}`);
+        }
+      }
+    }
+    const errMsg = err.stderr ? err.stderr.toString() : err.message;
+    sendLogToRenderer('error', `[DIAGNOSTICS FAILED] ${errMsg}`);
+    return { success: false, error: errMsg, executable };
   }
 });
