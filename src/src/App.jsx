@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 import AnalyticsView from './AnalyticsView';
+import { getProtocolStep, generateGraphSvg } from './protocol';
 
 // Access secure electronAPI exposed via contextBridge in preload.js
 const api = window.electronAPI || {
@@ -563,18 +564,25 @@ export default function App() {
     const aggregatedStats = {};
 
     const targetPaths = appMode === 'bulk' ? imageList : [filePath];
-    const outDir = folderPath ? folderPath + '_isolated_labels' : activeImagePath + '_isolated_labels';
+    
+    // Build {Parentfoldername}_Result master folder
+    const basePath = folderPath || activeImagePath;
+    const parentFolderName = basePath.split(/[\\/]/).pop().replace(/\.[^/.]+$/, '');
+    const resultDir = basePath + '_Result';
+    const isolatedDir = `${resultDir}/${parentFolderName}_isolated_labels`;
 
     try {
-      for (const imgPath of targetPaths) {
+      for (let imgIdx = 0; imgIdx < targetPaths.length; imgIdx++) {
+        const imgPath = targetPaths[imgIdx];
         const rois = segmentations[imgPath] || [];
         if (rois.length === 0) continue;
 
         const pictureName = imgPath.split(/[\\/]/).pop().split('.')[0];
+        const proto = getProtocolStep(imgIdx);
         
         for (let i = 0; i < rois.length; i++) {
           const roi = rois[i];
-          const res = await api.cropLabels(imgPath, roi.points, roi.labelName, i + 1, outDir);
+          const res = await api.cropLabels(imgPath, roi.points, roi.labelName, i + 1, isolatedDir);
 
           if (!aggregatedStats[roi.labelName]) aggregatedStats[roi.labelName] = [];
           aggregatedStats[roi.labelName].push({
@@ -587,8 +595,47 @@ export default function App() {
             std_temp: res.std_temp,
             pixel_count: res.pixel_count,
             csv_path: res.csv_path,
+            protocol: proto,
           });
         }
+      }
+
+      // Assemble Summary CSVs and SVG Graphs for {Parentfoldername}_Result
+      const exportFilesMap = {};
+
+      let masterCsv = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count\n`;
+
+      Object.keys(aggregatedStats).forEach(labelName => {
+        const series = aggregatedStats[labelName];
+        let labelCsv = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count\n`;
+
+        series.forEach((s, idx) => {
+          const proto = getProtocolStep(idx);
+          const row = `${idx + 1},${s.pictureName},"${proto.sessionName}",${proto.timestampMin},${labelName},${s.mean_temp},${s.min_temp},${s.max_temp},${s.std_temp},${s.pixel_count}\n`;
+          labelCsv += row;
+          masterCsv += row;
+        });
+
+        // Write label summary CSV e.g. m1_summary.csv, m2_summary.csv
+        exportFilesMap[`${labelName}_summary.csv`] = labelCsv;
+
+        // Generate Dark and White SVG Graphs per label
+        exportFilesMap[`graph_${labelName}_dark.svg`] = generateGraphSvg(labelName, series, 'dark');
+        exportFilesMap[`graph_${labelName}_white.svg`] = generateGraphSvg(labelName, series, 'white');
+      });
+
+      exportFilesMap[`master_summary_all_labels.csv`] = masterCsv;
+
+      // If first label exists, also save default analytics_graph_dark.svg and analytics_graph_white.svg
+      const firstLabel = Object.keys(aggregatedStats)[0];
+      if (firstLabel) {
+        exportFilesMap[`analytics_graph_dark.svg`] = generateGraphSvg(firstLabel, aggregatedStats[firstLabel], 'dark');
+        exportFilesMap[`analytics_graph_white.svg`] = generateGraphSvg(firstLabel, aggregatedStats[firstLabel], 'white');
+      }
+
+      // Export files into resultDir
+      if (api.exportResultPackage) {
+        await api.exportResultPackage(resultDir, exportFilesMap);
       }
 
       const masterData = {
@@ -598,14 +645,14 @@ export default function App() {
         segmentations,
         aggregatedStats,
       };
-      await api.saveMasterJson(outDir, masterData);
+      await api.saveMasterJson(resultDir, masterData);
 
       // Clean up temporary draft recovery file upon successful export
       await api.clearDraft();
 
       setAnalyticsData(aggregatedStats);
       setShowAnalytics(true);
-      alert(`Success! Isolated CSVs and master annotations_session.json saved to:\n${outDir}`);
+      alert(`Success! Complete Time-Series Result Package saved to:\n${resultDir}\n\nIncludes:\n- ${parentFolderName}_isolated_labels/\n- Summary CSVs (m1, m2, m3...)\n- Dark & White SVG Analytics Graphs`);
     } catch (err) {
       alert(`Export failed:\n${err}`);
     }
@@ -747,7 +794,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.3.1</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.3.2</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -796,7 +843,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">v1.3.1</span>
+          <span className="brand-badge">v1.3.2</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (

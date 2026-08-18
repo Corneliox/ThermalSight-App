@@ -375,3 +375,31 @@ ipcMain.handle('open-external', async (_event, url) => {
     shell.openExternal(url);
   }
 });
+
+ipcMain.handle('save-file', async (_event, filePath, content) => {
+  try {
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(filePath, content, 'utf-8');
+    return { status: 'ok', path: filePath };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle('export-result-package', async (_event, resultDir, filesMap) => {
+  try {
+    if (!fs.existsSync(resultDir)) fs.mkdirSync(resultDir, { recursive: true });
+
+    for (const [relPath, content] of Object.entries(filesMap)) {
+      const fullPath = path.join(resultDir, relPath);
+      const dir = path.dirname(fullPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(fullPath, content, 'utf-8');
+    }
+
+    return { status: 'ok', path: resultDir };
+  } catch (e) {
+    return { error: e.message };
+  }
+});

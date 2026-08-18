@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadDraft: () => ipcRenderer.invoke('load-draft'),
   clearDraft: () => ipcRenderer.invoke('clear-draft'),
   saveMasterJson: (outDir, masterData) => ipcRenderer.invoke('save-master-json', outDir, masterData),
+  saveFile: (filePath, content) => ipcRenderer.invoke('save-file', filePath, content),
+  exportResultPackage: (resultDir, filesMap) => ipcRenderer.invoke('export-result-package', resultDir, filesMap),
   openPath: (p) => ipcRenderer.invoke('open-path', p),
   showItemInFolder: (p) => ipcRenderer.invoke('show-item-in-folder', p),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
