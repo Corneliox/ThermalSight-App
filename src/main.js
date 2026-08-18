@@ -35,6 +35,13 @@ function createApplicationMenu() {
           }
         },
         {
+          label: 'Open Saved Annotation Session...',
+          accelerator: 'CmdOrCtrl+L',
+          click: () => {
+            if (mainWindow) mainWindow.webContents.send('menu-open-annotation');
+          }
+        },
+        {
           label: 'Open Active Project Output Folder',
           accelerator: 'CmdOrCtrl+Alt+O',
           click: () => {
@@ -309,6 +316,49 @@ ipcMain.handle('list-folder-images', async (_event, folderPath) => {
   validFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
 
   return validFiles.map(f => path.join(folderPath, f));
+});
+
+// ── IPC: Annotation Session Project Loading ──────────────────────────────────
+ipcMain.handle('open-annotation-dialog', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select saved annotations_session.json or project session',
+    filters: [
+      { name: 'JSON Session File', extensions: ['json'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+    properties: ['openFile'],
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
+
+ipcMain.handle('load-annotation-file', async (_event, filePath) => {
+  if (!filePath || !fs.existsSync(filePath)) return null;
+  try {
+    const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    return { ...data, loadedFilePath: filePath };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle('check-existing-annotation', async (_event, folderPath) => {
+  if (!folderPath || !fs.existsSync(folderPath)) return null;
+  
+  const candidates = [
+    path.join(folderPath + '_Result', 'annotations_session.json'),
+    path.join(folderPath + '_isolated_labels', 'annotations_session.json'),
+    path.join(folderPath, 'annotations_session.json'),
+  ];
+
+  for (const cand of candidates) {
+    if (fs.existsSync(cand)) {
+      try {
+        const data = JSON.parse(fs.readFileSync(cand, 'utf-8'));
+        return { ...data, loadedFilePath: cand };
+      } catch {}
+    }
+  }
+  return null;
 });
 
 // ── IPC: Draft recovery session file operations ────────────────────────────────

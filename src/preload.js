@@ -26,12 +26,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showItemInFolder: (p) => ipcRenderer.invoke('show-item-in-folder', p),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
 
+  // Annotation Session Project Loading APIs
+  openAnnotationDialog: () => ipcRenderer.invoke('open-annotation-dialog'),
+  loadAnnotationFile: (filePath) => ipcRenderer.invoke('load-annotation-file', filePath),
+  checkExistingAnnotation: (folderPath) => ipcRenderer.invoke('check-existing-annotation', folderPath),
+
   // Menu Event Listeners
   onMenuOpenSettings: (callback) => ipcRenderer.on('menu-open-settings', () => callback()),
   onMenuOpenAbout: (callback) => ipcRenderer.on('menu-open-about', () => callback()),
   onMenuTriggerUndo: (callback) => ipcRenderer.on('menu-trigger-undo', () => callback()),
   onMenuOpenSingle: (callback) => ipcRenderer.on('menu-open-single', () => callback()),
   onMenuOpenFolder: (callback) => ipcRenderer.on('menu-open-folder', () => callback()),
+  onMenuOpenAnnotation: (callback) => ipcRenderer.on('menu-open-annotation', () => callback()),
   onMenuOpenProject: (callback) => ipcRenderer.on('menu-open-project', () => callback()),
 
   // Terminal & Live Diagnostics Log Listener

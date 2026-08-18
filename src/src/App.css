@@ -105,11 +105,14 @@ body {
 
 .upload-options {
   display: flex;
-  gap: 24px;
+  gap: 20px;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 960px;
 }
 
 .drop-zone {
-  width: 320px;
+  width: 280px;
   height: 190px;
   border: 2px dashed var(--border-h);
   border-radius: var(--radius-lg);

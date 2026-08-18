@@ -17,6 +17,10 @@ const api = window.electronAPI || {
   saveMasterJson: async () => {},
   openPath: async () => {},
   showItemInFolder: async () => {},
+  openAnnotationDialog: async () => null,
+  loadAnnotationFile: async () => null,
+  checkExistingAnnotation: async () => null,
+  exportResultPackage: async () => {},
 };
 
 const toFileUrl = (p) => {
@@ -135,12 +139,13 @@ export default function App() {
 
   // ── Menu Bar Event IPC Listeners ──────────────────────────────────────────────
   useEffect(() => {
-    if (api.onMenuOpenSettings) api.onMenuOpenSettings(() => setShowSettingsModal(true));
-    if (api.onMenuOpenAbout)    api.onMenuOpenAbout(() => setShowAboutModal(true));
-    if (api.onMenuTriggerUndo)  api.onMenuTriggerUndo(() => undoLastPolygon());
-    if (api.onMenuOpenSingle)   api.onMenuOpenSingle(() => handleBrowseSingle());
-    if (api.onMenuOpenFolder)   api.onMenuOpenFolder(() => handleBrowseFolder());
-    if (api.onMenuOpenProject)  api.onMenuOpenProject(() => openFolder());
+    if (api.onMenuOpenSettings)   api.onMenuOpenSettings(() => setShowSettingsModal(true));
+    if (api.onMenuOpenAbout)      api.onMenuOpenAbout(() => setShowAboutModal(true));
+    if (api.onMenuTriggerUndo)    api.onMenuTriggerUndo(() => undoLastPolygon());
+    if (api.onMenuOpenSingle)     api.onMenuOpenSingle(() => handleBrowseSingle());
+    if (api.onMenuOpenFolder)     api.onMenuOpenFolder(() => handleBrowseFolder());
+    if (api.onMenuOpenAnnotation) api.onMenuOpenAnnotation(() => handleOpenAnnotationSession());
+    if (api.onMenuOpenProject)    api.onMenuOpenProject(() => openFolder());
   }, [segmentations, activeImagePath, imageList, currentIndex, filePath]);
 
   // ── Startup Crash Recovery Check ─────────────────────────────────────────────
@@ -262,6 +267,17 @@ export default function App() {
       setImageList(files);
       setCurrentIndex(0);
       setAppMode('bulk');
+
+      // Auto-check if previous annotations session exists for this folder
+      try {
+        const existing = await api.checkExistingAnnotation(folder);
+        if (existing && existing.segmentations && Object.keys(existing.segmentations).length > 0) {
+          setDraftToRestore(existing);
+          setShowRestoreModal(true);
+        }
+      } catch (e) {
+        console.error('Annotation check error:', e);
+      }
     }
   };
 
@@ -659,16 +675,82 @@ export default function App() {
     setIsProcessing(null);
   };
 
-  const restoreDraft = () => {
-    if (draftToRestore) {
-      setFolderPath(draftToRestore.folderPath);
-      setImageList(draftToRestore.imageList || []);
-      setLabels(draftToRestore.labels || labels);
-      setSegmentations(draftToRestore.segmentations || {});
-      if (draftToRestore.imageList && draftToRestore.imageList.length > 0) {
-        setAppMode('bulk');
+  // ── Restore / Apply Loaded Annotation Session ─────────────────────────────────
+  const applyLoadedSession = async (sessionData, currentFiles = null) => {
+    if (!sessionData) return;
+
+    if (sessionData.labels && Array.isArray(sessionData.labels)) {
+      setLabels(sessionData.labels);
+      if (sessionData.labels.length > 0) setActiveLabelId(sessionData.labels[0].id);
+    }
+
+    if (sessionData.aggregatedStats) {
+      setAnalyticsData(sessionData.aggregatedStats);
+    }
+
+    // Check if we need to load the image folder sequence
+    let activeFiles = currentFiles || imageList;
+    if (sessionData.folderPath && (!activeFiles || activeFiles.length === 0)) {
+      const files = await api.listFolderImages(sessionData.folderPath);
+      if (files && files.length > 0) {
+        setFolderPath(sessionData.folderPath);
+        setImageList(files);
         setCurrentIndex(0);
+        setAppMode('bulk');
+        activeFiles = files;
       }
+    }
+
+    // Smart Cross-Platform Basename Normalization for Segmentations
+    if (sessionData.segmentations) {
+      const incomingSegs = sessionData.segmentations;
+      const basenameMap = {};
+      Object.keys(incomingSegs).forEach(key => {
+        const base = key.split(/[\\/]/).pop();
+        basenameMap[base] = incomingSegs[key];
+      });
+
+      // If activeFiles exists, remap ROIs to current absolute filepaths
+      if (activeFiles && activeFiles.length > 0) {
+        const remapped = {};
+        activeFiles.forEach(fPath => {
+          const base = fPath.split(/[\\/]/).pop();
+          if (incomingSegs[fPath]) {
+            remapped[fPath] = incomingSegs[fPath];
+          } else if (basenameMap[base]) {
+            remapped[fPath] = basenameMap[base];
+          } else {
+            remapped[fPath] = [];
+          }
+        });
+        setSegmentations(remapped);
+      } else {
+        setSegmentations(incomingSegs);
+      }
+    }
+  };
+
+  const handleOpenAnnotationSession = async () => {
+    try {
+      const filePath = await api.openAnnotationDialog();
+      if (!filePath) return;
+
+      const sessionData = await api.loadAnnotationFile(filePath);
+      if (!sessionData) {
+        alert('Could not read annotation session file.');
+        return;
+      }
+
+      await applyLoadedSession(sessionData);
+      alert(`Loaded annotation session successfully from:\n${filePath}`);
+    } catch (err) {
+      alert(`Failed to load annotation session:\n${err.message || err}`);
+    }
+  };
+
+  const restoreDraft = async () => {
+    if (draftToRestore) {
+      await applyLoadedSession(draftToRestore);
     }
     setShowRestoreModal(false);
   };
@@ -794,7 +876,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.3.2</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.3.3</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -843,7 +925,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">v1.3.2</span>
+          <span className="brand-badge">v1.3.3</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (
@@ -859,6 +941,9 @@ export default function App() {
               </button>
             </div>
           )}
+          <button className="btn-ghost" title="Open Saved Annotation Session (annotations_session.json)" onClick={handleOpenAnnotationSession}>
+            📂 Load Session
+          </button>
           <button className="btn-ghost" title="Settings / Variable Configurations" onClick={() => setShowSettingsModal(true)}>
             ⚙ Settings
           </button>
@@ -897,6 +982,12 @@ export default function App() {
               <div className="drop-icon">📷</div>
               <p className="drop-title">Open Single Thermal Image</p>
               <p className="drop-sub">Drop or click to browse · .jpg .png .tiff</p>
+            </div>
+
+            <div className="drop-zone" onClick={handleOpenAnnotationSession}>
+              <div className="drop-icon">📂</div>
+              <p className="drop-title">Open Saved Annotations</p>
+              <p className="drop-sub">Load annotations_session.json or project session</p>
             </div>
           </div>
         </main>
@@ -1146,6 +1237,12 @@ export default function App() {
                 <input className="field-input-sm key-input" type="text" maxLength={1} placeholder="Key (a-z)"
                        value={newLabelKey} onChange={e => setNewLabelKey(e.target.value)}/>
                 <button className="btn-secondary btn-tiny" onClick={handleAddLabel}>+ Add</button>
+              </div>
+
+              <div style={{ marginTop: '8px' }}>
+                <button className="btn-secondary btn-tiny w-full" onClick={handleOpenAnnotationSession} title="Load existing annotations_session.json">
+                  📂 Load Saved Annotations (.json)
+                </button>
               </div>
             </div>
 
