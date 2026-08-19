@@ -2,6 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 import AnalyticsView from './AnalyticsView';
 import { getProtocolStep, generateGraphSvg } from './protocol';
+import JSZip from 'jszip';
+import {
+  loadThermalImageData,
+  runClientThermalAnalysis,
+  clientMeasureStar,
+  clientCropPolygonROI
+} from './thermalEngine';
 
 // Access secure electronAPI exposed via contextBridge in preload.js
 const api = window.electronAPI || {
@@ -21,13 +28,14 @@ const api = window.electronAPI || {
   loadAnnotationFile: async () => null,
   checkExistingAnnotation: async () => null,
   exportResultPackage: async () => {},
-  getPlatformInfo: async () => ({ platform: 'win32', isMac: false, isPackaged: false, arch: 'x64' }),
+  getPlatformInfo: async () => ({ platform: 'web', isMac: false, isPackaged: false, arch: 'web' }),
   runMacPermissionFix: async () => ({ status: 'skipped' }),
   testBackendConnection: async () => ({ success: true }),
 };
 
 const toFileUrl = (p) => {
   if (!p) return '';
+  if (p.startsWith('data:') || p.startsWith('blob:') || p.startsWith('http')) return p;
   const s = p.replace(/\\/g, '/');
   const encodedParts = s.split('/').map(part => encodeURIComponent(part));
   const encodedPath = encodedParts.join('/');
@@ -65,10 +73,17 @@ export default function App() {
   const [imageList,      setImageList]      = useState([]);
   const [currentIndex,   setCurrentIndex]   = useState(0);
   const [filePath,       setFilePath]       = useState(null);
+  const [fileObjMap,     setFileObjMap]     = useState({}); // { [path]: File | Blob }
   const [isProcessing,   setIsProcessing]   = useState(null);
   const [resultsMap,     setResultsMap]     = useState({}); // { [path]: results }
   const [activePanel,    setActivePanel]    = useState('original');
   const [imgTs,          setImgTs]          = useState(Date.now());
+
+  // Input file refs for Web mode
+  const singleFileInputRef = useRef(null);
+  const folderInputRef = useRef(null);
+  const annotationFileInputRef = useRef(null);
+  const isWeb = typeof window !== 'undefined' && (!window.electronAPI || !window.electronAPI.openFileDialog);
 
   // Calibration
   const [calibMode,      setCalibMode]      = useState('idle');
@@ -117,7 +132,7 @@ export default function App() {
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
-    { id: 1, type: 'info', text: 'ThermalSight v1.3.4 Engine Initialized', timestamp: new Date().toLocaleTimeString() }
+    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
   ]);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const terminalEndRef = useRef(null);
@@ -131,7 +146,7 @@ export default function App() {
   // ── macOS Platform & Backend Health Check on Startup ────────────────────────
   useEffect(() => {
     async function initPlatformAndDiagnostics() {
-      if (api.getPlatformInfo) {
+      if (window.electronAPI && api.getPlatformInfo) {
         try {
           const info = await api.getPlatformInfo();
           if (info && info.isMac) {
@@ -156,7 +171,7 @@ export default function App() {
 
   // ── Live Backend Terminal Listener ───────────────────────────────────────────
   useEffect(() => {
-    if (api.onBackendLog) {
+    if (window.electronAPI && api.onBackendLog) {
       api.onBackendLog((log) => {
         setTerminalLogs(prev => [...prev.slice(-200), { ...log, id: Date.now() + Math.random() }]);
       });
@@ -169,22 +184,32 @@ export default function App() {
     }
   }, [terminalLogs, isTerminalOpen]);
 
-  // ── Menu Bar Event IPC Listeners ──────────────────────────────────────────────
+  // ── Menu Bar Event IPC Listeners (Electron) ──────────────────────────────────
   useEffect(() => {
-    if (api.onMenuOpenSettings)   api.onMenuOpenSettings(() => setShowSettingsModal(true));
-    if (api.onMenuOpenAbout)      api.onMenuOpenAbout(() => setShowAboutModal(true));
-    if (api.onMenuOpenMacGuide)   api.onMenuOpenMacGuide(() => setShowMacGuideModal(true));
-    if (api.onMenuTriggerUndo)    api.onMenuTriggerUndo(() => undoLastPolygon());
-    if (api.onMenuOpenSingle)     api.onMenuOpenSingle(() => handleBrowseSingle());
-    if (api.onMenuOpenFolder)     api.onMenuOpenFolder(() => handleBrowseFolder());
-    if (api.onMenuOpenAnnotation) api.onMenuOpenAnnotation(() => handleOpenAnnotationSession());
-    if (api.onMenuOpenProject)    api.onMenuOpenProject(() => openFolder());
+    if (window.electronAPI) {
+      if (api.onMenuOpenSettings)   api.onMenuOpenSettings(() => setShowSettingsModal(true));
+      if (api.onMenuOpenAbout)      api.onMenuOpenAbout(() => setShowAboutModal(true));
+      if (api.onMenuOpenMacGuide)   api.onMenuOpenMacGuide(() => setShowMacGuideModal(true));
+      if (api.onMenuTriggerUndo)    api.onMenuTriggerUndo(() => undoLastPolygon());
+      if (api.onMenuOpenSingle)     api.onMenuOpenSingle(() => handleBrowseSingle());
+      if (api.onMenuOpenFolder)     api.onMenuOpenFolder(() => handleBrowseFolder());
+      if (api.onMenuOpenAnnotation) api.onMenuOpenAnnotation(() => handleOpenAnnotationSession());
+      if (api.onMenuOpenProject)    api.onMenuOpenProject(() => openFolder());
+    }
   }, [segmentations, activeImagePath, imageList, currentIndex, filePath]);
 
   // ── Startup Crash Recovery Check ─────────────────────────────────────────────
   useEffect(() => {
     async function checkDraft() {
-      const draft = await api.loadDraft();
+      let draft = null;
+      if (window.electronAPI && api.loadDraft) {
+        draft = await api.loadDraft();
+      } else {
+        try {
+          const saved = localStorage.getItem('thermalsight_draft');
+          if (saved) draft = JSON.parse(saved);
+        } catch {}
+      }
       if (draft && draft.segmentations && Object.keys(draft.segmentations).length > 0) {
         setDraftToRestore(draft);
         setShowRestoreModal(true);
@@ -197,13 +222,20 @@ export default function App() {
   useEffect(() => {
     if (!segmentations || Object.keys(segmentations).length === 0) return;
     const timer = setTimeout(() => {
-      api.saveDraft({
+      const draftData = {
         folderPath,
         imageList,
         labels,
         segmentations,
         timestamp: Date.now(),
-      });
+      };
+      if (window.electronAPI && api.saveDraft) {
+        api.saveDraft(draftData);
+      } else {
+        try {
+          localStorage.setItem('thermalsight_draft', JSON.stringify(draftData));
+        } catch {}
+      }
     }, 400);
     return () => clearTimeout(timer);
   }, [segmentations, labels, folderPath, imageList]);
@@ -220,7 +252,7 @@ export default function App() {
     });
   };
 
-  // ── Keyboard Shortcuts Listener (a-z for labels, Arrow Left/Right, [, ], Backspace to undo)
+  // ── Keyboard Shortcuts Listener ──────────────────────────────────────────────
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
@@ -274,62 +306,189 @@ export default function App() {
     };
   };
 
-  // ── Drag & Drop + File Explorer Handlers ─────────────────────────────────────
-  const handleDrop = (e) => {
-    e.preventDefault();
-    const f = e.dataTransfer.files[0];
-    if (f) {
-      setFilePath(f.path);
-      setAppMode('single');
-    }
-  };
-
+  // ── File and Folder Input Handlers (Dual-Mode: Desktop + Web) ───────────────
   const handleBrowseSingle = async () => {
-    const p = await api.openFileDialog();
-    if (p) {
-      setFilePath(p);
-      setAppMode('single');
+    if (window.electronAPI && window.electronAPI.openFileDialog) {
+      const p = await api.openFileDialog();
+      if (p) {
+        setFilePath(p);
+        setAppMode('single');
+      }
+    } else {
+      if (singleFileInputRef.current) singleFileInputRef.current.click();
     }
   };
 
   const handleBrowseFolder = async () => {
-    const folder = await api.openFolderDialog();
-    if (folder) {
-      setFolderPath(folder);
-      const files = await api.listFolderImages(folder);
-      setImageList(files);
-      setCurrentIndex(0);
-      setAppMode('bulk');
+    if (window.electronAPI && window.electronAPI.openFolderDialog) {
+      const folder = await api.openFolderDialog();
+      if (folder) {
+        setFolderPath(folder);
+        const files = await api.listFolderImages(folder);
+        setImageList(files);
+        setCurrentIndex(0);
+        setAppMode('bulk');
 
-      // Auto-check if previous annotations session exists for this folder
-      try {
-        const existing = await api.checkExistingAnnotation(folder);
-        if (existing && existing.segmentations && Object.keys(existing.segmentations).length > 0) {
-          setDraftToRestore(existing);
-          setShowRestoreModal(true);
+        try {
+          const existing = await api.checkExistingAnnotation(folder);
+          if (existing && existing.segmentations && Object.keys(existing.segmentations).length > 0) {
+            setDraftToRestore(existing);
+            setShowRestoreModal(true);
+          }
+        } catch (e) {
+          console.error('Annotation check error:', e);
         }
-      } catch (e) {
-        console.error('Annotation check error:', e);
       }
+    } else {
+      if (folderInputRef.current) folderInputRef.current.click();
+    }
+  };
+
+  const handleSingleFileInputChange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const name = file.name;
+    setFileObjMap(prev => ({ ...prev, [name]: file }));
+    setFilePath(name);
+    setAppMode('single');
+  };
+
+  const handleFolderInputChange = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    const validExts = ['.jpg', '.jpeg', '.png', '.tiff', '.tif'];
+    const imgFiles = files.filter(f => validExts.some(ext => f.name.toLowerCase().endsWith(ext)));
+
+    if (imgFiles.length === 0) {
+      alert('No thermal images (.jpg, .png, .tiff) found in the selected folder.');
+      return;
+    }
+
+    imgFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+    const folderName = imgFiles[0].webkitRelativePath ? imgFiles[0].webkitRelativePath.split('/')[0] : 'Thermal_Sequence';
+    setFolderPath(folderName);
+
+    const fMap = {};
+    const names = [];
+    imgFiles.forEach(f => {
+      const key = f.webkitRelativePath || f.name;
+      fMap[key] = f;
+      names.push(key);
+    });
+
+    setFileObjMap(prev => ({ ...prev, ...fMap }));
+    setImageList(names);
+    setCurrentIndex(0);
+    setAppMode('bulk');
+
+    // Check if annotations_session.json exists
+    const jsonFile = files.find(f => f.name === 'annotations_session.json');
+    if (jsonFile) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const sessionData = JSON.parse(ev.target.result);
+          setDraftToRestore(sessionData);
+          setShowRestoreModal(true);
+        } catch {}
+      };
+      reader.readAsText(jsonFile);
+    }
+  };
+
+  const handleAnnotationFileInputChange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const sessionData = JSON.parse(ev.target.result);
+        applyLoadedSession(sessionData);
+        alert(`Loaded annotation session from: ${file.name}`);
+      } catch (err) {
+        alert(`Failed to load annotation session: ${err.message}`);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleDrop = async (e) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length === 0) return;
+
+    if (files.length > 1) {
+      const validExts = ['.jpg', '.jpeg', '.png', '.tiff', '.tif'];
+      const imgFiles = files.filter(f => validExts.some(ext => f.name.toLowerCase().endsWith(ext)));
+      if (imgFiles.length > 0) {
+        imgFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+        const fMap = {};
+        const names = [];
+        imgFiles.forEach(f => {
+          fMap[f.name] = f;
+          names.push(f.name);
+        });
+        setFileObjMap(prev => ({ ...prev, ...fMap }));
+        setImageList(names);
+        setFolderPath('Thermal_Sequence');
+        setCurrentIndex(0);
+        setAppMode('bulk');
+        return;
+      }
+    }
+
+    const f = files[0];
+    if (f.name.toLowerCase().endsWith('.json')) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const data = JSON.parse(ev.target.result);
+          applyLoadedSession(data);
+        } catch (err) {
+          alert('Invalid JSON annotation session.');
+        }
+      };
+      reader.readAsText(f);
+    } else {
+      setFileObjMap(prev => ({ ...prev, [f.name]: f }));
+      setFilePath(f.name);
+      setAppMode('single');
     }
   };
 
   const inFlightRef = useRef(new Set());
 
-  // ── Background Image Analysis & Pre-fetch Queue ────────────────────────────────
+  // ── Background Image Analysis & Pre-fetch Queue (Dual-Mode) ───────────────────
   useEffect(() => {
     let isSubscribed = true;
 
     async function processAnalysisQueue() {
       if (!activeImagePath) return;
 
-      // 1. Prioritize currently active image if not analyzed yet and not currently in flight
+      // 1. Prioritize currently active image if not analyzed yet
       if (!resultsMap[activeImagePath] && !inFlightRef.current.has(activeImagePath)) {
         inFlightRef.current.add(activeImagePath);
         setIsProcessing('analysis');
         try {
-          const outDir = activeImagePath + '_analysis';
-          const res = await api.runAnalysis(activeImagePath, outDir);
+          const fileObj = fileObjMap[activeImagePath] || activeImagePath;
+          let res;
+          if (!window.electronAPI) {
+            // 100% Client-Side Pure JavaScript Engine
+            const imgData = await loadThermalImageData(fileObj);
+            const stem = activeImagePath.split(/[\\/]/).pop().split('.')[0];
+            res = runClientThermalAnalysis(imgData.tempMatrix, imgData.width, imgData.height, stem);
+            setTerminalLogs(prev => [...prev.slice(-200), {
+              id: Date.now() + Math.random(),
+              type: 'info',
+              text: `[CLIENT ENGINE] Analyzed ${stem} (${imgData.width}x${imgData.height}) in Browser (Zero Python)`,
+              timestamp: new Date().toLocaleTimeString()
+            }]);
+          } else {
+            const outDir = activeImagePath + '_analysis';
+            res = await api.runAnalysis(activeImagePath, outDir);
+          }
           if (isSubscribed) {
             setResultsMap(prev => ({ ...prev, [activeImagePath]: res }));
             setImgTs(Date.now());
@@ -343,7 +502,7 @@ export default function App() {
         }
       }
 
-      // 2. In bulk mode, pre-analyze all remaining images in background queue sequentially
+      // 2. In bulk mode, pre-analyze all remaining images in background queue
       if (appMode === 'bulk' && imageList.length > 0) {
         const queue = [
           ...imageList.slice(currentIndex + 1),
@@ -356,13 +515,21 @@ export default function App() {
 
           inFlightRef.current.add(targetPath);
           try {
-            const outDir = targetPath + '_analysis';
-            const res = await api.runAnalysis(targetPath, outDir);
+            const fileObj = fileObjMap[targetPath] || targetPath;
+            let res;
+            if (!window.electronAPI) {
+              const imgData = await loadThermalImageData(fileObj);
+              const stem = targetPath.split(/[\\/]/).pop().split('.')[0];
+              res = runClientThermalAnalysis(imgData.tempMatrix, imgData.width, imgData.height, stem);
+            } else {
+              const outDir = targetPath + '_analysis';
+              res = await api.runAnalysis(targetPath, outDir);
+            }
             if (isSubscribed) {
               setResultsMap(prev => ({ ...prev, [targetPath]: res }));
             }
           } catch (err) {
-            console.error(`Background pre-fetch analysis error for ${targetPath}:`, err);
+            console.error(`Background pre-fetch error for ${targetPath}:`, err);
           } finally {
             inFlightRef.current.delete(targetPath);
           }
@@ -373,7 +540,7 @@ export default function App() {
     processAnalysisQueue();
 
     return () => { isSubscribed = false; };
-  }, [activeImagePath, appMode, imageList, currentIndex]);
+  }, [activeImagePath, appMode, imageList, currentIndex, fileObjMap]);
 
   // ── Navigation ──────────────────────────────────────────────────────────────
   const handleNextImage = () => {
@@ -451,10 +618,24 @@ export default function App() {
     setStarStep('saving');
     const dist_cm = parseFloat(starDist) || 2.0;
     try {
-      const res = await api.measureStar(
-        activeImagePath, starCentre.px, starCentre.py,
-        dist_cm, starRot, pxPerCm, currentResults.out_dir
-      );
+      let res;
+      if (!window.electronAPI && currentResults.raw?.tempMatrix) {
+        res = clientMeasureStar(
+          currentResults.raw.tempMatrix,
+          currentResults.raw.width,
+          currentResults.raw.height,
+          starCentre.px,
+          starCentre.py,
+          dist_cm,
+          starRot,
+          pxPerCm
+        );
+      } else {
+        res = await api.measureStar(
+          activeImagePath, starCentre.px, starCentre.py,
+          dist_cm, starRot, pxPerCm, currentResults.out_dir
+        );
+      }
       setStarResults(res);
       setStarStep('done');
     } catch (err) {
@@ -601,7 +782,7 @@ export default function App() {
     setEditingLabelId(null);
   };
 
-  // ── Save Label & Master Export Action ────────────────────────────────────────
+  // ── Save Label & Master Export Action (Client ZIP & Desktop Package) ─────────
   const handleSaveLabels = async () => {
     const totalSegs = Object.values(segmentations).flat().length;
     if (totalSegs === 0) {
@@ -628,10 +809,23 @@ export default function App() {
 
         const pictureName = imgPath.split(/[\\/]/).pop().split('.')[0];
         const proto = getProtocolStep(imgIdx);
+        const imgResult = resultsMap[imgPath];
         
         for (let i = 0; i < rois.length; i++) {
           const roi = rois[i];
-          const res = await api.cropLabels(imgPath, roi.points, roi.labelName, i + 1, isolatedDir);
+          let res;
+          if (!window.electronAPI && imgResult?.raw?.tempMatrix) {
+            res = clientCropPolygonROI(
+              imgResult.raw.tempMatrix,
+              imgResult.raw.width,
+              imgResult.raw.height,
+              roi.points,
+              roi.labelName,
+              i + 1
+            );
+          } else {
+            res = await api.cropLabels(imgPath, roi.points, roi.labelName, i + 1, isolatedDir);
+          }
 
           if (!aggregatedStats[roi.labelName]) aggregatedStats[roi.labelName] = [];
           aggregatedStats[roi.labelName].push({
@@ -643,8 +837,10 @@ export default function App() {
             max_temp: res.max_temp,
             std_temp: res.std_temp,
             pixel_count: res.pixel_count,
-            csv_path: res.csv_path,
+            csv_path: res.csv_path || `${pictureName}_roi_${i+1}_${roi.labelName}.csv`,
             protocol: proto,
+            croppedPngDataUrl: res.croppedPngDataUrl,
+            csvContent: res.csvContent,
           });
         }
       }
@@ -682,11 +878,6 @@ export default function App() {
         exportFilesMap[`analytics_graph_white.svg`] = generateGraphSvg(firstLabel, aggregatedStats[firstLabel], 'white');
       }
 
-      // Export files into resultDir
-      if (api.exportResultPackage) {
-        await api.exportResultPackage(resultDir, exportFilesMap);
-      }
-
       const masterData = {
         exportedAt: new Date().toISOString(),
         folderPath,
@@ -694,16 +885,52 @@ export default function App() {
         segmentations,
         aggregatedStats,
       };
-      await api.saveMasterJson(resultDir, masterData);
 
-      // Clean up temporary draft recovery file upon successful export
-      await api.clearDraft();
+      if (window.electronAPI && api.exportResultPackage) {
+        await api.exportResultPackage(resultDir, exportFilesMap);
+        await api.saveMasterJson(resultDir, masterData);
+        await api.clearDraft();
+      } else {
+        // Pure Client-Side ZIP Generation for Web
+        const zip = new JSZip();
+        const rootFolder = zip.folder(`${parentFolderName}_Result`);
+        const isolatedFolder = rootFolder.folder(`${parentFolderName}_isolated_labels`);
+
+        Object.keys(aggregatedStats).forEach(labelName => {
+          const series = aggregatedStats[labelName];
+          series.forEach(s => {
+            if (s.croppedPngDataUrl) {
+              const base64Data = s.croppedPngDataUrl.split(',')[1];
+              isolatedFolder.file(`${s.pictureName}_roi_${s.roiIndex}_${labelName}.png`, base64Data, { base64: true });
+            }
+            if (s.csvContent) {
+              isolatedFolder.file(`${s.pictureName}_roi_${s.roiIndex}_${labelName}.csv`, s.csvContent);
+            }
+          });
+        });
+
+        for (const [fname, content] of Object.entries(exportFilesMap)) {
+          rootFolder.file(fname, content);
+        }
+        rootFolder.file('annotations_session.json', JSON.stringify(masterData, null, 2));
+
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        const downloadUrl = URL.createObjectURL(zipBlob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = `${parentFolderName}_Result.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(downloadUrl);
+        localStorage.removeItem('thermalsight_draft');
+      }
 
       setAnalyticsData(aggregatedStats);
       setShowAnalytics(true);
-      alert(`Success! Complete Time-Series Result Package saved to:\n${resultDir}\n\nIncludes:\n- ${parentFolderName}_isolated_labels/\n- Summary CSVs (m1, m2, m3...)\n- Dark & White SVG Analytics Graphs`);
+      alert(`Success! Complete Time-Series Result Package (${parentFolderName}_Result.zip) generated successfully!\n\nIncludes:\n- ${parentFolderName}_isolated_labels/\n- Summary CSVs (m1, m2, m3...)\n- Dark & White SVG Analytics Graphs\n- annotations_session.json`);
     } catch (err) {
-      alert(`Export failed:\n${err}`);
+      alert(`Export failed:\n${err.message || err}`);
     }
     setIsProcessing(null);
   };
@@ -721,20 +948,20 @@ export default function App() {
       setAnalyticsData(sessionData.aggregatedStats);
     }
 
-    // Check if we need to load the image folder sequence
     let activeFiles = currentFiles || imageList;
     if (sessionData.folderPath && (!activeFiles || activeFiles.length === 0)) {
-      const files = await api.listFolderImages(sessionData.folderPath);
-      if (files && files.length > 0) {
-        setFolderPath(sessionData.folderPath);
-        setImageList(files);
-        setCurrentIndex(0);
-        setAppMode('bulk');
-        activeFiles = files;
+      if (window.electronAPI && api.listFolderImages) {
+        const files = await api.listFolderImages(sessionData.folderPath);
+        if (files && files.length > 0) {
+          setFolderPath(sessionData.folderPath);
+          setImageList(files);
+          setCurrentIndex(0);
+          setAppMode('bulk');
+          activeFiles = files;
+        }
       }
     }
 
-    // Smart Cross-Platform Basename Normalization for Segmentations
     if (sessionData.segmentations) {
       const incomingSegs = sessionData.segmentations;
       const basenameMap = {};
@@ -743,7 +970,6 @@ export default function App() {
         basenameMap[base] = incomingSegs[key];
       });
 
-      // If activeFiles exists, remap ROIs to current absolute filepaths
       if (activeFiles && activeFiles.length > 0) {
         const remapped = {};
         activeFiles.forEach(fPath => {
@@ -764,20 +990,24 @@ export default function App() {
   };
 
   const handleOpenAnnotationSession = async () => {
-    try {
-      const filePath = await api.openAnnotationDialog();
-      if (!filePath) return;
+    if (window.electronAPI && window.electronAPI.openAnnotationDialog) {
+      try {
+        const filePath = await api.openAnnotationDialog();
+        if (!filePath) return;
 
-      const sessionData = await api.loadAnnotationFile(filePath);
-      if (!sessionData) {
-        alert('Could not read annotation session file.');
-        return;
+        const sessionData = await api.loadAnnotationFile(filePath);
+        if (!sessionData) {
+          alert('Could not read annotation session file.');
+          return;
+        }
+
+        await applyLoadedSession(sessionData);
+        alert(`Loaded annotation session successfully from:\n${filePath}`);
+      } catch (err) {
+        alert(`Failed to load annotation session:\n${err.message || err}`);
       }
-
-      await applyLoadedSession(sessionData);
-      alert(`Loaded annotation session successfully from:\n${filePath}`);
-    } catch (err) {
-      alert(`Failed to load annotation session:\n${err.message || err}`);
+    } else {
+      if (annotationFileInputRef.current) annotationFileInputRef.current.click();
     }
   };
 
@@ -830,21 +1060,33 @@ export default function App() {
   };
 
   const discardDraft = async () => {
-    await api.clearDraft();
+    if (window.electronAPI && api.clearDraft) {
+      await api.clearDraft();
+    } else {
+      localStorage.removeItem('thermalsight_draft');
+    }
     setShowRestoreModal(false);
   };
 
-  const openFolder = () => { if (currentResults?.out_dir) api.openPath(currentResults.out_dir); };
-  const showCsv = (p) => { if (p) api.showItemInFolder(p); };
+  const openFolder = () => { if (currentResults?.out_dir && window.electronAPI) api.openPath(currentResults.out_dir); };
+  const showCsv = (p) => { if (p && window.electronAPI) api.showItemInFolder(p); };
 
   const cursor = (calibMode !== 'idle' || starStep === 'place' || drawMode) ? 'crosshair' : 'default';
   const imgSrc = currentResults?.images?.[activePanel]
-    ? `${toFileUrl(currentResults.images[activePanel])}?v=${imgTs}` : null;
+    ? toFileUrl(currentResults.images[activePanel]) : null;
 
   const currentRois = segmentations[activeImagePath] || [];
 
   return (
     <div className="app">
+
+      {/* HIDDEN FILE INPUTS FOR BROWSER / WEB COMPATIBILITY */}
+      <input type="file" ref={singleFileInputRef} accept="image/*" style={{ display: 'none' }}
+             onChange={handleSingleFileInputChange} />
+      <input type="file" ref={folderInputRef} webkitdirectory="true" directory="" multiple style={{ display: 'none' }}
+             onChange={handleFolderInputChange} />
+      <input type="file" ref={annotationFileInputRef} accept=".json" style={{ display: 'none' }}
+             onChange={handleAnnotationFileInputChange} />
 
       {/* RESTORE DRAFT MODAL */}
       {showRestoreModal && (
@@ -929,11 +1171,13 @@ export default function App() {
                 {currentResults?.out_dir && (
                   <div className="kv"><span>Output Directory</span><span style={{ fontSize: '10px', wordBreak: 'break-all' }}>{currentResults.out_dir}</span></div>
                 )}
-                <div style={{ marginTop: '10px', display: 'flex', gap: '8px' }}>
-                  <button className="btn-secondary btn-tiny" disabled={!currentResults?.out_dir} onClick={openFolder}>
-                    📁 Open Output Directory in File Explorer
-                  </button>
-                </div>
+                {window.electronAPI && (
+                  <div style={{ marginTop: '10px', display: 'flex', gap: '8px' }}>
+                    <button className="btn-secondary btn-tiny" disabled={!currentResults?.out_dir} onClick={openFolder}>
+                      📁 Open Output Directory in File Explorer
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -950,7 +1194,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.3.4</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.3.4 (Web & Desktop)</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -967,9 +1211,9 @@ export default function App() {
                     <span style={{ fontWeight: '600', color: 'var(--text0)' }}>Corneliox</span>
                     <span style={{ fontSize: '11px', color: 'var(--cyan)', marginLeft: '8px' }}>(Lead Developer)</span>
                   </div>
-                  <button className="btn-secondary btn-tiny" onClick={() => api.openExternal('https://github.com/Corneliox')}>
+                  <a className="btn-secondary btn-tiny" href="https://github.com/Corneliox" target="_blank" rel="noreferrer">
                     🌐 github.com/Corneliox
-                  </button>
+                  </a>
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -977,27 +1221,29 @@ export default function App() {
                     <span style={{ fontWeight: '600', color: 'var(--text0)' }}>Aditya42069</span>
                     <span style={{ fontSize: '11px', color: 'var(--accent2)', marginLeft: '8px' }}>(Co-Developer)</span>
                   </div>
-                  <button className="btn-secondary btn-tiny" onClick={() => api.openExternal('https://github.com/Aditya42069')}>
+                  <a className="btn-secondary btn-tiny" href="https://github.com/Aditya42069" target="_blank" rel="noreferrer">
                     🌐 github.com/Aditya42069
-                  </button>
+                  </a>
                 </div>
               </div>
             </div>
 
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
-              <button className="btn-secondary btn-tiny" onClick={() => { setShowAboutModal(false); setShowMacGuideModal(true); }}>
-                🍎 macOS Permission Guide
-              </button>
-              <button className="btn-primary" onClick={() => api.openExternal('https://github.com/Corneliox/ThermalSight-App/releases')}>
+              {window.electronAPI && (
+                <button className="btn-secondary btn-tiny" onClick={() => { setShowAboutModal(false); setShowMacGuideModal(true); }}>
+                  🍎 macOS Permission Guide
+                </button>
+              )}
+              <a className="btn-primary" href="https://github.com/Corneliox/ThermalSight-App/releases" target="_blank" rel="noreferrer">
                 📦 Check Releases & Downloads
-              </button>
+              </a>
               <button className="btn-ghost" onClick={() => setShowAboutModal(false)}>Close</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* macOS FIRST-LAUNCH & PERMISSIONS MODAL */}
+      {/* macOS FIRST-LAUNCH & PERMISSIONS MODAL (Electron Only) */}
       {showMacGuideModal && (
         <div className="modal-overlay">
           <div className="modal-card" style={{ maxWidth: '640px', padding: '24px', textAlign: 'left' }}>
@@ -1098,7 +1344,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">v1.3.4</span>
+          <span className="brand-badge">{isWeb ? '🌐 Online Web' : 'v1.3.4'}</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (
@@ -1123,17 +1369,19 @@ export default function App() {
           <button className="btn-ghost" title="About ThermalSight & Developer Credits" onClick={() => setShowAboutModal(true)}>
             ❓ About
           </button>
-          <button
-            className={`btn-ghost ${backendDiagnostics?.status === 'error' ? 'btn-danger' : ''}`}
-            title="macOS Gatekeeper Permissions & Backend Setup Guide"
-            onClick={() => setShowMacGuideModal(true)}
-            style={{
-              borderColor: backendDiagnostics?.status === 'error' ? 'var(--accent)' : undefined,
-              color: backendDiagnostics?.status === 'error' ? 'var(--accent)' : undefined
-            }}
-          >
-            🍎 Mac Setup
-          </button>
+          {window.electronAPI && isMacPlatform && (
+            <button
+              className={`btn-ghost ${backendDiagnostics?.status === 'error' ? 'btn-danger' : ''}`}
+              title="macOS Gatekeeper Permissions & Backend Setup Guide"
+              onClick={() => setShowMacGuideModal(true)}
+              style={{
+                borderColor: backendDiagnostics?.status === 'error' ? 'var(--accent)' : undefined,
+                color: backendDiagnostics?.status === 'error' ? 'var(--accent)' : undefined
+              }}
+            >
+              🍎 Mac Setup
+            </button>
+          )}
           {activeImagePath && (
             <button className="btn-primary btn-save" disabled={isProcessing === 'saving'} onClick={handleSaveLabels}>
               {isProcessing === 'saving' ? <><span className="spinner"/>Saving…</> : '💾 Save Label & Export'}
@@ -1213,10 +1461,12 @@ export default function App() {
             ))}
 
             <div className="sidebar-sep"/>
-            <button className="panel-btn" onClick={openFolder}>
-              <span className="panel-icon">📁</span>
-              <span className="panel-label">Output Folder</span>
-            </button>
+            {window.electronAPI && (
+              <button className="panel-btn" onClick={openFolder}>
+                <span className="panel-icon">📁</span>
+                <span className="panel-label">Output Folder</span>
+              </button>
+            )}
 
             {/* LIVE PROCESS TERMINAL CARD */}
             <div className="tool-card terminal-card">
@@ -1571,10 +1821,12 @@ export default function App() {
                   })}
                 </div>
 
-                <button className="btn-secondary w-full" style={{marginTop:'8px'}}
-                        onClick={()=>showCsv(starResults.csv_path)}>
-                  📄 Show CSV
-                </button>
+                {window.electronAPI && (
+                  <button className="btn-secondary w-full" style={{marginTop:'8px'}}
+                          onClick={()=>showCsv(starResults.csv_path)}>
+                    📄 Show CSV
+                  </button>
+                )}
               </div>
             )}
 
