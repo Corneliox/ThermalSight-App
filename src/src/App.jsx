@@ -129,6 +129,8 @@ export default function App() {
   const [isMacPlatform,     setIsMacPlatform]     = useState(false);
   const [showMacGuideModal, setShowMacGuideModal] = useState(false);
   const [backendDiagnostics, setBackendDiagnostics] = useState(null);
+  const [pendingSession,     setPendingSession]    = useState(null);
+  const [showNeedImagesModal, setShowNeedImagesModal] = useState(false);
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
@@ -383,7 +385,16 @@ export default function App() {
     setCurrentIndex(0);
     setAppMode('bulk');
 
-    // Check if annotations_session.json exists
+    // If an annotation session was waiting for images to be selected
+    if (pendingSession) {
+      applyLoadedSession(pendingSession, names);
+      setPendingSession(null);
+      setShowNeedImagesModal(false);
+      alert(`✓ Successfully linked loaded annotations with ${names.length} images in "${folderName}"!`);
+      return;
+    }
+
+    // Check if annotations_session.json exists in the uploaded folder
     const jsonFile = files.find(f => f.name === 'annotations_session.json');
     if (jsonFile) {
       const reader = new FileReader();
@@ -405,8 +416,18 @@ export default function App() {
     reader.onload = (ev) => {
       try {
         const sessionData = JSON.parse(ev.target.result);
-        applyLoadedSession(sessionData);
-        alert(`Loaded annotation session from: ${file.name}`);
+        if (imageList && imageList.length > 0) {
+          applyLoadedSession(sessionData, imageList);
+          alert(`✓ Loaded annotations from "${file.name}" and matched with ${imageList.length} active images!`);
+        } else {
+          // Store pending session and prompt user to upload the image folder
+          setPendingSession(sessionData);
+          if (sessionData.labels && Array.isArray(sessionData.labels)) {
+            setLabels(sessionData.labels);
+            if (sessionData.labels.length > 0) setActiveLabelId(sessionData.labels[0].id);
+          }
+          setShowNeedImagesModal(true);
+        }
       } catch (err) {
         alert(`Failed to load annotation session: ${err.message}`);
       }
@@ -418,6 +439,49 @@ export default function App() {
     e.preventDefault();
     const files = Array.from(e.dataTransfer.files || []);
     if (files.length === 0) return;
+
+    // Check if user dropped a ZIP package (e.g. {ParentFolder}_Result.zip)
+    const zipFile = files.find(f => f.name.toLowerCase().endsWith('.zip'));
+    if (zipFile) {
+      try {
+        const zip = await JSZip.loadAsync(zipFile);
+        const imgExts = ['.jpg', '.jpeg', '.png', '.tiff', '.tif'];
+        const fMap = {};
+        const names = [];
+        let sessionJson = null;
+
+        const entries = Object.keys(zip.files);
+        for (const filename of entries) {
+          const entry = zip.files[filename];
+          if (entry.dir) continue;
+          const baseName = filename.split('/').pop();
+          if (baseName.toLowerCase() === 'annotations_session.json') {
+            const jsonStr = await entry.async('string');
+            sessionJson = JSON.parse(jsonStr);
+          } else if (imgExts.some(ext => baseName.toLowerCase().endsWith(ext)) && !filename.includes('_isolated_labels')) {
+            const blob = await entry.async('blob');
+            fMap[baseName] = blob;
+            names.push(baseName);
+          }
+        }
+
+        if (names.length > 0) {
+          names.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+          setFileObjMap(prev => ({ ...prev, ...fMap }));
+          setImageList(names);
+          setFolderPath(zipFile.name.replace(/\.[^/.]+$/, ''));
+          setCurrentIndex(0);
+          setAppMode('bulk');
+          if (sessionJson) {
+            applyLoadedSession(sessionJson, names);
+          }
+          alert(`✓ Unpacked ${names.length} images ${sessionJson ? 'and restored annotations session' : ''} from ${zipFile.name}!`);
+          return;
+        }
+      } catch (zipErr) {
+        console.error('ZIP unpack error:', zipErr);
+      }
+    }
 
     if (files.length > 1) {
       const validExts = ['.jpg', '.jpeg', '.png', '.tiff', '.tif'];
@@ -435,6 +499,12 @@ export default function App() {
         setFolderPath('Thermal_Sequence');
         setCurrentIndex(0);
         setAppMode('bulk');
+
+        if (pendingSession) {
+          applyLoadedSession(pendingSession, names);
+          setPendingSession(null);
+          setShowNeedImagesModal(false);
+        }
         return;
       }
     }
@@ -445,7 +515,17 @@ export default function App() {
       reader.onload = (ev) => {
         try {
           const data = JSON.parse(ev.target.result);
-          applyLoadedSession(data);
+          if (imageList && imageList.length > 0) {
+            applyLoadedSession(data, imageList);
+            alert(`✓ Matched annotations from "${f.name}" to ${imageList.length} active images!`);
+          } else {
+            setPendingSession(data);
+            if (data.labels && Array.isArray(data.labels)) {
+              setLabels(data.labels);
+              if (data.labels.length > 0) setActiveLabelId(data.labels[0].id);
+            }
+            setShowNeedImagesModal(true);
+          }
         } catch (err) {
           alert('Invalid JSON annotation session.');
         }
@@ -1097,6 +1177,32 @@ export default function App() {
             <div className="modal-actions">
               <button className="btn-primary" onClick={restoreDraft}>Restore Progress</button>
               <button className="btn-ghost"   onClick={discardDraft}>Discard</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* NEED IMAGES MODAL FOR LOADED JSON IN WEB */}
+      {showNeedImagesModal && (
+        <div className="modal-overlay">
+          <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '24px' }}>
+            <div style={{ fontSize: '38px', marginBottom: '8px' }}>📂</div>
+            <h3 style={{ fontSize: '18px', fontWeight: '700', color: 'var(--text0)', marginBottom: '6px' }}>
+              Annotation Session File Loaded!
+            </h3>
+            <p style={{ color: 'var(--text1)', fontSize: '12px', margin: '0 0 16px', lineHeight: '1.6' }}>
+              Your ROI polygons and label definitions were read successfully. Because web browsers require you to select local files, please select or drop the folder of original thermal images to link them.
+            </p>
+            {pendingSession?.folderPath && (
+              <div style={{ background: 'var(--bg1)', border: '1px solid var(--border)', borderRadius: '6px', padding: '8px 12px', marginBottom: '16px', fontSize: '11px', color: 'var(--cyan)' }}>
+                Target Folder: <strong>{pendingSession.folderPath.split(/[\\/]/).pop()}</strong>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+              <button className="btn-primary" onClick={() => { if (folderInputRef.current) folderInputRef.current.click(); }}>
+                📁 Select Image Folder
+              </button>
+              <button className="btn-ghost" onClick={() => setShowNeedImagesModal(false)}>Dismiss</button>
             </div>
           </div>
         </div>
