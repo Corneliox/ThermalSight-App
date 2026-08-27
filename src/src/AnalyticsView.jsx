@@ -78,10 +78,10 @@ export default function AnalyticsView({ analyticsData, onClose, folderPath }) {
   };
 
   const exportSummaryCsv = () => {
-    let csvContent = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count\n`;
+    let csvContent = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm\n`;
     series.forEach((s, idx) => {
       const proto = getProtocolStep(idx);
-      csvContent += `${idx + 1},${s.pictureName},"${proto.sessionName}",${proto.timestampMin},${activeLabel},${s.mean_temp},${s.min_temp},${s.max_temp},${s.std_temp},${s.pixel_count}\n`;
+      csvContent += `${idx + 1},${s.pictureName},"${proto.sessionName}",${proto.timestampMin},${activeLabel},${s.mean_temp},${s.min_temp},${s.max_temp},${s.std_temp},${s.pixel_count},${s.gradient_max || 0},"${s.gradient_modus || ''}",${s.star_center_temp || 0},${s.star_radius_cm || 0}\n`;
     });
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -259,6 +259,9 @@ export default function AnalyticsView({ analyticsData, onClose, folderPath }) {
                 <th>Avg Temp (°C)</th>
                 <th>Min Temp (°C)</th>
                 <th>Max Temp (°C)</th>
+                <th>Gradient Max (°C/cm)</th>
+                <th>Gradient Modus</th>
+                <th>Center (°C)</th>
                 <th>Std Dev</th>
                 <th>Pixels</th>
               </tr>
@@ -277,6 +280,9 @@ export default function AnalyticsView({ analyticsData, onClose, folderPath }) {
                     <td className="temp-avg">{s.mean_temp.toFixed(2)}</td>
                     <td>{s.min_temp.toFixed(2)}</td>
                     <td>{s.max_temp.toFixed(2)}</td>
+                    <td style={{ color: 'var(--accent2)', fontWeight: '600' }}>{s.gradient_max !== undefined ? s.gradient_max.toFixed(2) : '-'}</td>
+                    <td style={{ color: 'var(--cyan)', fontSize: '11px' }}>{s.gradient_modus || '-'}</td>
+                    <td>{s.star_center_temp !== undefined ? s.star_center_temp.toFixed(2) : '-'}</td>
                     <td>±{s.std_temp.toFixed(2)}</td>
                     <td>{s.pixel_count}</td>
                   </tr>

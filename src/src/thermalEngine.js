@@ -445,20 +445,89 @@ export function clientMeasureStar(tempMatrix, W, H, cx, cy, dist_cm, rot_deg, px
   };
 }
 
-// ── Point-in-Polygon Ray Casting ────────────────────────────────────────────
-function isPointInPoly(x, y, pts) {
-  let inside = false;
-  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-    const xi = pts[i].x, yi = pts[i].y;
-    const xj = pts[j].x, yj = pts[j].y;
-    const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
-    if (intersect) inside = !inside;
+// ── Centered 8-Point Star Gradient inside Segmentation Label ────────────────
+export function computeLabelStarGradient(tempMatrix, W, H, roi, pxPerCm = null) {
+  let cx, cy, radius_px;
+
+  if (roi.type === 'circle' && roi.cx !== undefined && roi.radius !== undefined) {
+    cx = roi.cx;
+    cy = roi.cy;
+    radius_px = Math.max(2, roi.radius);
+  } else {
+    // For polygon/pen tool: calculate bounding box and expand until hitting closest side (min of width or height)
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    (roi.points || []).forEach(p => {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    });
+
+    if (minX === Infinity) {
+      cx = W / 2;
+      cy = H / 2;
+      radius_px = 10;
+    } else {
+      cx = (minX + maxX) / 2;
+      cy = (minY + maxY) / 2;
+      const boxW = Math.max(1, maxX - minX);
+      const boxH = Math.max(1, maxY - minY);
+      radius_px = Math.max(2, Math.min(boxW, boxH) / 2);
+    }
   }
-  return inside;
+
+  const temp_centre = sampleBilinear(tempMatrix, W, H, cx, cy);
+  const isCalibrated = pxPerCm && pxPerCm > 0;
+  const radius_cm = isCalibrated ? radius_px / pxPerCm : radius_px;
+
+  const points = {};
+  let maxAbsDiff = -1;
+  let maxGradVal = 0;
+  let dominant = 'N';
+
+  COMPASS.forEach(name => {
+    const angle = (BASE_ANGLES[name] * Math.PI) / 180.0;
+    const px = cx + radius_px * Math.sin(angle);
+    const py = cy - radius_px * Math.cos(angle);
+    const temp = sampleBilinear(tempMatrix, W, H, px, py);
+    const diff = temp - temp_centre;
+    const grad = Math.abs(diff) / Math.max(0.0001, radius_cm);
+
+    points[name] = {
+      px,
+      py,
+      temp: Number(temp.toFixed(4)),
+      diff: Number(diff.toFixed(4)),
+      grad: Number(grad.toFixed(4)),
+      pct: { x: (px / W) * 100, y: (py / H) * 100 }
+    };
+
+    if (Math.abs(diff) > maxAbsDiff) {
+      maxAbsDiff = Math.abs(diff);
+      maxGradVal = grad;
+      dominant = name;
+    }
+  });
+
+  const domObj = points[dominant] || { diff: 0, grad: 0 };
+  const gradient_modus = `${dominant} (${domObj.diff >= 0 ? '+' : ''}${domObj.diff.toFixed(2)}°C)`;
+  const gradient_max = Number(maxGradVal.toFixed(4));
+
+  return {
+    cx,
+    cy,
+    radius_px,
+    radius_cm: Number(radius_cm.toFixed(4)),
+    temp_centre: Number(temp_centre.toFixed(4)),
+    dominant,
+    gradient_max,
+    gradient_modus,
+    points
+  };
 }
 
 // ── Crop & Mask Polygon ROI ─────────────────────────────────────────────────
-export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiIndex) {
+export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiIndex, pxPerCm = null, roiObj = null) {
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   points.forEach(p => {
     if (p.x < minX) minX = p.x;
@@ -527,6 +596,9 @@ export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiInd
   }
   const stdTemp = count > 0 ? Math.sqrt(varianceSum / count) : 0;
 
+  // Calculate the 8-Point Star Gradient inside this label
+  const starData = computeLabelStarGradient(tempMatrix, W, H, roiObj || { points }, pxPerCm);
+
   return {
     labelName,
     roiIndex,
@@ -535,6 +607,11 @@ export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiInd
     min_temp: Number((minTemp === Infinity ? 0 : minTemp).toFixed(4)),
     max_temp: Number((maxTemp === -Infinity ? 0 : maxTemp).toFixed(4)),
     std_temp: Number(stdTemp.toFixed(4)),
+    star: starData,
+    gradient_max: starData.gradient_max,
+    gradient_modus: starData.gradient_modus,
+    star_center_temp: starData.temp_centre,
+    star_radius_cm: starData.radius_cm,
     croppedPngDataUrl: croppedCanvas.toDataURL('image/png'),
     csvContent
   };

@@ -7,7 +7,8 @@ import {
   loadThermalImageData,
   runClientThermalAnalysis,
   clientMeasureStar,
-  clientCropPolygonROI
+  clientCropPolygonROI,
+  computeLabelStarGradient
 } from './thermalEngine';
 
 // Access secure electronAPI exposed via contextBridge in preload.js
@@ -85,15 +86,22 @@ export default function App() {
   const annotationFileInputRef = useRef(null);
   const isWeb = typeof window !== 'undefined' && (!window.electronAPI || !window.electronAPI.openFileDialog);
 
-  // Calibration
-  const [calibMode,      setCalibMode]      = useState('idle');
-  const [calibPt1,       setCalibPt1]       = useState(null);
-  const [calibPt2,       setCalibPt2]       = useState(null);
-  const [pxPerCm,        setPxPerCm]        = useState(null);
-  const [calibDist,      setCalibDist]      = useState('10');
-  const [showDistInput,  setShowDistInput]  = useState(false);
+  // Active image path & results
+  const activeImagePath = appMode === 'bulk' ? imageList[currentIndex] : filePath;
+  const currentResults  = activeImagePath ? resultsMap[activeImagePath] : null;
 
-  // 8-Point Star measurement (Full 3-Step Interactive Workflow)
+  // Calibration State (Per-Image Mapping for Bulk 1-by-1 Calibration)
+  const [calibrationsMap, setCalibrationsMap] = useState({}); // { [imagePath]: { pxPerCm, dist_cm, pt1, pt2 } }
+  const [calibMode,       setCalibMode]       = useState('idle');
+  const [calibPt1,        setCalibPt1]        = useState(null);
+  const [calibPt2,        setCalibPt2]        = useState(null);
+  const [calibDist,       setCalibDist]       = useState('10');
+  const [showDistInput,   setShowDistInput]   = useState(false);
+
+  // Active image pixel-to-cm scale
+  const activePxPerCm = (activeImagePath && calibrationsMap[activeImagePath]?.pxPerCm) || null;
+
+  // Manual 8-Point Star Measurement Tool (Optional standalone 3-step tool)
   const [starStep,       setStarStep]       = useState(null); // null | 'place' | 'align' | 'saving' | 'done'
   const [starCentre,     setStarCentre]     = useState(null); // { px, py, pct: {x,y} }
   const [starDist,       setStarDist]       = useState('2.0');
@@ -101,36 +109,40 @@ export default function App() {
   const [starOverlay,    setStarOverlay]    = useState(null);
   const [starResults,    setStarResults]    = useState(null);
 
-  // Segmentation Labeling System
+  // Segmentation Labeling System (Defaults to 1:1 Strict Circle Mode)
   const [labels, setLabels] = useState([
     { id: 'l1', name: 'm1', key: 'm', color: '#ff4444' },
     { id: 'l2', name: 'm2', key: 'n', color: '#00e5ff' }
   ]);
-  const [activeLabelId, setActiveLabelId]  = useState('l1');
-  const [newLabelName,  setNewLabelName]   = useState('');
-  const [newLabelKey,   setNewLabelKey]    = useState('');
+  const [activeLabelId,  setActiveLabelId]  = useState('l1');
+  const [newLabelName,   setNewLabelName]   = useState('');
+  const [newLabelKey,    setNewLabelKey]    = useState('');
   const [editingLabelId, setEditingLabelId] = useState(null);
   const [editName,       setEditName]       = useState('');
   const [editKey,        setEditKey]        = useState('');
   const [editColor,      setEditColor]      = useState('#00e5ff');
-  const [drawMode,      setDrawMode]       = useState('polygon'); // 'polygon' | 'box'
-  const [drawingPts,    setDrawingPts]     = useState([]);
+  
+  // Drawing Tool State: 'circle' (1:1 strict circle default) | 'polygon' (pen tool)
+  const [drawMode,       setDrawMode]       = useState('circle');
+  const [circleCenter,   setCircleCenter]   = useState(null); // { px, py, pct }
+  const [circleRadius,   setCircleRadius]   = useState(null); // radius in px
+  const [drawingPts,     setDrawingPts]     = useState([]);   // for polygon mode
 
-  // RAM state storing annotations per image: { [imagePath]: [ { id, labelName, color, points: [{x, y}, ...] } ] }
-  const [segmentations, setSegmentations] = useState({});
+  // RAM state storing annotations per image: { [imagePath]: [ { id, type, cx, cy, radius, labelName, color, points: [{x, y}], star } ] }
+  const [segmentations,  setSegmentations]  = useState({});
 
   // Crash Recovery, Settings & About State
-  const [showRestoreModal,  setShowRestoreModal]  = useState(false);
-  const [draftToRestore,    setDraftToRestore]    = useState(null);
-  const [showAnalytics,     setShowAnalytics]     = useState(false);
-  const [analyticsData,     setAnalyticsData]     = useState(null);
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [showAboutModal,    setShowAboutModal]    = useState(false);
-  const [isMacPlatform,     setIsMacPlatform]     = useState(false);
-  const [showMacGuideModal, setShowMacGuideModal] = useState(false);
+  const [showRestoreModal,   setShowRestoreModal]   = useState(false);
+  const [draftToRestore,     setDraftToRestore]     = useState(null);
+  const [showAnalytics,      setShowAnalytics]      = useState(false);
+  const [analyticsData,      setAnalyticsData]      = useState(null);
+  const [showSettingsModal,  setShowSettingsModal]  = useState(false);
+  const [showAboutModal,     setShowAboutModal]     = useState(false);
+  const [isMacPlatform,      setIsMacPlatform]      = useState(false);
+  const [showMacGuideModal,  setShowMacGuideModal]  = useState(false);
   const [backendDiagnostics, setBackendDiagnostics] = useState(null);
-  const [pendingSession,     setPendingSession]    = useState(null);
-  const [showNeedImagesModal, setShowNeedImagesModal] = useState(false);
+  const [pendingSession,     setPendingSession]     = useState(null);
+  const [showNeedImagesModal,setShowNeedImagesModal] = useState(false);
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
@@ -140,10 +152,6 @@ export default function App() {
   const terminalEndRef = useRef(null);
 
   const imgRef = useRef(null);
-
-  // Active image path & results
-  const activeImagePath = appMode === 'bulk' ? imageList[currentIndex] : filePath;
-  const currentResults  = activeImagePath ? resultsMap[activeImagePath] : null;
 
   // ── macOS Platform & Backend Health Check on Startup ────────────────────────
   useEffect(() => {
@@ -192,7 +200,7 @@ export default function App() {
       if (api.onMenuOpenSettings)   api.onMenuOpenSettings(() => setShowSettingsModal(true));
       if (api.onMenuOpenAbout)      api.onMenuOpenAbout(() => setShowAboutModal(true));
       if (api.onMenuOpenMacGuide)   api.onMenuOpenMacGuide(() => setShowMacGuideModal(true));
-      if (api.onMenuTriggerUndo)    api.onMenuTriggerUndo(() => undoLastPolygon());
+      if (api.onMenuTriggerUndo)    api.onMenuTriggerUndo(() => undoLastRoi());
       if (api.onMenuOpenSingle)     api.onMenuOpenSingle(() => handleBrowseSingle());
       if (api.onMenuOpenFolder)     api.onMenuOpenFolder(() => handleBrowseFolder());
       if (api.onMenuOpenAnnotation) api.onMenuOpenAnnotation(() => handleOpenAnnotationSession());
@@ -229,6 +237,7 @@ export default function App() {
         imageList,
         labels,
         segmentations,
+        calibrationsMap,
         timestamp: Date.now(),
       };
       if (window.electronAPI && api.saveDraft) {
@@ -240,9 +249,9 @@ export default function App() {
       }
     }, 400);
     return () => clearTimeout(timer);
-  }, [segmentations, labels, folderPath, imageList]);
+  }, [segmentations, labels, folderPath, imageList, calibrationsMap]);
 
-  const undoLastPolygon = () => {
+  const undoLastRoi = () => {
     if (!activeImagePath) return;
     setSegmentations(prev => {
       const currentList = prev[activeImagePath] || [];
@@ -268,17 +277,20 @@ export default function App() {
         handleNextImage();
       }
 
-      if (e.key === 'Enter' && drawingPts.length >= 3) {
+      if (e.key === 'Enter' && drawMode === 'polygon' && drawingPts.length >= 3) {
         finishPolygon();
         return;
       }
 
       if (e.key === 'Backspace' || e.key === 'Delete') {
         e.preventDefault();
-        if (drawingPts.length > 0) {
+        if (drawMode === 'polygon' && drawingPts.length > 0) {
           setDrawingPts(prev => prev.slice(0, -1));
+        } else if (drawMode === 'circle' && circleCenter) {
+          setCircleCenter(null);
+          setCircleRadius(null);
         } else {
-          undoLastPolygon();
+          undoLastRoi();
         }
         return;
       }
@@ -291,7 +303,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [labels, drawingPts, currentIndex, imageList, segmentations, activeImagePath]);
+  }, [labels, drawingPts, circleCenter, drawMode, currentIndex, imageList, segmentations, activeImagePath]);
 
   // ── Coordinate conversion ───────────────────────────────────────────────────
   const getCoords = (e) => {
@@ -626,6 +638,8 @@ export default function App() {
   const handleNextImage = () => {
     if (currentIndex < imageList.length - 1) {
       setDrawingPts([]);
+      setCircleCenter(null);
+      setCircleRadius(null);
       setCurrentIndex(prev => prev + 1);
     }
   };
@@ -633,23 +647,45 @@ export default function App() {
   const handlePrevImage = () => {
     if (currentIndex > 0) {
       setDrawingPts([]);
+      setCircleCenter(null);
+      setCircleRadius(null);
       setCurrentIndex(prev => prev - 1);
     }
   };
 
-  // ── Calibration ─────────────────────────────────────────────────────────────
-  const resetCalib = () => { setCalibMode('idle'); setCalibPt1(null); setCalibPt2(null); setShowDistInput(false); };
-  const startCalib = () => { resetCalib(); setPxPerCm(null); setCalibMode('pt1'); };
+  // ── Calibration Handlers (Per-Image Mapping) ─────────────────────────────────
+  const resetCalib = () => {
+    setCalibMode('idle');
+    setCalibPt1(null);
+    setCalibPt2(null);
+    setShowDistInput(false);
+  };
+
+  const startCalib = () => {
+    resetCalib();
+    setCalibMode('pt1');
+  };
+
   const confirmCalib = () => {
     if (!calibPt1 || !calibPt2) return;
     const d = Math.hypot(calibPt2.px - calibPt1.px, calibPt2.py - calibPt1.py);
     const cm = parseFloat(calibDist);
-    if (!cm || cm <= 0) { alert('Enter a valid distance > 0'); return; }
-    setPxPerCm(d / cm);
-    setShowDistInput(false); setCalibMode('idle');
+    if (!cm || cm <= 0) { alert('Enter a valid real distance > 0 cm'); return; }
+    
+    const scale = d / cm;
+    if (activeImagePath) {
+      setCalibrationsMap(prev => ({
+        ...prev,
+        [activeImagePath]: { pxPerCm: scale, dist_cm: cm, pt1: calibPt1, pt2: calibPt2 }
+      }));
+    }
+    setShowDistInput(false);
+    setCalibMode('idle');
+    setCalibPt1(null);
+    setCalibPt2(null);
   };
 
-  // ── Star Measurement 3-Step Interactive Workflow ────────────────────────────
+  // ── Standalone 8-Point Star Measurement Tool ────────────────────────────────
   const buildStarOverlay = (cx_px, cy_px, dist_px, rot_deg, shape) => {
     const [H, W] = shape;
     const pts = {};
@@ -667,7 +703,7 @@ export default function App() {
   };
 
   const startStar = () => {
-    if (!pxPerCm) { alert('Please calibrate pixel scale first!'); return; }
+    if (!activePxPerCm) { alert('Please calibrate pixel scale for this image first!'); return; }
     setStarStep('place');
     setStarCentre(null);
     setStarOverlay(null);
@@ -687,7 +723,7 @@ export default function App() {
     setStarRot(newRot);
     if (starCentre && currentResults) {
       const dist_cm = parseFloat(starDist) || 2.0;
-      const dist_px = dist_cm * pxPerCm;
+      const dist_px = dist_cm * (activePxPerCm || 10);
       const ov = buildStarOverlay(starCentre.px, starCentre.py, dist_px, newRot, currentResults.shape);
       setStarOverlay(ov);
     }
@@ -708,12 +744,12 @@ export default function App() {
           starCentre.py,
           dist_cm,
           starRot,
-          pxPerCm
+          activePxPerCm || 10
         );
       } else {
         res = await api.measureStar(
           activeImagePath, starCentre.px, starCentre.py,
-          dist_cm, starRot, pxPerCm, currentResults.out_dir
+          dist_cm, starRot, activePxPerCm || 10, currentResults.out_dir
         );
       }
       setStarResults(res);
@@ -724,20 +760,21 @@ export default function App() {
     }
   };
 
-  // ── Segmentation Drawing Handlers ──────────────────────────────────────────
+  // ── Segmentation Drawing Handlers (1:1 Strict Circle Default + Pen) ─────────
   const activeLabelObj = labels.find(l => l.id === activeLabelId) || labels[0];
 
   const handleImageClick = async (e) => {
     const c = getCoords(e);
     if (!c) return;
 
+    // Calibration Clicks
     if (calibMode === 'pt1') { setCalibPt1(c); setCalibMode('pt2'); return; }
     if (calibMode === 'pt2') { setCalibPt2(c); setCalibMode('idle'); setShowDistInput(true); return; }
 
-    // Star Placement Step 1
+    // Standalone Star Tool Placement
     if (starStep === 'place') {
       const dist_cm = parseFloat(starDist) || 2.0;
-      const dist_px = dist_cm * pxPerCm;
+      const dist_px = dist_cm * (activePxPerCm || 10);
       setStarCentre(c);
       const ov = buildStarOverlay(c.px, c.py, dist_px, starRot, currentResults.shape);
       setStarOverlay(ov);
@@ -745,9 +782,67 @@ export default function App() {
       return;
     }
 
-    // Polygon ROI Drawing Mode
+    // 1:1 Strict Circle Segmentation Mode (Default)
+    if (drawMode === 'circle' && !starStep) {
+      if (!circleCenter) {
+        // Step 1: Place Center
+        setCircleCenter(c);
+        setCircleRadius(15);
+      } else {
+        // Step 2: Confirm Circle Radius
+        const dist_px = Math.max(4, Math.hypot(c.px - circleCenter.px, c.py - circleCenter.py));
+        
+        // Generate 36 circular polygon vertices for universal rasterizer/masking compatibility
+        const polyPoints = [];
+        for (let i = 0; i < 36; i++) {
+          const a = (i * 10 * Math.PI) / 180.0;
+          polyPoints.push({
+            x: circleCenter.px + dist_px * Math.cos(a),
+            y: circleCenter.py + dist_px * Math.sin(a),
+          });
+        }
+
+        const newRoi = {
+          id: 'roi_' + Date.now(),
+          type: 'circle',
+          cx: circleCenter.px,
+          cy: circleCenter.py,
+          radius: dist_px,
+          labelName: activeLabelObj.name,
+          color: activeLabelObj.color,
+          points: polyPoints,
+        };
+
+        // Compute the 8-Point Star Gradient inside this label
+        if (currentResults?.raw?.tempMatrix) {
+          const [H, W] = currentResults.shape;
+          newRoi.star = computeLabelStarGradient(currentResults.raw.tempMatrix, W, H, newRoi, activePxPerCm);
+        }
+
+        setSegmentations(prev => ({
+          ...prev,
+          [activeImagePath]: [...(prev[activeImagePath] || []), newRoi]
+        }));
+
+        setCircleCenter(null);
+        setCircleRadius(null);
+      }
+      return;
+    }
+
+    // Polygon Pen Tool Drawing Mode
     if (drawMode === 'polygon' && !starStep) {
       setDrawingPts(prev => [...prev, c]);
+    }
+  };
+
+  const handleImageMouseMove = (e) => {
+    if (drawMode === 'circle' && circleCenter) {
+      const c = getCoords(e);
+      if (c) {
+        const r = Math.max(4, Math.hypot(c.px - circleCenter.px, c.py - circleCenter.py));
+        setCircleRadius(r);
+      }
     }
   };
 
@@ -758,10 +853,16 @@ export default function App() {
     }
     const newRoi = {
       id: 'roi_' + Date.now(),
+      type: 'polygon',
       labelName: activeLabelObj.name,
       color: activeLabelObj.color,
       points: drawingPts.map(p => ({ x: p.px, y: p.py })),
     };
+
+    if (currentResults?.raw?.tempMatrix) {
+      const [H, W] = currentResults.shape;
+      newRoi.star = computeLabelStarGradient(currentResults.raw.tempMatrix, W, H, newRoi, activePxPerCm);
+    }
 
     setSegmentations(prev => ({
       ...prev,
@@ -862,7 +963,7 @@ export default function App() {
     setEditingLabelId(null);
   };
 
-  // ── Save Label & Master Export Action (Client ZIP & Desktop Package) ─────────
+  // ── Save Label & Master Export Action (Calibration Gated) ───────────────────
   const handleSaveLabels = async () => {
     const totalSegs = Object.values(segmentations).flat().length;
     if (totalSegs === 0) {
@@ -870,11 +971,25 @@ export default function App() {
       return;
     }
 
+    const targetPaths = appMode === 'bulk' ? imageList : [filePath];
+
+    // ── Strict Calibration Verification: Every image must be calibrated 1-by-1 ──
+    for (let i = 0; i < targetPaths.length; i++) {
+      const p = targetPaths[i];
+      const calib = calibrationsMap[p]?.pxPerCm;
+      if (!calib || calib <= 0) {
+        const imgName = p.split(/[\\/]/).pop();
+        alert(`⚠️ Calibration Required:\nImage #${i + 1} (${imgName}) is not calibrated yet.\n\nIn Bulk Mode, each image must be calibrated 1-by-1 before exporting the Result package.\n\nNavigating to Image #${i + 1} now so you can calibrate it.`);
+        setCurrentIndex(i);
+        startCalib();
+        setIsProcessing(null);
+        return;
+      }
+    }
+
     setIsProcessing('saving');
     const aggregatedStats = {};
 
-    const targetPaths = appMode === 'bulk' ? imageList : [filePath];
-    
     // Build {Parentfoldername}_Result master folder
     const basePath = folderPath || activeImagePath;
     const parentFolderName = basePath.split(/[\\/]/).pop().replace(/\.[^/.]+$/, '');
@@ -890,6 +1005,7 @@ export default function App() {
         const pictureName = imgPath.split(/[\\/]/).pop().split('.')[0];
         const proto = getProtocolStep(imgIdx);
         const imgResult = resultsMap[imgPath];
+        const imgScale = calibrationsMap[imgPath]?.pxPerCm || 10;
         
         for (let i = 0; i < rois.length; i++) {
           const roi = rois[i];
@@ -901,7 +1017,9 @@ export default function App() {
               imgResult.raw.height,
               roi.points,
               roi.labelName,
-              i + 1
+              i + 1,
+              imgScale,
+              roi
             );
           } else {
             res = await api.cropLabels(imgPath, roi.points, roi.labelName, i + 1, isolatedDir);
@@ -917,6 +1035,10 @@ export default function App() {
             max_temp: res.max_temp,
             std_temp: res.std_temp,
             pixel_count: res.pixel_count,
+            gradient_max: res.gradient_max || res.star?.gradient_max || 0,
+            gradient_modus: res.gradient_modus || res.star?.gradient_modus || '',
+            star_center_temp: res.star_center_temp || res.star?.temp_centre || 0,
+            star_radius_cm: res.star_radius_cm || res.star?.radius_cm || 0,
             csv_path: res.csv_path || `${pictureName}_roi_${i+1}_${roi.labelName}.csv`,
             protocol: proto,
             croppedPngDataUrl: res.croppedPngDataUrl,
@@ -928,15 +1050,15 @@ export default function App() {
       // Assemble Summary CSVs and SVG Graphs for {Parentfoldername}_Result
       const exportFilesMap = {};
 
-      let masterCsv = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count\n`;
+      let masterCsv = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm\n`;
 
       Object.keys(aggregatedStats).forEach(labelName => {
         const series = aggregatedStats[labelName];
-        let labelCsv = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count\n`;
+        let labelCsv = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm\n`;
 
         series.forEach((s, idx) => {
           const proto = getProtocolStep(idx);
-          const row = `${idx + 1},${s.pictureName},"${proto.sessionName}",${proto.timestampMin},${labelName},${s.mean_temp},${s.min_temp},${s.max_temp},${s.std_temp},${s.pixel_count}\n`;
+          const row = `${idx + 1},${s.pictureName},"${proto.sessionName}",${proto.timestampMin},${labelName},${s.mean_temp},${s.min_temp},${s.max_temp},${s.std_temp},${s.pixel_count},${s.gradient_max},"${s.gradient_modus}",${s.star_center_temp},${s.star_radius_cm}\n`;
           labelCsv += row;
           masterCsv += row;
         });
@@ -963,6 +1085,7 @@ export default function App() {
         folderPath,
         labels,
         segmentations,
+        calibrationsMap,
         aggregatedStats,
       };
 
@@ -1008,7 +1131,7 @@ export default function App() {
 
       setAnalyticsData(aggregatedStats);
       setShowAnalytics(true);
-      alert(`Success! Complete Time-Series Result Package (${parentFolderName}_Result.zip) generated successfully!\n\nIncludes:\n- ${parentFolderName}_isolated_labels/\n- Summary CSVs (m1, m2, m3...)\n- Dark & White SVG Analytics Graphs\n- annotations_session.json`);
+      alert(`Success! Complete Time-Series Result Package (${parentFolderName}_Result.zip) generated successfully!\n\nIncludes:\n- ${parentFolderName}_isolated_labels/\n- Summary CSVs with Gradient Max & Modus (m1, m2, m3...)\n- Dark & White SVG Analytics Graphs\n- annotations_session.json`);
     } catch (err) {
       alert(`Export failed:\n${err.message || err}`);
     }
@@ -1022,6 +1145,10 @@ export default function App() {
     if (sessionData.labels && Array.isArray(sessionData.labels)) {
       setLabels(sessionData.labels);
       if (sessionData.labels.length > 0) setActiveLabelId(sessionData.labels[0].id);
+    }
+
+    if (sessionData.calibrationsMap) {
+      setCalibrationsMap(sessionData.calibrationsMap);
     }
 
     if (sessionData.aggregatedStats) {
@@ -1548,8 +1675,15 @@ export default function App() {
                   {imageList[currentIndex].split(/[\\/]/).pop()}
                 </div>
                 <div style={{ fontSize: '10px', marginTop: '6px', textAlign: 'center' }}>
+                  {calibrationsMap[activeImagePath]?.pxPerCm ? (
+                    <span style={{ color: 'var(--green)', fontWeight: '600' }}>✓ Image Calibrated</span>
+                  ) : (
+                    <span style={{ color: 'var(--accent)', fontWeight: '600' }}>⚠️ Calibration Needed</span>
+                  )}
+                </div>
+                <div style={{ fontSize: '10px', marginTop: '4px', textAlign: 'center' }}>
                   {Object.keys(resultsMap).length >= imageList.length ? (
-                    <span style={{ color: 'var(--green)', fontWeight: '600' }}>✓ All {imageList.length} Ready</span>
+                    <span style={{ color: 'var(--green)' }}>✓ All {imageList.length} Ready</span>
                   ) : (
                     <span style={{ color: 'var(--cyan)' }}>⚡ Background: {Object.keys(resultsMap).length}/{imageList.length} ready</span>
                   )}
@@ -1620,7 +1754,8 @@ export default function App() {
               {imgSrc && (
                 <img ref={imgRef} src={imgSrc} alt={activePanel}
                      className="thermal-img" style={{cursor}} draggable={false}
-                     onClick={handleImageClick}/>
+                     onClick={handleImageClick}
+                     onMouseMove={handleImageMouseMove}/>
               )}
 
               {/* SVG OVERLAYS */}
@@ -1632,7 +1767,7 @@ export default function App() {
                         stroke="#00e5ff" strokeWidth="0.5" strokeDasharray="1 0.6"/>
                 )}
 
-                {/* Star Spokes */}
+                {/* Standalone Star Spokes Tool */}
                 {starOverlay && COMPASS.map(name => {
                   const pt = starOverlay.points[name];
                   const diff = starResults?.points?.[name]?.diff;
@@ -1644,19 +1779,70 @@ export default function App() {
                   );
                 })}
 
-                {/* Saved ROI Polygons in RAM State */}
+                {/* Saved ROI Polygons/Circles in RAM State */}
                 {currentResults && currentRois.map(roi => {
                   const [H, W] = currentResults.shape;
                   const ptsStr = roi.points.map(p => `${(p.x/W)*100},${(p.y/H)*100}`).join(' ');
                   return (
                     <polygon key={roi.id} points={ptsStr}
-                             fill={roi.color} fillOpacity="0.3"
+                             fill={roi.color} fillOpacity="0.25"
                              stroke={roi.color} strokeWidth="0.6"/>
                   );
                 })}
 
+                {/* ── AUTOMATIC CENTERED 8-POINT STAR INSIDE EVERY ROI LABEL ── */}
+                {currentResults && currentRois.map(roi => {
+                  const [H, W] = currentResults.shape;
+                  const star = roi.star || (currentResults.raw?.tempMatrix ? computeLabelStarGradient(currentResults.raw.tempMatrix, W, H, roi, activePxPerCm) : null);
+                  if (!star) return null;
+
+                  const cxPct = (star.cx / W) * 100;
+                  const cyPct = (star.cy / H) * 100;
+                  const rPctX = (star.radius_px / W) * 100;
+                  const rPctY = (star.radius_px / H) * 100;
+
+                  return (
+                    <g key={`star-grp-${roi.id}`}>
+                      {/* Bounding Radius Incircle Outline */}
+                      <ellipse cx={cxPct} cy={cyPct} rx={rPctX} ry={rPctY}
+                               fill="none" stroke={roi.color} strokeWidth="0.35" strokeDasharray="1 1" opacity="0.75"/>
+
+                      {/* 8 Radial Compass Spokes */}
+                      {COMPASS.map(name => {
+                        const p = star.points[name];
+                        if (!p) return null;
+                        const col = diffColor(p.diff);
+                        return (
+                          <line key={`spoke-${roi.id}-${name}`}
+                                x1={cxPct} y1={cyPct} x2={p.pct.x} y2={p.pct.y}
+                                stroke={col} strokeWidth="0.4" opacity="0.9"/>
+                        );
+                      })}
+
+                      {/* Center 9th Point */}
+                      <circle cx={cxPct} cy={cyPct} r="0.7" fill="#ffffff" stroke={roi.color} strokeWidth="0.3"/>
+                    </g>
+                  );
+                })}
+
+                {/* Live 1:1 Circle Drawing Preview */}
+                {currentResults && drawMode === 'circle' && circleCenter && circleRadius && (
+                  <g>
+                    <ellipse cx={circleCenter.pct.x} cy={circleCenter.pct.y}
+                             rx={(circleRadius / currentResults.shape[1]) * 100}
+                             ry={(circleRadius / currentResults.shape[0]) * 100}
+                             fill={activeLabelObj.color} fillOpacity="0.2"
+                             stroke={activeLabelObj.color} strokeWidth="0.7" strokeDasharray="1.5 1"/>
+                    <circle cx={circleCenter.pct.x} cy={circleCenter.pct.y} r="0.8" fill={activeLabelObj.color}/>
+                    <line x1={circleCenter.pct.x} y1={circleCenter.pct.y}
+                          x2={circleCenter.pct.x + (circleRadius / currentResults.shape[1]) * 100}
+                          y2={circleCenter.pct.y}
+                          stroke={activeLabelObj.color} strokeWidth="0.4" strokeDasharray="0.5 0.5"/>
+                  </g>
+                )}
+
                 {/* Current Drawing Polygon Draft */}
-                {currentResults && drawingPts.length > 0 && (
+                {currentResults && drawMode === 'polygon' && drawingPts.length > 0 && (
                   <g>
                     <polyline points={drawingPts.map(p => `${p.pct.x},${p.pct.y}`).join(' ')}
                               fill="none" stroke={activeLabelObj.color} strokeWidth="0.6" strokeDasharray="1 1"/>
@@ -1670,8 +1856,10 @@ export default function App() {
               {/* Saved ROI Polygon Text Label Badges */}
               {currentResults && currentRois.map(roi => {
                 const [H, W] = currentResults.shape;
-                const cxPct = (roi.points.reduce((sum, p) => sum + p.x, 0) / roi.points.length / W) * 100;
-                const cyPct = (roi.points.reduce((sum, p) => sum + p.y, 0) / roi.points.length / H) * 100;
+                const star = roi.star || (currentResults.raw?.tempMatrix ? computeLabelStarGradient(currentResults.raw.tempMatrix, W, H, roi, activePxPerCm) : null);
+                const cxPct = star ? (star.cx / W) * 100 : (roi.points.reduce((sum, p) => sum + p.x, 0) / roi.points.length / W) * 100;
+                const cyPct = star ? (star.cy / H) * 100 : (roi.points.reduce((sum, p) => sum + p.y, 0) / roi.points.length / H) * 100;
+
                 return (
                   <div key={`lbl-${roi.id}`} className="polygon-label-tag"
                        style={{
@@ -1682,6 +1870,7 @@ export default function App() {
                        }}>
                     <span className="polygon-label-dot" style={{ backgroundColor: roi.color }}/>
                     <span>{roi.labelName}</span>
+                    {star && <span style={{ fontSize: '9px', color: 'var(--cyan)', marginLeft: '4px' }}>[{star.dominant}]</span>}
                   </div>
                 );
               })}
@@ -1690,7 +1879,7 @@ export default function App() {
               {calibPt1 && <div className="ov-dot calib-dot" style={{left:`${calibPt1.pct.x}%`,top:`${calibPt1.pct.y}%`}}>1</div>}
               {calibPt2 && <div className="ov-dot calib-dot" style={{left:`${calibPt2.pct.x}%`,top:`${calibPt2.pct.y}%`}}>2</div>}
 
-              {/* Star Dots */}
+              {/* Standalone Star Tool Dots */}
               {starOverlay && (
                 <div className="ov-dot centre-dot" style={{left:`${starOverlay.cx}%`,top:`${starOverlay.cy}%`}}>+</div>
               )}
@@ -1706,10 +1895,17 @@ export default function App() {
                 );
               })}
 
-              {/* Current Drawing Action Bar */}
-              {drawingPts.length > 0 && (
+              {/* Current Drawing Action Bar for 1:1 Circle & Pen */}
+              {drawMode === 'circle' && circleCenter && (
                 <div className="drawing-toolbar">
-                  <span>Drawing <strong>{activeLabelObj.name}</strong> ({drawingPts.length} pts)</span>
+                  <span>Placing 1:1 Circle <strong>{activeLabelObj.name}</strong> — Click again to set radius</span>
+                  <button className="btn-ghost btn-tiny" onClick={() => { setCircleCenter(null); setCircleRadius(null); }}>Cancel</button>
+                </div>
+              )}
+
+              {drawMode === 'polygon' && drawingPts.length > 0 && (
+                <div className="drawing-toolbar">
+                  <span>Drawing Pen <strong>{activeLabelObj.name}</strong> ({drawingPts.length} pts)</span>
                   <button className="btn-primary btn-tiny" disabled={drawingPts.length < 3} onClick={finishPolygon}>
                     ✓ Finish (Enter)
                   </button>
@@ -1728,6 +1924,7 @@ export default function App() {
                 <h4 className="card-title">Image Info</h4>
                 <div className="kv"><span>File</span><span>{currentResults.stem}</span></div>
                 <div className="kv"><span>Size</span><span>{currentResults.shape[1]}×{currentResults.shape[0]}</span></div>
+                <div className="kv"><span>Scale</span><span>{activePxPerCm ? `✓ ${activePxPerCm.toFixed(2)} px/cm` : '⚠️ Uncalibrated'}</span></div>
                 <div className="kv"><span>Min</span><span>{currentResults.temp_min?.toFixed(1)} °C</span></div>
                 <div className="kv"><span>Max</span><span>{currentResults.temp_max?.toFixed(1)} °C</span></div>
                 <div className="kv"><span>Mean</span><span>{currentResults.temp_mean?.toFixed(1)} °C</span></div>
@@ -1738,6 +1935,34 @@ export default function App() {
             <div className="tool-card">
               <h4 className="card-title">🏷 Segmentation Labels</h4>
               
+              {/* SEGMENTED TOOL SWITCHER: 1:1 CIRCLE (DEFAULT) VS PEN */}
+              <div style={{ display: 'flex', background: 'var(--bg1)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border)', marginBottom: '10px' }}>
+                <button
+                  className={`btn-ghost btn-tiny ${drawMode === 'circle' ? 'active' : ''}`}
+                  style={{
+                    flex: 1,
+                    background: drawMode === 'circle' ? 'var(--bg3)' : 'transparent',
+                    color: drawMode === 'circle' ? 'var(--cyan)' : 'var(--text2)',
+                    fontWeight: drawMode === 'circle' ? '700' : 'normal'
+                  }}
+                  onClick={() => { setDrawMode('circle'); setDrawingPts([]); }}
+                >
+                  ⭕ 1:1 Circle (Default)
+                </button>
+                <button
+                  className={`btn-ghost btn-tiny ${drawMode === 'polygon' ? 'active' : ''}`}
+                  style={{
+                    flex: 1,
+                    background: drawMode === 'polygon' ? 'var(--bg3)' : 'transparent',
+                    color: drawMode === 'polygon' ? 'var(--accent2)' : 'var(--text2)',
+                    fontWeight: drawMode === 'polygon' ? '700' : 'normal'
+                  }}
+                  onClick={() => { setDrawMode('polygon'); setCircleCenter(null); setCircleRadius(null); }}
+                >
+                  ✏️ Pen Polygon
+                </button>
+              </div>
+
               <div className="label-list">
                 {labels.map(l => (
                   editingLabelId === l.id ? (
@@ -1786,31 +2011,56 @@ export default function App() {
               </div>
             </div>
 
-            {/* DRAWN ROIs LIST FOR ACTIVE IMAGE */}
+            {/* DRAWN ROIs LIST FOR ACTIVE IMAGE WITH 8-POINT STAR METRICS */}
             <div className="tool-card">
-              <h4 className="card-title">📌 Image ROIs ({currentRois.length})</h4>
+              <h4 className="card-title">📌 Image ROIs & 8-Star Gradients ({currentRois.length})</h4>
               {currentRois.length === 0 ? (
-                <p className="subtext">Click points on thermal image to draw ROI polygon.</p>
+                <p className="subtext">
+                  {drawMode === 'circle' ? 'Click center point, then click radius to place 1:1 circle.' : 'Click points on thermal image to draw ROI polygon.'}
+                </p>
               ) : (
                 <div className="roi-list">
-                  {currentRois.map((roi, idx) => (
-                    <div key={roi.id} className="roi-item">
-                      <span className="roi-dot" style={{ backgroundColor: roi.color }}/>
-                      <span className="roi-text">{roi.labelName} #{idx + 1} ({roi.points.length} pts)</span>
-                      <button className="btn-ghost btn-tiny" onClick={() => deleteRoi(activeImagePath, roi.id)}>🗑</button>
-                    </div>
-                  ))}
+                  {currentRois.map((roi, idx) => {
+                    const [H, W] = currentResults.shape;
+                    const star = roi.star || (currentResults.raw?.tempMatrix ? computeLabelStarGradient(currentResults.raw.tempMatrix, W, H, roi, activePxPerCm) : null);
+
+                    return (
+                      <div key={roi.id} className="roi-item" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span className="roi-dot" style={{ backgroundColor: roi.color }}/>
+                            <span className="roi-text">{roi.labelName} #{idx + 1} ({roi.type || '1:1 circle'})</span>
+                          </div>
+                          <button className="btn-ghost btn-tiny" onClick={() => deleteRoi(activeImagePath, roi.id)}>🗑</button>
+                        </div>
+                        {star && (
+                          <div style={{ fontSize: '10px', color: 'var(--text2)', marginTop: '4px', background: 'var(--bg0)', padding: '4px 6px', borderRadius: '4px', border: '1px solid var(--border)' }}>
+                            <div>Gradient Max: <strong style={{ color: 'var(--accent2)' }}>{star.gradient_max.toFixed(2)} °C/cm</strong></div>
+                            <div>Gradient Modus: <strong style={{ color: 'var(--cyan)' }}>{star.gradient_modus}</strong></div>
+                            <div>Center Temp: <strong>{star.temp_centre.toFixed(2)} °C</strong></div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
 
-            {/* CALIBRATION TOOL CARD */}
+            {/* CALIBRATION TOOL CARD (PER-IMAGE 1-BY-1 REQUIREMENT) */}
             <div className="tool-card">
-              <h4 className="card-title">📏 Calibration</h4>
-              <p className={`calib-status ${pxPerCm ? 'ok' : 'none'}`}>
-                {pxPerCm ? `✓ ${pxPerCm.toFixed(2)} px/cm` : 'Not calibrated'}
+              <h4 className="card-title">📏 Scale Calibration</h4>
+              <p className={`calib-status ${activePxPerCm ? 'ok' : 'none'}`}>
+                {activePxPerCm ? `✓ ${activePxPerCm.toFixed(2)} px/cm (Calibrated)` : '⚠️ This Image Not Calibrated'}
               </p>
-              <button className="btn-secondary w-full" onClick={startCalib}>Click 2 points on image</button>
+              {appMode === 'bulk' && (
+                <div style={{ fontSize: '10px', color: 'var(--text2)', marginBottom: '6px' }}>
+                  Progress: <strong>{Object.keys(calibrationsMap).length} / {imageList.length}</strong> images calibrated
+                </div>
+              )}
+              <button className="btn-secondary w-full" onClick={startCalib}>
+                {activePxPerCm ? '↺ Re-calibrate This Image' : 'Click 2 points on image'}
+              </button>
               {showDistInput && (
                 <div className="inline-form">
                   <label>Real distance (cm):</label>
@@ -1825,9 +2075,9 @@ export default function App() {
               )}
             </div>
 
-            {/* STAR MEASUREMENT — 3-STEP INTERACTIVE CARD */}
+            {/* STANDALONE 8-POINT STAR TOOL (OPTIONAL WORKFLOW) */}
             <div className="tool-card">
-              <h4 className="card-title">⊙ 8-Point Star</h4>
+              <h4 className="card-title">⊙ Standalone 8-Point Star</h4>
 
               {/* Step indicators */}
               <div className="step-row">
@@ -1855,7 +2105,7 @@ export default function App() {
               {/* Step 1: Place button */}
               {(!starStep || starStep === 'done') && (
                 <button className={`btn-secondary w-full ${starStep==='place'?'btn-active':''}`}
-                        disabled={!pxPerCm}
+                        disabled={!activePxPerCm}
                         onClick={startStar}
                         style={{marginTop:'8px'}}>
                   {starStep === 'done' ? '↺ Place new star' : '① Place star on image'}
