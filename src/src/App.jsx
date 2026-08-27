@@ -95,11 +95,40 @@ export default function App() {
   const [calibMode,       setCalibMode]       = useState('idle');
   const [calibPt1,        setCalibPt1]        = useState(null);
   const [calibPt2,        setCalibPt2]        = useState(null);
+  const [calibPreviewPt,  setCalibPreviewPt]  = useState(null);
   const [calibDist,       setCalibDist]       = useState('10');
   const [showDistInput,   setShowDistInput]   = useState(false);
 
   // Active image pixel-to-cm scale
   const activePxPerCm = (activeImagePath && calibrationsMap[activeImagePath]?.pxPerCm) || null;
+
+  // Straight line snap helper (when Shift key is held)
+  const snapStraightPoint = (pt1, currentCoords) => {
+    if (!pt1 || !currentCoords) return currentCoords;
+    const dx = Math.abs(currentCoords.px - pt1.px);
+    const dy = Math.abs(currentCoords.py - pt1.py);
+    if (dx >= dy) {
+      // Snap to horizontal line
+      return {
+        px: currentCoords.px,
+        py: pt1.py,
+        pct: {
+          x: currentCoords.pct.x,
+          y: pt1.pct.y,
+        }
+      };
+    } else {
+      // Snap to vertical line
+      return {
+        px: pt1.px,
+        py: currentCoords.py,
+        pct: {
+          x: pt1.pct.x,
+          y: currentCoords.pct.y,
+        }
+      };
+    }
+  };
 
   // Manual 8-Point Star Measurement Tool (Optional standalone 3-step tool)
   const [starStep,       setStarStep]       = useState(null); // null | 'place' | 'align' | 'saving' | 'done'
@@ -146,7 +175,7 @@ export default function App() {
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
-    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
+    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.4.0 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
   ]);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const terminalEndRef = useRef(null);
@@ -767,9 +796,21 @@ export default function App() {
     const c = getCoords(e);
     if (!c) return;
 
-    // Calibration Clicks
-    if (calibMode === 'pt1') { setCalibPt1(c); setCalibMode('pt2'); return; }
-    if (calibMode === 'pt2') { setCalibPt2(c); setCalibMode('idle'); setShowDistInput(true); return; }
+    // Calibration Clicks (Shift key snaps straight horizontal/vertical)
+    if (calibMode === 'pt1') {
+      setCalibPt1(c);
+      setCalibMode('pt2');
+      setCalibPreviewPt(c);
+      return;
+    }
+    if (calibMode === 'pt2') {
+      const finalPt2 = (e.shiftKey && calibPt1) ? snapStraightPoint(calibPt1, c) : c;
+      setCalibPt2(finalPt2);
+      setCalibPreviewPt(null);
+      setCalibMode('idle');
+      setShowDistInput(true);
+      return;
+    }
 
     // Standalone Star Tool Placement
     if (starStep === 'place') {
@@ -837,12 +878,17 @@ export default function App() {
   };
 
   const handleImageMouseMove = (e) => {
+    const c = getCoords(e);
+    if (!c) return;
+
+    if (calibMode === 'pt2' && calibPt1) {
+      const effective = e.shiftKey ? snapStraightPoint(calibPt1, c) : c;
+      setCalibPreviewPt(effective);
+    }
+
     if (drawMode === 'circle' && circleCenter) {
-      const c = getCoords(e);
-      if (c) {
-        const r = Math.max(4, Math.hypot(c.px - circleCenter.px, c.py - circleCenter.py));
-        setCircleRadius(r);
-      }
+      const r = Math.max(4, Math.hypot(c.px - circleCenter.px, c.py - circleCenter.py));
+      setCircleRadius(r);
     }
   };
 
@@ -1427,7 +1473,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.3.4 (Web & Desktop)</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.4.0 (Web & Desktop)</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -1577,7 +1623,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">{isWeb ? '🌐 Online Web' : 'v1.3.4'}</span>
+          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.4.0' : 'v1.4.0'}</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (
@@ -1765,6 +1811,16 @@ export default function App() {
                   <line x1={calibPt1.pct.x} y1={calibPt1.pct.y}
                         x2={calibPt2.pct.x} y2={calibPt2.pct.y}
                         stroke="#00e5ff" strokeWidth="0.5" strokeDasharray="1 0.6"/>
+                )}
+
+                {/* Live Calibration Line Preview (while setting Point 2) */}
+                {calibPt1 && calibMode === 'pt2' && calibPreviewPt && (
+                  <g>
+                    <line x1={calibPt1.pct.x} y1={calibPt1.pct.y}
+                          x2={calibPreviewPt.pct.x} y2={calibPreviewPt.pct.y}
+                          stroke="#00e5ff" strokeWidth="0.6" strokeDasharray="1.2 0.8"/>
+                    <circle cx={calibPreviewPt.pct.x} cy={calibPreviewPt.pct.y} r="0.8" fill="#00e5ff"/>
+                  </g>
                 )}
 
                 {/* Standalone Star Spokes Tool */}
@@ -2056,6 +2112,17 @@ export default function App() {
               {appMode === 'bulk' && (
                 <div style={{ fontSize: '10px', color: 'var(--text2)', marginBottom: '6px' }}>
                   Progress: <strong>{Object.keys(calibrationsMap).length} / {imageList.length}</strong> images calibrated
+                </div>
+              )}
+              {calibMode === 'pt1' && (
+                <div style={{ fontSize: '11px', color: 'var(--accent2)', background: 'var(--bg0)', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border)', marginBottom: '8px' }}>
+                  📍 <strong>Step 1:</strong> Click 1st point on thermal image.
+                </div>
+              )}
+              {calibMode === 'pt2' && (
+                <div style={{ fontSize: '11px', color: 'var(--cyan)', background: 'var(--bg0)', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border)', marginBottom: '8px' }}>
+                  📍 <strong>Step 2:</strong> Click 2nd point on image.<br/>
+                  ⌨️ <strong>Hold Shift</strong> to snap a perfectly straight horizontal or vertical line.
                 </div>
               )}
               <button className="btn-secondary w-full" onClick={startCalib}>
