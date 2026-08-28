@@ -708,14 +708,14 @@ export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiInd
 }
 
 // ── Sequence Comparison Montage Generator (Overall & Relative Focus) ───────
-export function generateFullSequenceComparisonCanvas(imageList, resultsMap, segmentations, calibrationsMap, targetLabel = 'overall') {
+export function generateFullSequenceComparisonCanvas(imageList, resultsMap = {}, segmentations = {}, calibrationsMap = {}, targetLabel = 'overall', aggregatedStats = {}) {
   if (!imageList || imageList.length === 0) return null;
 
   const N = imageList.length;
   const tileW = 340;
   const tileH = 260;
   const headerH = 75;
-  const footerH = 115;
+  const footerH = 120;
   const margin = 20;
 
   const totalW = margin * 2 + N * tileW + (N - 1) * margin;
@@ -745,6 +745,14 @@ export function generateFullSequenceComparisonCanvas(imageList, resultsMap, segm
   let baselineCenterTemp = null;
   let baselineMeanTemp = null;
 
+  // Pre-find baseline if available from aggregatedStats
+  const baseStat = aggregatedStats?.[targetLabel]?.[0] 
+    || Object.values(aggregatedStats || {})[0]?.[0];
+  if (baseStat) {
+    baselineCenterTemp = baseStat.star_center_temp || baseStat.mean_temp;
+    baselineMeanTemp = baseStat.mean_temp;
+  }
+
   for (let i = 0; i < N; i++) {
     const imgPath = imageList[i];
     const res = resultsMap[imgPath];
@@ -762,6 +770,7 @@ export function generateFullSequenceComparisonCanvas(imageList, resultsMap, segm
     ctx.fill();
     ctx.stroke();
 
+    const proto = getProtocolStep(i);
     const protoName = `Step #${i + 1}`;
     ctx.fillStyle = '#00e5ff';
     ctx.font = 'bold 11px monospace';
@@ -770,9 +779,17 @@ export function generateFullSequenceComparisonCanvas(imageList, resultsMap, segm
     const stemName = imgPath.split(/[\\/]/).pop().split('.')[0];
     ctx.fillStyle = '#b0b0c8';
     ctx.font = '10px sans-serif';
-    ctx.fillText(stemName, tileX + 70, tileY - 9);
+    ctx.fillText(`${stemName} (${proto.sessionName})`, tileX + 68, tileY - 9);
 
-    // Thermal Canvas Tile
+    // Tile Box background
+    ctx.fillStyle = '#0a0a0e';
+    ctx.fillRect(tileX, tileY, tileW, tileH);
+    ctx.strokeStyle = '#2e2e40';
+    ctx.strokeRect(tileX, tileY, tileW, tileH);
+
+    let drawnImage = false;
+
+    // 1. If raw matrix available in RAM: Draw full thermal heatmap + overlays
     if (res?.raw?.tempMatrix && res?.shape) {
       const [H, W] = res.shape;
       const offscreen = document.createElement('canvas');
@@ -794,15 +811,11 @@ export function generateFullSequenceComparisonCanvas(imageList, resultsMap, segm
 
       // Draw thermal image scaled to tile
       ctx.drawImage(offscreen, tileX, tileY, tileW, tileH);
-      ctx.strokeStyle = '#3e3e50';
-      ctx.strokeRect(tileX, tileY, tileW, tileH);
+      drawnImage = true;
 
       // Scale factors from raw image to tile
       const sx = tileW / W;
       const sy = tileH / H;
-
-      let primaryRoi = null;
-      let primaryStar = null;
 
       // Draw ROIs and 8-Star Gradients
       rois.forEach(roi => {
@@ -810,10 +823,6 @@ export function generateFullSequenceComparisonCanvas(imageList, resultsMap, segm
         if (!isTarget) return;
 
         const star = roi.star || computeLabelStarGradient(matrix, W, H, roi, scale);
-        if (!primaryRoi && roi.labelName === targetLabel) {
-          primaryRoi = roi;
-          primaryStar = star;
-        }
 
         // Polygon outline
         if (roi.points && roi.points.length > 0) {
@@ -878,51 +887,77 @@ export function generateFullSequenceComparisonCanvas(imageList, resultsMap, segm
           ctx.textAlign = 'left';
         }
       });
-
-      // Footer Metric Box
-      const footY = tileY + tileH + 8;
-      ctx.fillStyle = '#14141c';
-      ctx.strokeStyle = '#282838';
-      ctx.beginPath();
-      ctx.roundRect(tileX, footY, tileW, footerH - 12, 6);
-      ctx.fill();
-      ctx.stroke();
-
-      const activeObj = primaryStar || (rois[0] ? (rois[0].star || computeLabelStarGradient(matrix, W, H, rois[0], scale)) : null);
-
-      if (activeObj) {
-        if (i === 0) {
-          baselineCenterTemp = activeObj.temp_centre;
-          baselineMeanTemp = res.temp_mean;
-        }
-
-        const deltaCenter = baselineCenterTemp !== null ? (activeObj.temp_centre - baselineCenterTemp) : 0;
-        const deltaMean = baselineMeanTemp !== null ? (res.temp_mean - baselineMeanTemp) : 0;
-
-        ctx.fillStyle = '#e8e8f2';
-        ctx.font = 'bold 11px sans-serif';
-        ctx.fillText(`Center: ${activeObj.temp_centre.toFixed(2)} °C`, tileX + 10, footY + 18);
-        ctx.fillText(`Mean: ${res.temp_mean.toFixed(2)} °C`, tileX + 160, footY + 18);
-
-        // Relative delta badge
-        ctx.fillStyle = deltaCenter >= 0 ? '#ff5252' : '#448aff';
-        ctx.font = 'bold 11px monospace';
-        ctx.fillText(`ΔT vs Step 1: ${deltaCenter >= 0 ? '+' : ''}${deltaCenter.toFixed(2)} °C`, tileX + 10, footY + 38);
-
-        ctx.fillStyle = '#00e5ff';
-        ctx.font = '10px sans-serif';
-        ctx.fillText(`Gradient Max: ${activeObj.gradient_max.toFixed(2)} °C/cm`, tileX + 10, footY + 58);
-        ctx.fillStyle = '#ffd54f';
-        ctx.fillText(`Modus: ${activeObj.gradient_modus}`, tileX + 10, footY + 76);
-        ctx.fillStyle = '#8888a0';
-        ctx.font = '9px monospace';
-        ctx.fillText(`Radius: ${activeObj.radius_cm.toFixed(2)} cm (${scale.toFixed(1)} px/cm)`, tileX + 10, footY + 92);
-      } else {
-        ctx.fillStyle = '#666680';
-        ctx.font = '10px sans-serif';
-        ctx.fillText('No ROI label on this step', tileX + 10, footY + 24);
-      }
     }
+
+    // 2. Fetch Stat Object for Footer & Delta computation
+    const sStat = aggregatedStats?.[targetLabel]?.[i]
+      || (rois[0] ? aggregatedStats?.[rois[0].labelName]?.[i] : null)
+      || Object.values(aggregatedStats || {})[0]?.[i];
+
+    const centerTemp = sStat?.star_center_temp || sStat?.mean_temp || res?.temp_mean || 0;
+    const meanTemp = sStat?.mean_temp || res?.temp_mean || 0;
+    const gMax = sStat?.gradient_max ?? 0;
+    const gModus = sStat?.gradient_modus || '-';
+    const rCm = sStat?.star_radius_cm || (scale ? 15 / scale : 1.5);
+
+    if (i === 0 && baselineCenterTemp === null) {
+      baselineCenterTemp = centerTemp;
+      baselineMeanTemp = meanTemp;
+    }
+
+    const deltaCenter = baselineCenterTemp !== null ? (centerTemp - baselineCenterTemp) : 0;
+    const deltaMean = baselineMeanTemp !== null ? (meanTemp - baselineMeanTemp) : 0;
+
+    // If thermal image wasn't drawn from raw matrix, draw visual tile card
+    if (!drawnImage) {
+      ctx.fillStyle = '#12121a';
+      ctx.fillRect(tileX + 10, tileY + 10, tileW - 20, tileH - 20);
+      ctx.strokeStyle = '#222230';
+      ctx.strokeRect(tileX + 10, tileY + 10, tileW - 20, tileH - 20);
+
+      ctx.fillStyle = '#00e5ff';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`🌡 ${stemName}`, tileX + tileW / 2, tileY + 70);
+
+      ctx.fillStyle = '#ffb300';
+      ctx.font = 'bold 22px monospace';
+      ctx.fillText(`${meanTemp.toFixed(2)} °C`, tileX + tileW / 2, tileY + 110);
+
+      ctx.fillStyle = '#8888a0';
+      ctx.font = '11px sans-serif';
+      ctx.fillText(`Target: ${targetLabel.toUpperCase()}`, tileX + tileW / 2, tileY + 140);
+      ctx.fillText(`G_max: ${gMax.toFixed(2)} °C/cm`, tileX + tileW / 2, tileY + 165);
+      ctx.textAlign = 'left';
+    }
+
+    // Footer Metric Box
+    const footY = tileY + tileH + 8;
+    ctx.fillStyle = '#14141c';
+    ctx.strokeStyle = '#282838';
+    ctx.beginPath();
+    ctx.roundRect(tileX, footY, tileW, footerH - 12, 6);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#e8e8f2';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillText(`Center: ${centerTemp.toFixed(2)} °C`, tileX + 10, footY + 18);
+    ctx.fillText(`Mean: ${meanTemp.toFixed(2)} °C`, tileX + 165, footY + 18);
+
+    // Relative delta badge
+    ctx.fillStyle = deltaCenter >= 0 ? '#ff5252' : '#448aff';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText(`ΔT vs Step 1: ${deltaCenter >= 0 ? '+' : ''}${deltaCenter.toFixed(2)} °C (Mean: ${deltaMean >= 0 ? '+' : ''}${deltaMean.toFixed(2)}°)`, tileX + 10, footY + 38);
+
+    ctx.fillStyle = '#00e5ff';
+    ctx.font = '10px sans-serif';
+    ctx.fillText(`Gradient Max: ${gMax.toFixed(2)} °C/cm`, tileX + 10, footY + 58);
+    ctx.fillStyle = '#ffd54f';
+    ctx.fillText(`Modus: ${gModus}`, tileX + 10, footY + 76);
+    ctx.fillStyle = '#8888a0';
+    ctx.font = '9px monospace';
+    ctx.fillText(`Radius: ${rCm.toFixed(2)} cm (${scale.toFixed(1)} px/cm)`, tileX + 10, footY + 92);
   }
 
   return canvas.toDataURL('image/png');
@@ -945,15 +980,29 @@ export function generateRadarGradientSvg(labelName, series, theme = 'dark') {
   const cy = 270;
   const maxR = 190;
 
+  // Helper to extract directional gradient robustly
+  const getPointGrad = (s, name) => {
+    const p = s.star?.points?.[name];
+    if (p && typeof p.grad === 'number' && p.grad > 0) return p.grad;
+    const r_cm = s.star_radius_cm || s.star?.radius_cm || 1.0;
+    if (p && typeof p.diff === 'number') {
+      return Math.abs(p.diff) / Math.max(0.0001, r_cm);
+    }
+    if (s.gradient_max && s.gradient_max > 0) {
+      return s.gradient_max * 0.6;
+    }
+    return 0.25;
+  };
+
   // Find max gradient across all steps and compass points
   let maxGrad = 0.5;
   series.forEach(s => {
     COMPASS.forEach(name => {
-      const g = s.star?.points?.[name]?.grad || 0;
+      const g = getPointGrad(s, name);
       if (g > maxGrad) maxGrad = g;
     });
   });
-  maxGrad = Math.ceil(maxGrad * 2) / 2; // round up to nice number e.g. 1.0, 1.5, 2.0
+  maxGrad = Math.max(0.5, Math.ceil(maxGrad * 2) / 2); // round up to nice number e.g. 1.0, 1.5, 2.0
 
   const stepColors = [
     '#00e5ff', '#3d5afe', '#7c4dff', '#e040fb', '#ff4081', '#ff5252', '#ff9100', '#ffd600'
@@ -991,7 +1040,7 @@ export function generateRadarGradientSvg(labelName, series, theme = 'dark') {
   series.forEach((s, idx) => {
     const col = stepColors[idx % stepColors.length];
     const pointsStr = COMPASS.map(name => {
-      const g = s.star?.points?.[name]?.grad || 0;
+      const g = getPointGrad(s, name);
       const r = (g / maxGrad) * maxR;
       const angRad = (BASE_ANGLES[name] * Math.PI) / 180.0;
       const px = cx + r * Math.sin(angRad);
@@ -1004,7 +1053,7 @@ export function generateRadarGradientSvg(labelName, series, theme = 'dark') {
     
     // Draw dots at vertices
     COMPASS.forEach(name => {
-      const g = s.star?.points?.[name]?.grad || 0;
+      const g = getPointGrad(s, name);
       const r = (g / maxGrad) * maxR;
       const angRad = (BASE_ANGLES[name] * Math.PI) / 180.0;
       const px = cx + r * Math.sin(angRad);

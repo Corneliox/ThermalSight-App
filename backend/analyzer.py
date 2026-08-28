@@ -520,8 +520,13 @@ def cmd_crop(image_path: str, points_json_str: str, label_name: str,
         for name, angle in COMPASS:
             sp = star_data["points"][name]
             p_grad = abs(sp["diff"]) / max(0.0001, dist_cm)
+            sp["grad"] = round(float(p_grad), 4)
             diff_sign = f"+{sp['diff']:.4f}" if sp["diff"] >= 0 else f"{sp['diff']:.4f}"
             sw.writerow([name, name, angle, f"{sp['px']:.1f}", f"{sp['py']:.1f}", f"{sp['temp']:.4f}", diff_sign, f"{p_grad:.4f}"])
+
+        star_data["radius_cm"] = float(dist_cm)
+        star_data["gradient_max"] = float(grad_max)
+        star_data["gradient_modus"] = str(grad_modus)
 
     # Render cropped thermal PNG with masked transparency and 8-point star overlay
     norm_crop = np.clip((temp_crop - 20.0) / 25.0 * 255.0, 0, 255).astype(np.uint8)
