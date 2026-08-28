@@ -465,7 +465,11 @@ ipcMain.handle('export-result-package', async (_event, resultDir, filesMap) => {
       const fullPath = path.join(resultDir, relPath);
       const dir = path.dirname(fullPath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(fullPath, content, 'utf-8');
+      if (relPath.endsWith('.png')) {
+        fs.writeFileSync(fullPath, Buffer.from(content, 'base64'));
+      } else {
+        fs.writeFileSync(fullPath, content, 'utf-8');
+      }
     }
 
     return { status: 'ok', path: resultDir };

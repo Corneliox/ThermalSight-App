@@ -15,7 +15,7 @@ export default function AnalyticsView({
   const labels = Object.keys(analyticsData || {});
   const [activeLabel, setActiveLabel] = useState(labels[0] || null);
   const [viewMode, setViewMode] = useState('graph'); // 'graph' | 'strip' | 'radar'
-  const [stripTarget, setStripTarget] = useState('overall'); // 'overall' | labelName
+  const [stripTarget, setStripTarget] = useState(labels[0] || 'overall'); // 'overall' | labelName
   const [xAxisMode, setXAxisMode] = useState('raw'); // 'raw' | 'protocol'
   const [chartTheme, setChartTheme] = useState('dark'); // 'dark' | 'white'
 
@@ -31,9 +31,12 @@ export default function AnalyticsView({
     );
   }
 
+  const currentStripLabel = stripTarget === 'overall' ? activeLabel : stripTarget;
   const series = analyticsData[activeLabel] || [];
-  const baselineCenter = series[0]?.star_center_temp || series[0]?.mean_temp || 0;
-  const baselineMean = series[0]?.mean_temp || 0;
+  const stripSeries = analyticsData[currentStripLabel] || series;
+
+  const baselineCenter = stripSeries[0]?.star_center_temp || stripSeries[0]?.mean_temp || 0;
+  const baselineMean = stripSeries[0]?.mean_temp || 0;
 
   let allMin = Infinity;
   let allMax = -Infinity;
@@ -90,16 +93,24 @@ export default function AnalyticsView({
     errorBar: isDark ? '#ff8866' : '#d97706',
   };
 
-  // Generate Sequence Montage DataURL on the fly
-  const sequenceMontageDataUrl = useMemo(() => {
-    if (!imageList || imageList.length === 0) return null;
-    return generateFullSequenceComparisonCanvas(imageList, resultsMap, segmentations, calibrationsMap, stripTarget);
-  }, [imageList, resultsMap, segmentations, calibrationsMap, stripTarget]);
+  const stepColors = [
+    '#00e5ff', '#3d5afe', '#7c4dff', '#e040fb', '#ff4081', '#ff5252', '#ff9100', '#ffd600'
+  ];
 
-  // Generate Radar SVG XML
-  const radarSvgXml = useMemo(() => {
-    return generateRadarGradientSvg(activeLabel, series, chartTheme);
-  }, [activeLabel, series, chartTheme]);
+  // Compute Max Radar Gradient
+  let radarMaxGrad = 0.5;
+  series.forEach(s => {
+    COMPASS.forEach(name => {
+      const g = s.star?.points?.[name]?.grad || (s.gradient_max ? s.gradient_max * 0.7 : 0);
+      if (g > radarMaxGrad) radarMaxGrad = g;
+    });
+  });
+  radarMaxGrad = Math.max(0.5, Math.ceil(radarMaxGrad * 2) / 2);
+
+  // Radar geometry constants
+  const rCx = 260;
+  const rCy = 240;
+  const rMax = 160;
 
   const exportSummaryCsv = () => {
     let csvContent = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,delta_mean_vs_step1_c,delta_center_vs_step1_c,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm\n`;
@@ -134,19 +145,11 @@ export default function AnalyticsView({
     document.body.removeChild(link);
   };
 
-  const downloadMontagePng = () => {
-    if (!sequenceMontageDataUrl) return;
-    const link = document.createElement('a');
-    link.href = sequenceMontageDataUrl;
-    link.setAttribute('download', `comparison_relative_${stripTarget}_sequence.png`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
   const downloadRadarSvg = () => {
-    if (!radarSvgXml) return;
-    const blob = new Blob([radarSvgXml], { type: 'image/svg+xml;charset=utf-8;' });
+    const svgEl = document.getElementById('radar-svg-element');
+    if (!svgEl) return;
+    const svgData = new XMLSerializer().serializeToString(svgEl);
+    const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -158,11 +161,11 @@ export default function AnalyticsView({
 
   return (
     <div className="analytics-modal">
-      <div className="analytics-card" style={{ maxWidth: '980px', width: '95%' }}>
+      <div className="analytics-card" style={{ maxWidth: '1080px', width: '96%' }}>
         <div className="analytics-header">
           <div>
             <h2>📈 Time-Series Thermal Range & Relative Gradient Analytics</h2>
-            <p className="subtext">Comparative Analysis across Sequence Steps (Step 1 to {series.length})</p>
+            <p className="subtext">Comparative Progression across Sequence Steps (Step 1 to {series.length})</p>
           </div>
           <button className="btn-ghost" onClick={onClose}>✕ Close</button>
         </div>
@@ -198,7 +201,7 @@ export default function AnalyticsView({
               <button className={`btn-ghost btn-tiny ${stripTarget === 'overall' ? 'active' : ''}`}
                       style={{ background: stripTarget === 'overall' ? 'var(--cyan)' : 'var(--bg1)', color: stripTarget === 'overall' ? '#000' : 'var(--text0)', fontWeight: '600' }}
                       onClick={() => setStripTarget('overall')}>
-                🌐 Overall (All ROIs)
+                🌐 Overall (All Labels)
               </button>
               {labels.map(l => (
                 <button key={l}
@@ -303,37 +306,194 @@ export default function AnalyticsView({
 
         {/* ── VIEW 2: MULTI-STEP SEQUENCE STRIP (RELATIVE FOCUS) ─────────── */}
         {viewMode === 'strip' && (
-          <div style={{ background: 'var(--bg0)', border: '1px solid var(--border)', borderRadius: '8px', padding: '12px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <span style={{ fontSize: '12px', color: 'var(--text2)' }}>
-                Full thermal context sequence with relative gradient focus on <strong>{stripTarget.toUpperCase()}</strong>.
-              </span>
-              <button className="btn-secondary btn-tiny" onClick={downloadMontagePng}>
-                📥 Download {stripTarget.toUpperCase()} Sequence PNG
-              </button>
-            </div>
-            {sequenceMontageDataUrl ? (
-              <div style={{ overflowX: 'auto', border: '1px solid var(--border-h)', borderRadius: '6px', maxHeight: '420px', background: '#0a0a0d' }}>
-                <img src={sequenceMontageDataUrl} alt="Sequence Strip" style={{ height: '390px', width: 'auto', display: 'block' }} />
+          <div style={{ background: 'var(--bg0)', border: '1px solid var(--border)', borderRadius: '8px', padding: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <div>
+                <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--text0)' }}>
+                  Multi-Step Thermal Progression — Focus: {stripTarget.toUpperCase()}
+                </span>
+                <p style={{ margin: '2px 0 0', fontSize: '11px', color: 'var(--text2)' }}>
+                  Side-by-side progression showing 8-point star gradient and relative ΔT vs Step 1 Baseline.
+                </p>
               </div>
-            ) : (
-              <p className="subtext">Load full image sequences to generate multi-step montage.</p>
-            )}
+            </div>
+
+            {/* REACT NATIVE SEQUENCE STRIP CARDS */}
+            <div style={{
+              display: 'flex',
+              gap: '14px',
+              overflowX: 'auto',
+              paddingBottom: '12px',
+              scrollbarWidth: 'thin'
+            }}>
+              {stripSeries.map((s, idx) => {
+                const proto = getProtocolStep(idx);
+                const centerVal = s.star_center_temp || s.mean_temp || 0;
+                const deltaCenter = centerVal - baselineCenter;
+                const deltaMean = s.mean_temp - baselineMean;
+
+                return (
+                  <div key={idx} style={{
+                    minWidth: '240px',
+                    maxWidth: '240px',
+                    background: 'var(--bg1)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '8px',
+                    overflow: 'hidden',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+                  }}>
+                    {/* Header */}
+                    <div style={{ background: 'var(--bg2)', padding: '8px 10px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ color: 'var(--cyan)', fontWeight: 'bold', fontSize: '12px' }}>Step #{idx + 1}</span>
+                      <span style={{ color: 'var(--text2)', fontSize: '10px' }}>{s.pictureName}</span>
+                    </div>
+
+                    {/* Image Area */}
+                    <div style={{ height: '160px', background: '#0a0a0d', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px' }}>
+                      {s.croppedPngDataUrl ? (
+                        <img src={s.croppedPngDataUrl} alt={`Step ${idx+1}`} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain', borderRadius: '4px' }} />
+                      ) : (
+                        <div style={{ fontSize: '11px', color: 'var(--text2)', textAlign: 'center' }}>
+                          ⚡ Thermal Matrix #{idx + 1}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Protocol Tag */}
+                    <div style={{ background: 'var(--bg0)', padding: '4px 8px', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', fontSize: '10px', color: 'var(--text1)', fontWeight: '600' }}>
+                      {proto.sessionName}
+                    </div>
+
+                    {/* Footer Metrics */}
+                    <div style={{ padding: '8px 10px', fontSize: '11px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--text2)' }}>Center:</span>
+                        <strong>{centerVal.toFixed(2)} °C</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--text2)' }}>Mean:</span>
+                        <span>{s.mean_temp.toFixed(2)} °C</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--bg0)', padding: '2px 6px', borderRadius: '4px', border: '1px solid var(--border-h)' }}>
+                        <span style={{ color: 'var(--cyan)', fontWeight: '600' }}>ΔT vs Step 1:</span>
+                        <strong style={{ color: deltaCenter >= 0 ? '#ff5252' : '#448aff' }}>
+                          {idx === 0 ? 'Baseline' : `${deltaCenter >= 0 ? '+' : ''}${deltaCenter.toFixed(2)} °C`}
+                        </strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px' }}>
+                        <span style={{ color: 'var(--accent2)' }}>G_max:</span>
+                        <strong>{s.gradient_max !== undefined ? `${s.gradient_max.toFixed(2)} °C/cm` : '-'}</strong>
+                      </div>
+                      {s.gradient_modus && (
+                        <div style={{ fontSize: '10px', color: 'var(--cyan)' }}>
+                          Modus: <strong>{s.gradient_modus}</strong>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
         {/* ── VIEW 3: 8-COMPASS POLAR RADAR PROFILE ───────────────────────── */}
         {viewMode === 'radar' && (
-          <div style={{ background: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', padding: '12px', textAlign: 'center' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <span style={{ fontSize: '12px', color: theme.textSub }}>
-                Overlaid directional gradient profiles ($G_k$ in °C/cm) across all steps for <strong>{activeLabel}</strong>.
-              </span>
+          <div style={{ background: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', padding: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <div>
+                <span style={{ fontSize: '13px', fontWeight: 'bold', color: theme.textMain }}>
+                  🕸 8-Direction Polar Thermal Gradient Profile — {activeLabel.toUpperCase()}
+                </span>
+                <p style={{ margin: '2px 0 0', fontSize: '11px', color: theme.textSub }}>
+                  Overlaid directional gradient magnitude ($G_k$ in °C/cm) across all steps for {activeLabel}.
+                </p>
+              </div>
               <button className="btn-secondary btn-tiny" onClick={downloadRadarSvg}>
-                📥 Download {activeLabel} Radar SVG
+                📥 Download Radar SVG
               </button>
             </div>
-            <div dangerouslySetInnerHTML={{ __html: radarSvgXml }} style={{ display: 'flex', justifyContent: 'center' }} />
+
+            {/* PURE REACT SVG RADAR COMPONENT */}
+            <div style={{ display: 'flex', justifyContent: 'center', overflowX: 'auto' }}>
+              <svg id="radar-svg-element" viewBox="0 0 680 500" width="680" height="500" style={{ background: theme.bg }}>
+                <g transform="translate(0, 10)">
+                  {/* Concentric grid circles */}
+                  {[1, 2, 3, 4].map(l => {
+                    const r = (rMax / 4) * l;
+                    const val = ((radarMaxGrad / 4) * l).toFixed(2);
+                    return (
+                      <g key={l}>
+                        <circle cx={rCx} cy={rCy} r={r} fill="none" stroke={theme.grid} strokeWidth="1" strokeDasharray="3 3"/>
+                        <text x={rCx + 4} y={rCy - r + 10} fill={theme.textSub} fontSize="9">{val} °C/cm</text>
+                      </g>
+                    );
+                  })}
+
+                  {/* 8 Radial Spokes & Compass Labels */}
+                  {COMPASS.map(name => {
+                    const angRad = (BASE_ANGLES[name] * Math.PI) / 180.0;
+                    const sx = rCx + rMax * Math.sin(angRad);
+                    const sy = rCy - rMax * Math.cos(angRad);
+                    const lx = rCx + (rMax + 18) * Math.sin(angRad);
+                    const ly = rCy - (rMax + 18) * Math.cos(angRad);
+                    return (
+                      <g key={name}>
+                        <line x1={rCx} y1={rCy} x2={sx} y2={sy} stroke={theme.grid} strokeWidth="1.2"/>
+                        <text x={lx} y={ly + 4} fill={theme.textMain} fontSize="11" fontWeight="bold" textAnchor="middle">{name}</text>
+                      </g>
+                    );
+                  })}
+
+                  {/* Overlaid Step Polygons */}
+                  {series.map((s, idx) => {
+                    const col = stepColors[idx % stepColors.length];
+                    const ptsStr = COMPASS.map(name => {
+                      const g = s.star?.points?.[name]?.grad || (s.gradient_max ? s.gradient_max * 0.6 : 0.2);
+                      const r = (g / radarMaxGrad) * rMax;
+                      const angRad = (BASE_ANGLES[name] * Math.PI) / 180.0;
+                      const px = rCx + r * Math.sin(angRad);
+                      const py = rCy - r * Math.cos(angRad);
+                      return `${px.toFixed(1)},${py.toFixed(1)}`;
+                    }).join(' ');
+
+                    return (
+                      <g key={idx}>
+                        <polygon points={ptsStr} fill={col} fillOpacity="0.18" stroke={col} strokeWidth="2"/>
+                        {COMPASS.map(name => {
+                          const g = s.star?.points?.[name]?.grad || (s.gradient_max ? s.gradient_max * 0.6 : 0.2);
+                          const r = (g / radarMaxGrad) * rMax;
+                          const angRad = (BASE_ANGLES[name] * Math.PI) / 180.0;
+                          const px = rCx + r * Math.sin(angRad);
+                          const py = rCy - r * Math.cos(angRad);
+                          return <circle key={name} cx={px} cy={py} r="3" fill={col}/>;
+                        })}
+                      </g>
+                    );
+                  })}
+
+                  {/* Legend Box */}
+                  <g transform="translate(480, 50)">
+                    <rect width="180" height={series.length * 28 + 36} rx="8" fill={isDark ? '#14141e' : '#f8f8fc'} stroke={theme.border}/>
+                    <text x="14" y="22" fill={theme.textMain} fontSize="12" fontWeight="bold">Sequence Steps:</text>
+                    {series.map((s, idx) => {
+                      const col = stepColors[idx % stepColors.length];
+                      const yPos = 42 + idx * 28;
+                      return (
+                        <g key={idx}>
+                          <circle cx="20" cy={yPos} r="5" fill={col}/>
+                          <text x="34" y={yPos + 4} fill={theme.textMain} fontSize="11" fontWeight="600">
+                            Step #{idx + 1} ({s.pictureName})
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </g>
+                </g>
+              </svg>
+            </div>
           </div>
         )}
 
@@ -396,8 +556,8 @@ export default function AnalyticsView({
             <button className="btn-secondary" onClick={downloadSvgGraph}>
               🎨 Download {chartTheme.toUpperCase()} Range SVG
             </button>
-            <button className="btn-secondary" onClick={downloadMontagePng}>
-              🖼 Download Sequence Strip PNG
+            <button className="btn-secondary" onClick={downloadRadarSvg}>
+              🕸 Download Radar SVG
             </button>
           </div>
           <button className="btn-primary" onClick={onClose}>Done</button>
