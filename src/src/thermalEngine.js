@@ -444,8 +444,8 @@ function sampleBilinear(arr, W, H, x, y) {
 }
 
 // ── 8-Point Star Measurement ────────────────────────────────────────────────
-const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-const BASE_ANGLES = { N: 0, NE: 45, E: 90, SE: 135, S: 180, SW: 225, W: 270, NW: 315 };
+export const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+export const BASE_ANGLES = { N: 0, NE: 45, E: 90, SE: 135, S: 180, SW: 225, W: 270, NW: 315 };
 
 export function clientMeasureStar(tempMatrix, W, H, cx, cy, dist_cm, rot_deg, pxPerCm) {
   const dist_px = dist_cm * (pxPerCm || 10);
@@ -706,3 +706,327 @@ export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiInd
     starCsvContent
   };
 }
+
+// ── Sequence Comparison Montage Generator (Overall & Relative Focus) ───────
+export function generateFullSequenceComparisonCanvas(imageList, resultsMap, segmentations, calibrationsMap, targetLabel = 'overall') {
+  if (!imageList || imageList.length === 0) return null;
+
+  const N = imageList.length;
+  const tileW = 340;
+  const tileH = 260;
+  const headerH = 75;
+  const footerH = 115;
+  const margin = 20;
+
+  const totalW = margin * 2 + N * tileW + (N - 1) * margin;
+  const totalH = margin * 2 + headerH + tileH + footerH;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = totalW;
+  canvas.height = totalH;
+  const ctx = canvas.getContext('2d');
+
+  // Background
+  ctx.fillStyle = '#0f0f13';
+  ctx.fillRect(0, 0, totalW, totalH);
+
+  // Title Banner
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 18px sans-serif';
+  const modeTitle = targetLabel === 'overall' 
+    ? '🌐 Sequence Thermal Gradient Comparison — Overall (All ROIs & Labels)' 
+    : `🎯 Sequence Thermal Gradient Progression — Relative Focus: ${targetLabel}`;
+  ctx.fillText(modeTitle, margin, margin + 22);
+
+  ctx.fillStyle = '#8888a0';
+  ctx.font = '12px sans-serif';
+  ctx.fillText(`Multi-Step Comparative Analysis (${N} Steps Sequence) — Relative to Baseline Step 1`, margin, margin + 42);
+
+  let baselineCenterTemp = null;
+  let baselineMeanTemp = null;
+
+  for (let i = 0; i < N; i++) {
+    const imgPath = imageList[i];
+    const res = resultsMap[imgPath];
+    const rois = segmentations[imgPath] || [];
+    const scale = calibrationsMap[imgPath]?.pxPerCm || 10;
+    const tileX = margin + i * (tileW + margin);
+    const tileY = margin + headerH;
+
+    // Step Header Card
+    ctx.fillStyle = '#181820';
+    ctx.strokeStyle = '#2d2d3c';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(tileX, tileY - 24, tileW, 22, 4);
+    ctx.fill();
+    ctx.stroke();
+
+    const protoName = `Step #${i + 1}`;
+    ctx.fillStyle = '#00e5ff';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText(protoName, tileX + 8, tileY - 9);
+
+    const stemName = imgPath.split(/[\\/]/).pop().split('.')[0];
+    ctx.fillStyle = '#b0b0c8';
+    ctx.font = '10px sans-serif';
+    ctx.fillText(stemName, tileX + 70, tileY - 9);
+
+    // Thermal Canvas Tile
+    if (res?.raw?.tempMatrix && res?.shape) {
+      const [H, W] = res.shape;
+      const offscreen = document.createElement('canvas');
+      offscreen.width = W;
+      offscreen.height = H;
+      const oCtx = offscreen.getContext('2d');
+      const oImgData = oCtx.createImageData(W, H);
+
+      const matrix = res.raw.tempMatrix;
+      for (let p = 0; p < matrix.length; p++) {
+        const t = matrix[p];
+        const norm = Math.min(255, Math.max(0, Math.floor((t - 20.0) / 25.0 * 255.0)));
+        oImgData.data[p * 4 + 0] = INFERNO_LUT[norm * 3 + 0];
+        oImgData.data[p * 4 + 1] = INFERNO_LUT[norm * 3 + 1];
+        oImgData.data[p * 4 + 2] = INFERNO_LUT[norm * 3 + 2];
+        oImgData.data[p * 4 + 3] = 255;
+      }
+      oCtx.putImageData(oImgData, 0, 0);
+
+      // Draw thermal image scaled to tile
+      ctx.drawImage(offscreen, tileX, tileY, tileW, tileH);
+      ctx.strokeStyle = '#3e3e50';
+      ctx.strokeRect(tileX, tileY, tileW, tileH);
+
+      // Scale factors from raw image to tile
+      const sx = tileW / W;
+      const sy = tileH / H;
+
+      let primaryRoi = null;
+      let primaryStar = null;
+
+      // Draw ROIs and 8-Star Gradients
+      rois.forEach(roi => {
+        const isTarget = targetLabel === 'overall' || roi.labelName === targetLabel;
+        if (!isTarget) return;
+
+        const star = roi.star || computeLabelStarGradient(matrix, W, H, roi, scale);
+        if (!primaryRoi && roi.labelName === targetLabel) {
+          primaryRoi = roi;
+          primaryStar = star;
+        }
+
+        // Polygon outline
+        if (roi.points && roi.points.length > 0) {
+          ctx.beginPath();
+          ctx.moveTo(tileX + roi.points[0].x * sx, tileY + roi.points[0].y * sy);
+          for (let ptIdx = 1; ptIdx < roi.points.length; ptIdx++) {
+            ctx.lineTo(tileX + roi.points[ptIdx].x * sx, tileY + roi.points[ptIdx].y * sy);
+          }
+          ctx.closePath();
+          ctx.fillStyle = `${roi.color}33`;
+          ctx.fill();
+          ctx.strokeStyle = roi.color || '#ff4444';
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+        }
+
+        // 8-Point Star Overlay
+        if (star) {
+          const scx = tileX + star.cx * sx;
+          const scy = tileY + star.cy * sy;
+          const srx = star.radius_px * sx;
+          const sry = star.radius_px * sy;
+
+          // Incircle
+          ctx.save();
+          ctx.strokeStyle = roi.color || '#00e5ff';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([2, 2]);
+          ctx.beginPath();
+          ctx.ellipse(scx, scy, srx, sry, 0, 0, 2 * Math.PI);
+          ctx.stroke();
+          ctx.restore();
+
+          // 8 Spokes
+          COMPASS.forEach(name => {
+            const p = star.points[name];
+            if (p) {
+              const spX = tileX + p.px * sx;
+              const spY = tileY + p.py * sy;
+              ctx.lineWidth = 1.2;
+              ctx.strokeStyle = p.diff >= 0 ? '#ff5252' : '#448aff';
+              ctx.beginPath();
+              ctx.moveTo(scx, scy);
+              ctx.lineTo(spX, spY);
+              ctx.stroke();
+            }
+          });
+
+          // Center Dot
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(scx, scy, 2.5, 0, 2 * Math.PI);
+          ctx.fill();
+
+          // Badge
+          ctx.fillStyle = '#0f0f13dd';
+          ctx.fillRect(scx - 24, scy - sry - 14, 48, 12);
+          ctx.fillStyle = '#00e5ff';
+          ctx.font = 'bold 9px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(`${roi.labelName} [${star.dominant}]`, scx, scy - sry - 5);
+          ctx.textAlign = 'left';
+        }
+      });
+
+      // Footer Metric Box
+      const footY = tileY + tileH + 8;
+      ctx.fillStyle = '#14141c';
+      ctx.strokeStyle = '#282838';
+      ctx.beginPath();
+      ctx.roundRect(tileX, footY, tileW, footerH - 12, 6);
+      ctx.fill();
+      ctx.stroke();
+
+      const activeObj = primaryStar || (rois[0] ? (rois[0].star || computeLabelStarGradient(matrix, W, H, rois[0], scale)) : null);
+
+      if (activeObj) {
+        if (i === 0) {
+          baselineCenterTemp = activeObj.temp_centre;
+          baselineMeanTemp = res.temp_mean;
+        }
+
+        const deltaCenter = baselineCenterTemp !== null ? (activeObj.temp_centre - baselineCenterTemp) : 0;
+        const deltaMean = baselineMeanTemp !== null ? (res.temp_mean - baselineMeanTemp) : 0;
+
+        ctx.fillStyle = '#e8e8f2';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText(`Center: ${activeObj.temp_centre.toFixed(2)} °C`, tileX + 10, footY + 18);
+        ctx.fillText(`Mean: ${res.temp_mean.toFixed(2)} °C`, tileX + 160, footY + 18);
+
+        // Relative delta badge
+        ctx.fillStyle = deltaCenter >= 0 ? '#ff5252' : '#448aff';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText(`ΔT vs Step 1: ${deltaCenter >= 0 ? '+' : ''}${deltaCenter.toFixed(2)} °C`, tileX + 10, footY + 38);
+
+        ctx.fillStyle = '#00e5ff';
+        ctx.font = '10px sans-serif';
+        ctx.fillText(`Gradient Max: ${activeObj.gradient_max.toFixed(2)} °C/cm`, tileX + 10, footY + 58);
+        ctx.fillStyle = '#ffd54f';
+        ctx.fillText(`Modus: ${activeObj.gradient_modus}`, tileX + 10, footY + 76);
+        ctx.fillStyle = '#8888a0';
+        ctx.font = '9px monospace';
+        ctx.fillText(`Radius: ${activeObj.radius_cm.toFixed(2)} cm (${scale.toFixed(1)} px/cm)`, tileX + 10, footY + 92);
+      } else {
+        ctx.fillStyle = '#666680';
+        ctx.font = '10px sans-serif';
+        ctx.fillText('No ROI label on this step', tileX + 10, footY + 24);
+      }
+    }
+  }
+
+  return canvas.toDataURL('image/png');
+}
+
+// ── 8-Direction Polar Radar Chart Generator (SVG) ───────────────────────────
+export function generateRadarGradientSvg(labelName, series, theme = 'dark') {
+  if (!series || series.length === 0) return '';
+
+  const isDark = theme === 'dark';
+  const bg = isDark ? '#0f0f13' : '#ffffff';
+  const border = isDark ? '#282838' : '#e0e0e0';
+  const textMain = isDark ? '#ffffff' : '#111111';
+  const textSub = isDark ? '#8888a0' : '#666666';
+  const gridStroke = isDark ? '#2a2a3a' : '#e2e2ec';
+
+  const W = 680;
+  const H = 540;
+  const cx = 270;
+  const cy = 270;
+  const maxR = 190;
+
+  // Find max gradient across all steps and compass points
+  let maxGrad = 0.5;
+  series.forEach(s => {
+    COMPASS.forEach(name => {
+      const g = s.star?.points?.[name]?.grad || 0;
+      if (g > maxGrad) maxGrad = g;
+    });
+  });
+  maxGrad = Math.ceil(maxGrad * 2) / 2; // round up to nice number e.g. 1.0, 1.5, 2.0
+
+  const stepColors = [
+    '#00e5ff', '#3d5afe', '#7c4dff', '#e040fb', '#ff4081', '#ff5252', '#ff9100', '#ffd600'
+  ];
+
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" style="background:${bg};font-family:Segoe UI,sans-serif;">
+  <rect width="${W}" height="${H}" fill="${bg}"/>
+  <text x="24" y="32" fill="${textMain}" font-size="16" font-weight="bold">🕸 8-Direction Polar Thermal Gradient Profile — ${labelName}</text>
+  <text x="24" y="50" fill="${textSub}" font-size="11">Comparative Directional Gradient ($G_k$ in °C/cm) across Sequence Steps</text>
+  <g transform="translate(0, 20)">
+`;
+
+  // Draw concentric radar circles
+  const levels = 4;
+  for (let l = 1; l <= levels; l++) {
+    const r = (maxR / levels) * l;
+    const val = ((maxGrad / levels) * l).toFixed(2);
+    svg += `  <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${gridStroke}" stroke-width="1" stroke-dasharray="3 3"/>\n`;
+    svg += `  <text x="${cx + 4}" y="${cy - r + 10}" fill="${textSub}" font-size="9">${val} °C/cm</text>\n`;
+  }
+
+  // Draw 8 radial spokes & compass labels
+  COMPASS.forEach(name => {
+    const angRad = (BASE_ANGLES[name] * Math.PI) / 180.0;
+    const sx = cx + maxR * Math.sin(angRad);
+    const sy = cy - maxR * Math.cos(angRad);
+    const lx = cx + (maxR + 18) * Math.sin(angRad);
+    const ly = cy - (maxR + 18) * Math.cos(angRad);
+
+    svg += `  <line x1="${cx}" y1="${cy}" x2="${sx}" y2="${sy}" stroke="${gridStroke}" stroke-width="1.2"/>\n`;
+    svg += `  <text x="${lx}" y="${ly + 4}" fill="${textMain}" font-size="11" font-weight="bold" text-anchor="middle">${name}</text>\n`;
+  });
+
+  // Draw each step's polygon profile
+  series.forEach((s, idx) => {
+    const col = stepColors[idx % stepColors.length];
+    const pointsStr = COMPASS.map(name => {
+      const g = s.star?.points?.[name]?.grad || 0;
+      const r = (g / maxGrad) * maxR;
+      const angRad = (BASE_ANGLES[name] * Math.PI) / 180.0;
+      const px = cx + r * Math.sin(angRad);
+      const py = cy - r * Math.cos(angRad);
+      return `${px.toFixed(1)},${py.toFixed(1)}`;
+    }).join(' ');
+
+    svg += `  <!-- Step ${idx + 1} Polygon -->\n`;
+    svg += `  <polygon points="${pointsStr}" fill="${col}" fill-opacity="0.18" stroke="${col}" stroke-width="2"/>\n`;
+    
+    // Draw dots at vertices
+    COMPASS.forEach(name => {
+      const g = s.star?.points?.[name]?.grad || 0;
+      const r = (g / maxGrad) * maxR;
+      const angRad = (BASE_ANGLES[name] * Math.PI) / 180.0;
+      const px = cx + r * Math.sin(angRad);
+      const py = cy - r * Math.cos(angRad);
+      svg += `  <circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="3" fill="${col}"/>\n`;
+    });
+  });
+
+  // Legend Card on the right
+  svg += `  <g transform="translate(500, 70)">
+    <rect width="160" height="${series.length * 26 + 32}" rx="6" fill="${isDark ? '#161622' : '#f4f4f8'}" stroke="${border}"/>
+    <text x="12" y="20" fill="${textMain}" font-size="11" font-weight="bold">Sequence Steps:</text>
+`;
+  series.forEach((s, idx) => {
+    const col = stepColors[idx % stepColors.length];
+    const yPos = 38 + idx * 26;
+    svg += `    <circle cx="18" cy="${yPos}" r="5" fill="${col}"/>
+    <text x="32" y="${yPos + 4}" fill="${textMain}" font-size="10" font-weight="600">Step #${idx + 1} (${s.pictureName})</text>
+`;
+  });
+  svg += `  </g>\n</g>\n</svg>`;
+
+  return svg;
+}
+

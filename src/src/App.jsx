@@ -8,7 +8,9 @@ import {
   runClientThermalAnalysis,
   clientMeasureStar,
   clientCropPolygonROI,
-  computeLabelStarGradient
+  computeLabelStarGradient,
+  generateFullSequenceComparisonCanvas,
+  generateRadarGradientSvg
 } from './thermalEngine';
 
 // Access secure electronAPI exposed via contextBridge in preload.js
@@ -175,7 +177,7 @@ export default function App() {
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
-    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.4.0 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
+    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.5.0 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
   ]);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const terminalEndRef = useRef(null);
@@ -1124,9 +1126,25 @@ export default function App() {
         // Generate Dark and White SVG Graphs per label
         exportFilesMap[`graph_${labelName}_dark.svg`] = generateGraphSvg(labelName, series, 'dark');
         exportFilesMap[`graph_${labelName}_white.svg`] = generateGraphSvg(labelName, series, 'white');
+
+        // Generate 8-Compass Polar Radar Gradient Profiles (Dark & White)
+        exportFilesMap[`radar_gradient_${labelName}_dark.svg`] = generateRadarGradientSvg(labelName, series, 'dark');
+        exportFilesMap[`radar_gradient_${labelName}_white.svg`] = generateRadarGradientSvg(labelName, series, 'white');
+
+        // Generate Relative Sequence Comparison Montage PNG for this label
+        const relMontage = generateFullSequenceComparisonCanvas(targetPaths, resultsMap, segmentations, calibrationsMap, labelName);
+        if (relMontage) {
+          exportFilesMap[`comparison_relative_${labelName}.png`] = relMontage.split(',')[1];
+        }
       });
 
       exportFilesMap[`master_summary_all_labels.csv`] = masterCsv;
+
+      // Generate Overall Sequence Comparison Montage PNG (All Labels Together)
+      const overallMontage = generateFullSequenceComparisonCanvas(targetPaths, resultsMap, segmentations, calibrationsMap, 'overall');
+      if (overallMontage) {
+        exportFilesMap[`comparison_overall_all_labels.png`] = overallMontage.split(',')[1];
+      }
 
       // If first label exists, also save default analytics_graph_dark.svg and analytics_graph_white.svg
       const firstLabel = Object.keys(aggregatedStats)[0];
@@ -1171,7 +1189,11 @@ export default function App() {
         });
 
         for (const [fname, content] of Object.entries(exportFilesMap)) {
-          rootFolder.file(fname, content);
+          if (fname.endsWith('.png')) {
+            rootFolder.file(fname, content, { base64: true });
+          } else {
+            rootFolder.file(fname, content);
+          }
         }
         rootFolder.file('annotations_session.json', JSON.stringify(masterData, null, 2));
 
@@ -1427,7 +1449,15 @@ export default function App() {
 
       {/* ANALYTICS MODAL */}
       {showAnalytics && (
-        <AnalyticsView analyticsData={analyticsData} onClose={() => setShowAnalytics(false)} />
+        <AnalyticsView
+          analyticsData={analyticsData}
+          onClose={() => setShowAnalytics(false)}
+          folderPath={folderPath}
+          imageList={appMode === 'bulk' ? imageList : (activeImagePath ? [activeImagePath] : [])}
+          resultsMap={resultsMap}
+          segmentations={segmentations}
+          calibrationsMap={calibrationsMap}
+        />
       )}
 
       {/* SETTINGS MODAL */}
@@ -1517,7 +1547,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.4.0 (Web & Desktop)</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.5.0 (Web & Desktop)</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -1667,7 +1697,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.4.0' : 'v1.4.0'}</span>
+          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.5.0' : 'v1.5.0'}</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (

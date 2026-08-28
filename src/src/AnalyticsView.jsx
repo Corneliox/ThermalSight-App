@@ -1,10 +1,21 @@
 // src/src/AnalyticsView.jsx
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { ICA_PROTOCOL, getProtocolStep } from './protocol';
+import { COMPASS, BASE_ANGLES, generateRadarGradientSvg, generateFullSequenceComparisonCanvas } from './thermalEngine';
 
-export default function AnalyticsView({ analyticsData, onClose, folderPath }) {
+export default function AnalyticsView({ 
+  analyticsData, 
+  onClose, 
+  folderPath, 
+  imageList = [], 
+  resultsMap = {}, 
+  segmentations = {}, 
+  calibrationsMap = {} 
+}) {
   const labels = Object.keys(analyticsData || {});
   const [activeLabel, setActiveLabel] = useState(labels[0] || null);
+  const [viewMode, setViewMode] = useState('graph'); // 'graph' | 'strip' | 'radar'
+  const [stripTarget, setStripTarget] = useState('overall'); // 'overall' | labelName
   const [xAxisMode, setXAxisMode] = useState('raw'); // 'raw' | 'protocol'
   const [chartTheme, setChartTheme] = useState('dark'); // 'dark' | 'white'
 
@@ -21,6 +32,8 @@ export default function AnalyticsView({ analyticsData, onClose, folderPath }) {
   }
 
   const series = analyticsData[activeLabel] || [];
+  const baselineCenter = series[0]?.star_center_temp || series[0]?.mean_temp || 0;
+  const baselineMean = series[0]?.mean_temp || 0;
 
   let allMin = Infinity;
   let allMax = -Infinity;
@@ -77,18 +90,31 @@ export default function AnalyticsView({ analyticsData, onClose, folderPath }) {
     errorBar: isDark ? '#ff8866' : '#d97706',
   };
 
+  // Generate Sequence Montage DataURL on the fly
+  const sequenceMontageDataUrl = useMemo(() => {
+    if (!imageList || imageList.length === 0) return null;
+    return generateFullSequenceComparisonCanvas(imageList, resultsMap, segmentations, calibrationsMap, stripTarget);
+  }, [imageList, resultsMap, segmentations, calibrationsMap, stripTarget]);
+
+  // Generate Radar SVG XML
+  const radarSvgXml = useMemo(() => {
+    return generateRadarGradientSvg(activeLabel, series, chartTheme);
+  }, [activeLabel, series, chartTheme]);
+
   const exportSummaryCsv = () => {
-    let csvContent = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm\n`;
+    let csvContent = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,delta_mean_vs_step1_c,delta_center_vs_step1_c,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm\n`;
     series.forEach((s, idx) => {
       const proto = getProtocolStep(idx);
-      csvContent += `${idx + 1},${s.pictureName},"${proto.sessionName}",${proto.timestampMin},${activeLabel},${s.mean_temp},${s.min_temp},${s.max_temp},${s.std_temp},${s.pixel_count},${s.gradient_max || 0},"${s.gradient_modus || ''}",${s.star_center_temp || 0},${s.star_radius_cm || 0}\n`;
+      const deltaM = (s.mean_temp - baselineMean).toFixed(4);
+      const deltaC = ((s.star_center_temp || s.mean_temp) - baselineCenter).toFixed(4);
+      csvContent += `${idx + 1},${s.pictureName},"${proto.sessionName}",${proto.timestampMin},${activeLabel},${s.mean_temp},${s.min_temp},${s.max_temp},${s.std_temp},${s.pixel_count},${deltaM >= 0 ? '+' : ''}${deltaM},${deltaC >= 0 ? '+' : ''}${deltaC},${s.gradient_max || 0},"${s.gradient_modus || ''}",${s.star_center_temp || 0},${s.star_radius_cm || 0}\n`;
     });
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', `${activeLabel}_summary.csv`);
+    link.setAttribute('download', `${activeLabel}_summary_with_deltas.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -108,182 +134,251 @@ export default function AnalyticsView({ analyticsData, onClose, folderPath }) {
     document.body.removeChild(link);
   };
 
+  const downloadMontagePng = () => {
+    if (!sequenceMontageDataUrl) return;
+    const link = document.createElement('a');
+    link.href = sequenceMontageDataUrl;
+    link.setAttribute('download', `comparison_relative_${stripTarget}_sequence.png`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const downloadRadarSvg = () => {
+    if (!radarSvgXml) return;
+    const blob = new Blob([radarSvgXml], { type: 'image/svg+xml;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `radar_gradient_${activeLabel}_${chartTheme}.svg`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="analytics-modal">
-      <div className="analytics-card" style={{ maxWidth: '920px' }}>
+      <div className="analytics-card" style={{ maxWidth: '980px', width: '95%' }}>
         <div className="analytics-header">
           <div>
-            <h2>📈 Time-Series Thermal Range Analytics</h2>
-            <p className="subtext">Min-Max Temperature Band & Mean Thermal Gradient Analysis</p>
+            <h2>📈 Time-Series Thermal Range & Relative Gradient Analytics</h2>
+            <p className="subtext">Comparative Analysis across Sequence Steps (Step 1 to {series.length})</p>
           </div>
           <button className="btn-ghost" onClick={onClose}>✕ Close</button>
         </div>
 
-        {/* CONTROLS TOOLBAR: LABELS, X-AXIS MODES & THEMES */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', margin: '12px 0' }}>
-          <div className="analytics-tabs" style={{ margin: 0 }}>
-            {labels.map(l => (
-              <button key={l} 
-                      className={`tab-btn ${activeLabel === l ? 'active' : ''}`}
-                      onClick={() => setActiveLabel(l)}>
-                Label: <strong style={{ marginLeft: 4 }}>{l}</strong> ({analyticsData[l].length})
+        {/* PRIMARY VIEW MODE SWITCHER */}
+        <div style={{ display: 'flex', gap: '8px', background: 'var(--bg0)', padding: '6px', borderRadius: '8px', border: '1px solid var(--border)', margin: '10px 0 14px', flexWrap: 'wrap' }}>
+          <button className={`tab-btn ${viewMode === 'graph' ? 'active' : ''}`} onClick={() => setViewMode('graph')}>
+            📊 Min–Max Temperature Range Graph
+          </button>
+          <button className={`tab-btn ${viewMode === 'strip' ? 'active' : ''}`} onClick={() => setViewMode('strip')}>
+            🖼 Multi-Step Sequence Strip (Relative Focus)
+          </button>
+          <button className={`tab-btn ${viewMode === 'radar' ? 'active' : ''}`} onClick={() => setViewMode('radar')}>
+            🕸 8-Compass Polar Radar Profile
+          </button>
+        </div>
+
+        {/* SUB-TOOLBAR: LABELS, THEMES & TARGETS */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', margin: '4px 0 12px' }}>
+          {viewMode !== 'strip' ? (
+            <div className="analytics-tabs" style={{ margin: 0 }}>
+              {labels.map(l => (
+                <button key={l} 
+                        className={`tab-btn ${activeLabel === l ? 'active' : ''}`}
+                        onClick={() => setActiveLabel(l)}>
+                  Label: <strong style={{ marginLeft: 4 }}>{l}</strong> ({analyticsData[l].length})
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--cyan)' }}>Relative Focus:</span>
+              <button className={`btn-ghost btn-tiny ${stripTarget === 'overall' ? 'active' : ''}`}
+                      style={{ background: stripTarget === 'overall' ? 'var(--cyan)' : 'var(--bg1)', color: stripTarget === 'overall' ? '#000' : 'var(--text0)', fontWeight: '600' }}
+                      onClick={() => setStripTarget('overall')}>
+                🌐 Overall (All ROIs)
               </button>
-            ))}
-          </div>
+              {labels.map(l => (
+                <button key={l}
+                        className={`btn-ghost btn-tiny ${stripTarget === l ? 'active' : ''}`}
+                        style={{ background: stripTarget === l ? 'var(--accent2)' : 'var(--bg1)', color: stripTarget === l ? '#000' : 'var(--text0)', fontWeight: '600' }}
+                        onClick={() => setStripTarget(l)}>
+                  🎯 Relative: {l}
+                </button>
+              ))}
+            </div>
+          )}
 
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            {/* X-AXIS MODE SELECTOR */}
-            <div style={{ display: 'flex', background: 'var(--bg1)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border)' }}>
-              <button className={`btn-ghost btn-tiny ${xAxisMode==='raw'?'active':''}`}
-                      style={{ background: xAxisMode==='raw'?'var(--bg3)':'transparent', color: xAxisMode==='raw'?'var(--cyan)':'var(--text2)' }}
-                      onClick={() => setXAxisMode('raw')}>
-                📷 Raw Image Names
-              </button>
-              <button className={`btn-ghost btn-tiny ${xAxisMode==='protocol'?'active':''}`}
-                      style={{ background: xAxisMode==='protocol'?'var(--bg3)':'transparent', color: xAxisMode==='protocol'?'var(--accent2)':'var(--text2)' }}
-                      onClick={() => setXAxisMode('protocol')}>
-                ⏱ Protocol Sessions (Ica 2m)
-              </button>
-            </div>
+            {viewMode === 'graph' && (
+              <div style={{ display: 'flex', background: 'var(--bg1)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border)' }}>
+                <button className={`btn-ghost btn-tiny ${xAxisMode==='raw'?'active':''}`}
+                        style={{ background: xAxisMode==='raw'?'var(--bg3)':'transparent', color: xAxisMode==='raw'?'var(--cyan)':'var(--text2)' }}
+                        onClick={() => setXAxisMode('raw')}>
+                  📷 Raw Names
+                </button>
+                <button className={`btn-ghost btn-tiny ${xAxisMode==='protocol'?'active':''}`}
+                        style={{ background: xAxisMode==='protocol'?'var(--bg3)':'transparent', color: xAxisMode==='protocol'?'var(--accent2)':'var(--text2)' }}
+                        onClick={() => setXAxisMode('protocol')}>
+                  ⏱ Protocol Steps
+                </button>
+              </div>
+            )}
 
             {/* THEME SWITCHER */}
             <div style={{ display: 'flex', background: 'var(--bg1)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border)' }}>
               <button className={`btn-ghost btn-tiny ${chartTheme==='dark'?'active':''}`}
                       style={{ background: chartTheme==='dark'?'var(--bg3)':'transparent', color: chartTheme==='dark'?'#00e5ff':'var(--text2)' }}
                       onClick={() => setChartTheme('dark')}>
-                🌙 Dark Theme
+                🌙 Dark
               </button>
               <button className={`btn-ghost btn-tiny ${chartTheme==='white'?'active':''}`}
                       style={{ background: chartTheme==='white'?'#fff':'transparent', color: chartTheme==='white'?'#111':'var(--text2)' }}
                       onClick={() => setChartTheme('white')}>
-                ☀️ White Theme
+                ☀️ White
               </button>
             </div>
           </div>
         </div>
 
-        {/* VISUAL LEGEND CARD */}
-        <div style={{ background: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', padding: '10px 16px', margin: '8px 0 14px', display: 'flex', gap: '20px', alignItems: 'center', flexWrap: 'wrap', fontSize: '11px', color: theme.textMain }}>
-          <div style={{ fontWeight: '700', color: theme.textSub, letterSpacing: '0.05em', textTransform: 'uppercase' }}>Legend:</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ width: 14, height: 3, background: theme.line, display: 'inline-block', borderRadius: 2 }} />
-            <span>Mean Temp (°C)</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ width: 14, height: 10, background: theme.bandFill, border: `1px solid ${theme.bandStroke}`, display: 'inline-block', borderRadius: 2 }} />
-            <span>Min–Max Temp Range Band</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: theme.nodeMinMax, display: 'inline-block' }} />
-            <span>Min/Max Extreme Nodes</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ color: theme.textSub, fontFamily: 'var(--font-mono)' }}>Mode:</span>
-            <span style={{ fontWeight: '600', color: xAxisMode==='protocol'?'#ffbb00':'#00e5ff' }}>
-              {xAxisMode === 'protocol' ? '⏱ Ica 7-Step Treadmill Protocol' : '📷 File Image Names'}
-            </span>
-          </div>
-        </div>
+        {/* ── VIEW 1: RANGE GRAPH ────────────────────────────────────────── */}
+        {viewMode === 'graph' && (
+          <div>
+            <div style={{ background: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', padding: '10px 16px', margin: '4px 0 10px', display: 'flex', gap: '20px', alignItems: 'center', flexWrap: 'wrap', fontSize: '11px', color: theme.textMain }}>
+              <div style={{ fontWeight: '700', color: theme.textSub, letterSpacing: '0.05em', textTransform: 'uppercase' }}>Legend:</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ width: 14, height: 3, background: theme.line, display: 'inline-block', borderRadius: 2 }} />
+                <span>Mean Temp (°C)</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ width: 14, height: 10, background: theme.bandFill, border: `1px solid ${theme.bandStroke}`, display: 'inline-block', borderRadius: 2 }} />
+                <span>Min–Max Temp Range Band</span>
+              </div>
+            </div>
 
-        {/* SVG TIME-SERIES GRAPH */}
-        <div className="chart-container" style={{ background: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', padding: '12px' }}>
-          <svg id="analytics-svg-element" width={svgWidth} height={svgHeight} className="analytics-svg" style={{ background: theme.bg }}>
-            {/* Y-Axis Grid Lines & Temperature Scale */}
-            {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
-              const yVal = yMin + (yMax - yMin) * (1 - pct);
-              const yPos = margin.top + plotHeight * pct;
-              return (
-                <g key={i}>
-                  <line x1={margin.left} y1={yPos} x2={svgWidth - margin.right} y2={yPos}
-                        stroke={theme.grid} strokeDasharray="3 3"/>
-                  <text x={margin.left - 10} y={yPos + 4} fill={theme.textSub} fontSize="10" textAnchor="end" fontFamily="sans-serif">
-                    {yVal.toFixed(1)}°C
-                  </text>
-                </g>
-              );
-            })}
+            <div className="analytics-plot-container" style={{ background: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', padding: '12px' }}>
+              <svg id="analytics-svg-element" viewBox={`0 0 ${svgWidth} ${svgHeight}`} width="100%" height="100%">
+                <rect width={svgWidth} height={svgHeight} fill={theme.bg} />
+                {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
+                  const val = yMin + pct * (yMax - yMin);
+                  const y = getY(val);
+                  return (
+                    <g key={i}>
+                      <line x1={margin.left} y1={y} x2={svgWidth - margin.right} y2={y} stroke={theme.grid} strokeWidth="1" strokeDasharray="3 3"/>
+                      <text x={margin.left - 10} y={y + 4} fill={theme.textSub} fontSize="11" textAnchor="end">{val.toFixed(1)}°C</text>
+                    </g>
+                  );
+                })}
+                <polygon points={bandPoints} fill={theme.bandFill} stroke={theme.bandStroke} strokeWidth="1" />
+                <polyline points={meanPoints} fill="none" stroke={theme.line} strokeWidth="2.5" />
+                {series.map((s, idx) => {
+                  const x = getX(idx);
+                  const y = getY(s.mean_temp);
+                  return (
+                    <g key={idx}>
+                      <circle cx={x} cy={y} r="4" fill={theme.nodeMean} stroke="#ffffff" strokeWidth="1.5" />
+                      <text x={x} y={y - 8} fill={theme.textMain} fontSize="10" fontWeight="bold" textAnchor="middle">{s.mean_temp.toFixed(1)}°</text>
+                    </g>
+                  );
+                })}
+                {series.map((s, idx) => {
+                  const x = getX(idx);
+                  const proto = getProtocolStep(idx);
+                  const label1 = xAxisMode === 'raw' ? s.pictureName : proto.sessionName;
+                  const label2 = xAxisMode === 'raw' ? (proto.timestampMin !== undefined ? `${proto.timestampMin}m` : '') : `${s.pictureName}`;
+                  return (
+                    <g key={idx}>
+                      <line x1={x} y1={margin.top + plotHeight} x2={x} y2={margin.top + plotHeight + 5} stroke={theme.textSub} strokeWidth="1" />
+                      <text x={x} y={margin.top + plotHeight + 20} fill={theme.textMain} fontSize="10" fontWeight="bold" textAnchor="middle">{label1}</text>
+                      <text x={x} y={margin.top + plotHeight + 34} fill={theme.textSub} fontSize="9" textAnchor="middle">{label2}</text>
+                    </g>
+                  );
+                })}
+              </svg>
+            </div>
+          </div>
+        )}
 
-            {/* X-Axis Labels (Raw Image Names vs Protocol Sessions) */}
-            {series.map((s, idx) => {
-              const proto = getProtocolStep(idx);
-              const labelText = xAxisMode === 'protocol' ? proto.shortLabel : (s.pictureName.length > 12 ? s.pictureName.substring(0, 10) + '…' : s.pictureName);
-
-              return (
-                <g key={idx} transform={`translate(${getX(idx)}, ${svgHeight - margin.bottom + 18})`}>
-                  <text fill={theme.textSub} fontSize="10" textAnchor="end" transform="rotate(-30)" fontFamily="sans-serif">
-                    {labelText}
-                  </text>
-                </g>
-              );
-            })}
-
-            {/* Min-Max Temperature Range Band */}
-            {series.length > 1 && (
-              <polygon points={bandPoints} fill={theme.bandFill} stroke={theme.bandStroke} strokeWidth="1"/>
+        {/* ── VIEW 2: MULTI-STEP SEQUENCE STRIP (RELATIVE FOCUS) ─────────── */}
+        {viewMode === 'strip' && (
+          <div style={{ background: 'var(--bg0)', border: '1px solid var(--border)', borderRadius: '8px', padding: '12px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <span style={{ fontSize: '12px', color: 'var(--text2)' }}>
+                Full thermal context sequence with relative gradient focus on <strong>{stripTarget.toUpperCase()}</strong>.
+              </span>
+              <button className="btn-secondary btn-tiny" onClick={downloadMontagePng}>
+                📥 Download {stripTarget.toUpperCase()} Sequence PNG
+              </button>
+            </div>
+            {sequenceMontageDataUrl ? (
+              <div style={{ overflowX: 'auto', border: '1px solid var(--border-h)', borderRadius: '6px', maxHeight: '420px', background: '#0a0a0d' }}>
+                <img src={sequenceMontageDataUrl} alt="Sequence Strip" style={{ height: '390px', width: 'auto', display: 'block' }} />
+              </div>
+            ) : (
+              <p className="subtext">Load full image sequences to generate multi-step montage.</p>
             )}
+          </div>
+        )}
 
-            {/* Mean Temperature Line */}
-            {series.length > 1 && (
-              <polyline points={meanPoints} fill="none" stroke={theme.line} strokeWidth="2.5"/>
-            )}
+        {/* ── VIEW 3: 8-COMPASS POLAR RADAR PROFILE ───────────────────────── */}
+        {viewMode === 'radar' && (
+          <div style={{ background: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', padding: '12px', textAlign: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <span style={{ fontSize: '12px', color: theme.textSub }}>
+                Overlaid directional gradient profiles ($G_k$ in °C/cm) across all steps for <strong>{activeLabel}</strong>.
+              </span>
+              <button className="btn-secondary btn-tiny" onClick={downloadRadarSvg}>
+                📥 Download {activeLabel} Radar SVG
+              </button>
+            </div>
+            <div dangerouslySetInnerHTML={{ __html: radarSvgXml }} style={{ display: 'flex', justifyContent: 'center' }} />
+          </div>
+        )}
 
-            {/* Data Point Group: Min/Max Whisker Error Bars & Mean Circle */}
-            {series.map((s, idx) => {
-              const cx = getX(idx);
-              const cy = getY(s.mean_temp);
-              const cyMin = getY(s.min_temp);
-              const cyMax = getY(s.max_temp);
-              const proto = getProtocolStep(idx);
-
-              return (
-                <g key={idx} className="chart-point-group">
-                  <line x1={cx} y1={cyMin} x2={cx} y2={cyMax} stroke={theme.errorBar} strokeWidth="1.5"/>
-                  <circle cx={cx} cy={cyMin} r="3" fill={theme.nodeMinMax}/>
-                  <circle cx={cx} cy={cyMax} r="3" fill={theme.nodeMinMax}/>
-                  <circle cx={cx} cy={cy} r="5" fill={theme.nodeMean} stroke={theme.bg} strokeWidth="1.5"/>
-                  <title>{`Step ${idx + 1}: ${proto.sessionName}\nFile: ${s.pictureName}\nMean: ${s.mean_temp.toFixed(2)} °C\nMin: ${s.min_temp.toFixed(2)} °C\nMax: ${s.max_temp.toFixed(2)} °C\nInsole: ${proto.insole} | Heating: ${proto.heating}`}</title>
-                </g>
-              );
-            })}
-          </svg>
-        </div>
-
-        {/* FULL DATA SUMMARY TABLE */}
+        {/* FULL DATA SUMMARY TABLE WITH RELATIVE DELTAS */}
         <div className="analytics-table-wrap" style={{ marginTop: '14px' }}>
           <table className="analytics-table">
             <thead>
               <tr>
                 <th>Step</th>
                 <th>Image Name</th>
-                <th>Protocol Session & Condition</th>
+                <th>Protocol Session</th>
                 <th>Avg Temp (°C)</th>
-                <th>Min Temp (°C)</th>
-                <th>Max Temp (°C)</th>
+                <th>ΔT Mean (vs Step 1)</th>
+                <th>Center (°C)</th>
+                <th>ΔT Center (vs Step 1)</th>
                 <th>Gradient Max (°C/cm)</th>
                 <th>Gradient Modus</th>
-                <th>Center (°C)</th>
-                <th>Std Dev</th>
+                <th>Min / Max</th>
                 <th>Pixels</th>
               </tr>
             </thead>
             <tbody>
               {series.map((s, i) => {
                 const proto = getProtocolStep(i);
+                const deltaMean = s.mean_temp - baselineMean;
+                const centerVal = s.star_center_temp || s.mean_temp;
+                const deltaCenter = centerVal - baselineCenter;
                 return (
                   <tr key={i}>
                     <td><strong style={{ color: 'var(--cyan)' }}>#{i + 1}</strong></td>
                     <td><strong>{s.pictureName}</strong></td>
                     <td>
                       <div style={{ fontSize: '11px', color: 'var(--text0)', fontWeight: '600' }}>{proto.sessionName}</div>
-                      <div style={{ fontSize: '10px', color: 'var(--text2)' }}>{proto.desc}</div>
                     </td>
                     <td className="temp-avg">{s.mean_temp.toFixed(2)}</td>
-                    <td>{s.min_temp.toFixed(2)}</td>
-                    <td>{s.max_temp.toFixed(2)}</td>
+                    <td style={{ color: deltaMean >= 0 ? 'var(--accent)' : 'var(--cyan)', fontWeight: 'bold' }}>
+                      {i === 0 ? 'Baseline' : `${deltaMean >= 0 ? '+' : ''}${deltaMean.toFixed(2)}°C`}
+                    </td>
+                    <td>{centerVal.toFixed(2)}</td>
+                    <td style={{ color: deltaCenter >= 0 ? 'var(--accent)' : 'var(--cyan)', fontWeight: 'bold' }}>
+                      {i === 0 ? 'Baseline' : `${deltaCenter >= 0 ? '+' : ''}${deltaCenter.toFixed(2)}°C`}
+                    </td>
                     <td style={{ color: 'var(--accent2)', fontWeight: '600' }}>{s.gradient_max !== undefined ? s.gradient_max.toFixed(2) : '-'}</td>
                     <td style={{ color: 'var(--cyan)', fontSize: '11px' }}>{s.gradient_modus || '-'}</td>
-                    <td>{s.star_center_temp !== undefined ? s.star_center_temp.toFixed(2) : '-'}</td>
-                    <td>±{s.std_temp.toFixed(2)}</td>
+                    <td style={{ fontSize: '10px' }}>{s.min_temp.toFixed(1)} / {s.max_temp.toFixed(1)}</td>
                     <td>{s.pixel_count}</td>
                   </tr>
                 );
@@ -296,10 +391,13 @@ export default function AnalyticsView({ analyticsData, onClose, folderPath }) {
         <div className="analytics-footer" style={{ marginTop: '16px', display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <button className="btn-secondary" onClick={exportSummaryCsv}>
-              📄 Export {activeLabel} CSV
+              📄 Export {activeLabel} Summary + Deltas (CSV)
             </button>
             <button className="btn-secondary" onClick={downloadSvgGraph}>
-              🎨 Download {chartTheme.toUpperCase()} SVG Graph
+              🎨 Download {chartTheme.toUpperCase()} Range SVG
+            </button>
+            <button className="btn-secondary" onClick={downloadMontagePng}>
+              🖼 Download Sequence Strip PNG
             </button>
           </div>
           <button className="btn-primary" onClick={onClose}>Done</button>
