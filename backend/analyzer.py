@@ -497,23 +497,49 @@ def cmd_crop(image_path: str, points_json_str: str, label_name: str,
             for c_idx in range(rw):
                 if mask_crop[r_idx, c_idx] > 0:
                     row_vals.append(f"{temp_crop[r_idx, c_idx]:.6f}")
-                else:
-                    row_vals.append("NaN")
-            writer.writerow(row_vals)
+    # Calculate automatic 8-point star gradient inside this ROI
+    cx = float(np.mean(pts_arr[:, 0]))
+    cy = float(np.mean(pts_arr[:, 1]))
+    rad_px = float(max(5.0, min(rw, rh) / 2.0))
+    dist_cm = rad_px / 10.0 # default fallback scale 10 px/cm if uncalibrated
 
-    log(f"  saved isolated ROI CSV: {csv_path.name}")
+    star_data = compute_star(temp, cx, cy, rad_px, 0.0)
+    dom = max(COMPASS, key=lambda nd: abs(star_data["points"][nd[0]]["diff"]))[0]
+    dom_diff = star_data["points"][dom]["diff"]
+    dom_grad = abs(dom_diff) / max(0.0001, dist_cm)
+    grad_modus = f"{dom} ({'+' if dom_diff >= 0 else ''}{dom_diff:.2f}°C)"
+    grad_max = float(dom_grad)
+
+    # Save detailed 9-point star gradient CSV
+    star_csv_filename = f"isolated_{stem}_{safe_label}_{roi_index_str}_gradient_star.csv"
+    star_csv_path = out_dir / star_csv_filename
+    with open(star_csv_path, "w", newline="") as sf:
+        sw = csv.writer(sf)
+        sw.writerow(["point", "direction", "angle_deg", "px", "py", "temp_c", "diff_centre_c", "gradient_c_per_cm"])
+        sw.writerow(["centre", "Center", 0, f"{cx:.1f}", f"{cy:.1f}", f"{star_data['temp_centre']:.4f}", "0.0000", "0.0000"])
+        for name, angle in COMPASS:
+            sp = star_data["points"][name]
+            p_grad = abs(sp["diff"]) / max(0.0001, dist_cm)
+            diff_sign = f"+{sp['diff']:.4f}" if sp["diff"] >= 0 else f"{sp['diff']:.4f}"
+            sw.writerow([name, name, angle, f"{sp['px']:.1f}", f"{sp['py']:.1f}", f"{sp['temp']:.4f}", diff_sign, f"{p_grad:.4f}"])
 
     emit({
-        "status":       "ok",
-        "csv_path":     str(csv_path),
-        "stem":         stem,
-        "label":        label_name,
-        "roi_index":    int(roi_index_str),
-        "mean_temp":    mean_v,
-        "min_temp":     min_v,
-        "max_temp":     max_v,
-        "std_temp":     std_v,
-        "pixel_count":  len(valid_pixels),
+        "status":           "ok",
+        "csv_path":         str(csv_path),
+        "star_csv_path":    str(star_csv_path),
+        "stem":             stem,
+        "label":            label_name,
+        "roi_index":        int(roi_index_str),
+        "mean_temp":        mean_v,
+        "min_temp":         min_v,
+        "max_temp":         max_v,
+        "std_temp":         std_v,
+        "pixel_count":      len(valid_pixels),
+        "gradient_max":     grad_max,
+        "gradient_modus":   grad_modus,
+        "star_center_temp": star_data["temp_centre"],
+        "star_radius_cm":   dist_cm,
+        "star":             star_data,
     })
 
 
