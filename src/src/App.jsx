@@ -1085,26 +1085,31 @@ export default function App() {
             gradient_modus: res.gradient_modus || res.star?.gradient_modus || '',
             star_center_temp: res.star_center_temp || res.star?.temp_centre || 0,
             star_radius_cm: res.star_radius_cm || res.star?.radius_cm || 0,
+            star: res.star,
             csv_path: res.csv_path || `${pictureName}_roi_${i+1}_${roi.labelName}.csv`,
             protocol: proto,
             croppedPngDataUrl: res.croppedPngDataUrl,
             csvContent: res.csvContent,
+            starCsvContent: res.starCsvContent,
           });
         }
       }
 
       // Assemble Summary CSVs and SVG Graphs for {Parentfoldername}_Result
       const exportFilesMap = {};
+      const compassHeaders = COMPASS.map(c => `grad_${c}_c_per_cm`).join(',');
 
-      let masterCsv = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm\n`;
+      let masterCsv = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm,${compassHeaders}\n`;
 
       Object.keys(aggregatedStats).forEach(labelName => {
         const series = aggregatedStats[labelName];
-        let labelCsv = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm\n`;
+        let labelCsv = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm,${compassHeaders}\n`;
 
         series.forEach((s, idx) => {
           const proto = getProtocolStep(idx);
-          const row = `${idx + 1},${s.pictureName},"${proto.sessionName}",${proto.timestampMin},${labelName},${s.mean_temp},${s.min_temp},${s.max_temp},${s.std_temp},${s.pixel_count},${s.gradient_max},"${s.gradient_modus}",${s.star_center_temp},${s.star_radius_cm}\n`;
+          const starPts = s.star?.points || {};
+          const compassGrads = COMPASS.map(c => (starPts[c]?.grad ?? 0).toFixed(4)).join(',');
+          const row = `${idx + 1},${s.pictureName},"${proto.sessionName}",${proto.timestampMin},${labelName},${s.mean_temp},${s.min_temp},${s.max_temp},${s.std_temp},${s.pixel_count},${s.gradient_max},"${s.gradient_modus}",${s.star_center_temp},${s.star_radius_cm},${compassGrads}\n`;
           labelCsv += row;
           masterCsv += row;
         });
@@ -1155,6 +1160,9 @@ export default function App() {
             if (s.csvContent) {
               isolatedFolder.file(`${s.pictureName}_roi_${s.roiIndex}_${labelName}.csv`, s.csvContent);
             }
+            if (s.starCsvContent) {
+              isolatedFolder.file(`${s.pictureName}_roi_${s.roiIndex}_${labelName}_gradient_star.csv`, s.starCsvContent);
+            }
           });
         });
 
@@ -1177,7 +1185,7 @@ export default function App() {
 
       setAnalyticsData(aggregatedStats);
       setShowAnalytics(true);
-      alert(`Success! Complete Time-Series Result Package (${parentFolderName}_Result.zip) generated successfully!\n\nIncludes:\n- ${parentFolderName}_isolated_labels/\n- Summary CSVs with Gradient Max & Modus (m1, m2, m3...)\n- Dark & White SVG Analytics Graphs\n- annotations_session.json`);
+      alert(`Success! Complete Time-Series Result Package (${parentFolderName}_Result.zip) generated successfully!\n\nIncludes:\n- ${parentFolderName}_isolated_labels/\n  * Cropped PNGs with 8-Point Star Gradients\n  * Thermal Pixel CSVs\n  * Detailed 8-Point Gradient CSVs\n- Summary CSVs with all 8 directional gradients (m1, m2, m3...)\n- Dark & White SVG Analytics Graphs\n- annotations_session.json`);
     } catch (err) {
       alert(`Export failed:\n${err.message || err}`);
     }
@@ -1193,15 +1201,21 @@ export default function App() {
       if (sessionData.labels.length > 0) setActiveLabelId(sessionData.labels[0].id);
     }
 
-    if (sessionData.calibrationsMap) {
-      setCalibrationsMap(sessionData.calibrationsMap);
-    }
-
     if (sessionData.aggregatedStats) {
       setAnalyticsData(sessionData.aggregatedStats);
     }
 
     let activeFiles = currentFiles || imageList;
+    if ((!activeFiles || activeFiles.length === 0) && sessionData.segmentations) {
+      const segKeys = Object.keys(sessionData.segmentations);
+      if (segKeys.length > 0) {
+        setImageList(segKeys);
+        setCurrentIndex(0);
+        setAppMode(segKeys.length > 1 ? 'bulk' : 'single');
+        activeFiles = segKeys;
+      }
+    }
+
     if (sessionData.folderPath && (!activeFiles || activeFiles.length === 0)) {
       if (window.electronAPI && api.listFolderImages) {
         const files = await api.listFolderImages(sessionData.folderPath);
@@ -1215,6 +1229,32 @@ export default function App() {
       }
     }
 
+    // Remap calibrationsMap with basename tolerance
+    if (sessionData.calibrationsMap) {
+      const incomingCalib = sessionData.calibrationsMap;
+      const baseCalibMap = {};
+      Object.keys(incomingCalib).forEach(key => {
+        const base = key.split(/[\\/]/).pop();
+        baseCalibMap[base] = incomingCalib[key];
+      });
+
+      if (activeFiles && activeFiles.length > 0) {
+        const remappedCalib = {};
+        activeFiles.forEach(fPath => {
+          const base = fPath.split(/[\\/]/).pop();
+          if (incomingCalib[fPath]) {
+            remappedCalib[fPath] = incomingCalib[fPath];
+          } else if (baseCalibMap[base]) {
+            remappedCalib[fPath] = baseCalibMap[base];
+          }
+        });
+        setCalibrationsMap(remappedCalib);
+      } else {
+        setCalibrationsMap(incomingCalib);
+      }
+    }
+
+    // Remap segmentations with basename tolerance
     if (sessionData.segmentations) {
       const incomingSegs = sessionData.segmentations;
       const basenameMap = {};

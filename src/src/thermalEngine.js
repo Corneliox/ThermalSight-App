@@ -633,17 +633,60 @@ export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiInd
     }
   }
 
-  ctx.putImageData(imgData, 0, 0);
-
-  const meanTemp = count > 0 ? sum / count : 0;
-  let varianceSum = 0;
-  for (let i = 0; i < collectedTemps.length; i++) {
-    varianceSum += Math.pow(collectedTemps[i] - meanTemp, 2);
-  }
-  const stdTemp = count > 0 ? Math.sqrt(varianceSum / count) : 0;
-
   // Calculate the 8-Point Star Gradient inside this label
   const starData = computeLabelStarGradient(tempMatrix, W, H, roiObj || { points }, pxPerCm);
+
+  // Draw 8-Point Star Overlay directly onto cropped canvas
+  const relCx = starData.cx - minX;
+  const relCy = starData.cy - minY;
+  const relR = starData.radius_px;
+
+  // Incircle outline
+  ctx.save();
+  ctx.strokeStyle = roiObj?.color || '#00e5ff';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 2]);
+  ctx.beginPath();
+  ctx.arc(relCx, relCy, relR, 0, 2 * Math.PI);
+  ctx.stroke();
+
+  // 8 Compass Radial Spokes
+  COMPASS.forEach(name => {
+    const p = starData.points[name];
+    if (p) {
+      const spokeX = p.px - minX;
+      const spokeY = p.py - minY;
+      ctx.setLineDash([]);
+      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = p.diff >= 0 ? 'rgba(255, 90, 70, 0.9)' : 'rgba(80, 160, 255, 0.9)';
+      ctx.beginPath();
+      ctx.moveTo(relCx, relCy);
+      ctx.lineTo(spokeX, spokeY);
+      ctx.stroke();
+
+      // Direction label
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '9px sans-serif';
+      ctx.fillText(name, spokeX - 4, spokeY - 2);
+    }
+  });
+
+  // Center Point
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(relCx, relCy, 2.5, 0, 2 * Math.PI);
+  ctx.fill();
+  ctx.restore();
+
+  // Generate 9-Point Star Gradient Detailed CSV
+  let starCsvContent = 'point,direction,angle_deg,px,py,temp_c,diff_centre_c,gradient_c_per_cm\n';
+  starCsvContent += `centre,Center,0,${starData.cx.toFixed(1)},${starData.cy.toFixed(1)},${starData.temp_centre.toFixed(4)},0.0000,0.0000\n`;
+  COMPASS.forEach(name => {
+    const p = starData.points[name];
+    if (p) {
+      starCsvContent += `${name},${name},${BASE_ANGLES[name]},${p.px.toFixed(1)},${p.py.toFixed(1)},${p.temp.toFixed(4)},${(p.diff >= 0 ? '+' : '') + p.diff.toFixed(4)},${p.grad.toFixed(4)}\n`;
+    }
+  });
 
   return {
     labelName,
@@ -659,6 +702,7 @@ export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiInd
     star_center_temp: starData.temp_centre,
     star_radius_cm: starData.radius_cm,
     croppedPngDataUrl: croppedCanvas.toDataURL('image/png'),
-    csvContent
+    csvContent,
+    starCsvContent
   };
 }
