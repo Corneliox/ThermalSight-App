@@ -523,10 +523,41 @@ def cmd_crop(image_path: str, points_json_str: str, label_name: str,
             diff_sign = f"+{sp['diff']:.4f}" if sp["diff"] >= 0 else f"{sp['diff']:.4f}"
             sw.writerow([name, name, angle, f"{sp['px']:.1f}", f"{sp['py']:.1f}", f"{sp['temp']:.4f}", diff_sign, f"{p_grad:.4f}"])
 
+    # Render cropped thermal PNG with masked transparency and 8-point star overlay
+    norm_crop = np.clip((temp_crop - 20.0) / 25.0 * 255.0, 0, 255).astype(np.uint8)
+    colored_bgr = cv2.applyColorMap(norm_crop, cv2.COLORMAP_INFERNO)
+    colored_rgba = cv2.cvtColor(colored_bgr, cv2.COLOR_BGR2BGRA)
+    colored_rgba[mask_crop == 0, 3] = 0 # Transparent background outside polygon
+
+    rel_cx = int(round(cx - rx))
+    rel_cy = int(round(cy - ry))
+    rel_r = int(round(rad_px))
+
+    # Incircle outline
+    cv2.circle(colored_rgba, (rel_cx, rel_cy), rel_r, (255, 229, 0, 180), 1)
+
+    # 8 radial spokes
+    for name, angle in COMPASS:
+        sp = star_data["points"][name]
+        sp_x = int(round(sp["px"] - rx))
+        sp_y = int(round(sp["py"] - ry))
+        col = (70, 90, 255, 230) if sp["diff"] >= 0 else (255, 160, 80, 230)
+        cv2.line(colored_rgba, (rel_cx, rel_cy), (sp_x, sp_y), col, 1)
+        cv2.putText(colored_rgba, name, (sp_x - 3, sp_y - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.28, (255, 255, 255, 255), 1)
+
+    # Center dot
+    cv2.circle(colored_rgba, (rel_cx, rel_cy), 2, (255, 255, 255, 255), -1)
+
+    png_filename = f"isolated_{stem}_{safe_label}_{roi_index_str}.png"
+    png_path = out_dir / png_filename
+    cv2.imwrite(str(png_path), colored_rgba)
+    log(f"  saved isolated ROI PNG: {png_path.name}")
+
     emit({
         "status":           "ok",
         "csv_path":         str(csv_path),
         "star_csv_path":    str(star_csv_path),
+        "png_path":         str(png_path),
         "stem":             stem,
         "label":            label_name,
         "roi_index":        int(roi_index_str),
