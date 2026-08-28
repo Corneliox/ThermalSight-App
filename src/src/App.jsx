@@ -337,11 +337,13 @@ export default function App() {
   // ── Coordinate conversion ───────────────────────────────────────────────────
   const getCoords = (e) => {
     const img = imgRef.current;
-    if (!img || !currentResults) return null;
+    if (!img || !currentResults?.shape || !Array.isArray(currentResults.shape)) return null;
     const rect = img.getBoundingClientRect();
+    const w = currentResults.shape[1] || 320;
+    const h = currentResults.shape[0] || 240;
     return {
-      px:  (e.clientX - rect.left) * (currentResults.shape[1] / rect.width),
-      py:  (e.clientY - rect.top)  * (currentResults.shape[0] / rect.height),
+      px:  (e.clientX - rect.left) * (w / rect.width),
+      py:  (e.clientY - rect.top)  * (h / rect.height),
       pct: {
         x: ((e.clientX - rect.left) / rect.width)  * 100,
         y: ((e.clientY - rect.top)  / rect.height) * 100,
@@ -750,7 +752,7 @@ export default function App() {
 
   const handleRotChange = (newRot) => {
     setStarRot(newRot);
-    if (starCentre && currentResults) {
+    if (starCentre && currentResults?.shape) {
       const dist_cm = parseFloat(starDist) || 2.0;
       const dist_px = dist_cm * (activePxPerCm || 10);
       const ov = buildStarOverlay(starCentre.px, starCentre.py, dist_px, newRot, currentResults.shape);
@@ -817,8 +819,10 @@ export default function App() {
       const dist_cm = parseFloat(starDist) || 2.0;
       const dist_px = dist_cm * (activePxPerCm || 10);
       setStarCentre(c);
-      const ov = buildStarOverlay(c.px, c.py, dist_px, starRot, currentResults.shape);
-      setStarOverlay(ov);
+      if (currentResults?.shape) {
+        const ov = buildStarOverlay(c.px, c.py, dist_px, starRot, currentResults.shape);
+        setStarOverlay(ov);
+      }
       setStarStep('align');
       return;
     }
@@ -855,7 +859,7 @@ export default function App() {
         };
 
         // Compute the 8-Point Star Gradient inside this label
-        if (currentResults?.raw?.tempMatrix) {
+        if (currentResults?.raw?.tempMatrix && currentResults?.shape) {
           const [H, W] = currentResults.shape;
           newRoi.star = computeLabelStarGradient(currentResults.raw.tempMatrix, W, H, newRoi, activePxPerCm);
         }
@@ -905,7 +909,7 @@ export default function App() {
       points: drawingPts.map(p => ({ x: p.px, y: p.py })),
     };
 
-    if (currentResults?.raw?.tempMatrix) {
+    if (currentResults?.raw?.tempMatrix && currentResults?.shape) {
       const [H, W] = currentResults.shape;
       newRoi.star = computeLabelStarGradient(currentResults.raw.tempMatrix, W, H, newRoi, activePxPerCm);
     }
@@ -2160,8 +2164,8 @@ export default function App() {
               ) : (
                 <div className="roi-list">
                   {currentRois.map((roi, idx) => {
-                    const [H, W] = currentResults.shape;
-                    const star = roi.star || (currentResults.raw?.tempMatrix ? computeLabelStarGradient(currentResults.raw.tempMatrix, W, H, roi, activePxPerCm) : null);
+                    const [H, W] = currentResults?.shape || [240, 320];
+                    const star = roi.star || (currentResults?.raw?.tempMatrix ? computeLabelStarGradient(currentResults.raw.tempMatrix, W, H, roi, activePxPerCm) : null);
 
                     return (
                       <div key={roi.id} className="roi-item" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
