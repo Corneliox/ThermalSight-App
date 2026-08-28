@@ -1796,179 +1796,222 @@ export default function App() {
 
           {/* CENTRE AREA: THERMAL IMAGE CANVAS & OVERLAYS */}
           <div className="image-area">
-            <div className="image-wrapper">
-              {imgSrc && (
-                <img ref={imgRef} src={imgSrc} alt={activePanel}
-                     className="thermal-img" style={{cursor}} draggable={false}
-                     onClick={handleImageClick}
-                     onMouseMove={handleImageMouseMove}/>
-              )}
+            {!currentResults && activeImagePath && (
+              <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '36px',
+                background: 'var(--bg1)',
+                border: '1px solid var(--border)',
+                borderRadius: '10px',
+                textAlign: 'center',
+                maxWidth: '460px',
+                boxShadow: 'var(--shadow)'
+              }}>
+                <div className="spinner" style={{ width: '32px', height: '32px', marginBottom: '16px' }} />
+                <h4 style={{ color: 'var(--text0)', fontSize: '15px', marginBottom: '6px' }}>
+                  ⚡ Analyzing Thermal Matrix...
+                </h4>
+                <p style={{ color: 'var(--text2)', fontSize: '12px', wordBreak: 'break-all', marginBottom: '16px' }}>
+                  {activeImagePath.split(/[\\/]/).pop()}
+                </p>
+                {!fileObjMap[activeImagePath] && isWeb && (
+                  <div style={{ background: 'var(--bg0)', border: '1px solid var(--border-h)', padding: '10px 14px', borderRadius: '6px', fontSize: '11px', color: 'var(--accent2)' }}>
+                    Image data not loaded in browser yet.<br/>
+                    <button className="btn-secondary btn-tiny" style={{ marginTop: '8px' }} onClick={handleBrowseFolder}>
+                      📁 Select Image Folder to Link
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
-              {/* SVG OVERLAYS */}
-              <svg className="ov-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
-                {/* Calibration Line */}
-                {calibPt1 && calibPt2 && (
-                  <line x1={calibPt1.pct.x} y1={calibPt1.pct.y}
-                        x2={calibPt2.pct.x} y2={calibPt2.pct.y}
-                        stroke="#00e5ff" strokeWidth="0.5" strokeDasharray="1 0.6"/>
+            {currentResults && (
+              <div className="image-wrapper">
+                {imgSrc && (
+                  <img ref={imgRef} src={imgSrc} alt={activePanel}
+                       className="thermal-img" style={{cursor}} draggable={false}
+                       onClick={handleImageClick}
+                       onMouseMove={handleImageMouseMove}/>
                 )}
 
-                {/* Live Calibration Line Preview (while setting Point 2) */}
-                {calibPt1 && calibMode === 'pt2' && calibPreviewPt && (
-                  <g>
+                {/* SVG OVERLAYS */}
+                <svg className="ov-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
+                  {/* Calibration Line */}
+                  {calibPt1?.pct && calibPt2?.pct && (
                     <line x1={calibPt1.pct.x} y1={calibPt1.pct.y}
-                          x2={calibPreviewPt.pct.x} y2={calibPreviewPt.pct.y}
-                          stroke="#00e5ff" strokeWidth="0.6" strokeDasharray="1.2 0.8"/>
-                    <circle cx={calibPreviewPt.pct.x} cy={calibPreviewPt.pct.y} r="0.8" fill="#00e5ff"/>
-                  </g>
-                )}
+                          x2={calibPt2.pct.x} y2={calibPt2.pct.y}
+                          stroke="#00e5ff" strokeWidth="0.5" strokeDasharray="1 0.6"/>
+                  )}
 
-                {/* Standalone Star Spokes Tool */}
-                {starOverlay && COMPASS.map(name => {
-                  const pt = starOverlay.points[name];
+                  {/* Live Calibration Line Preview (while setting Point 2) */}
+                  {calibPt1?.pct && calibMode === 'pt2' && calibPreviewPt?.pct && (
+                    <g>
+                      <line x1={calibPt1.pct.x} y1={calibPt1.pct.y}
+                            x2={calibPreviewPt.pct.x} y2={calibPreviewPt.pct.y}
+                            stroke="#00e5ff" strokeWidth="0.6" strokeDasharray="1.2 0.8"/>
+                      <circle cx={calibPreviewPt.pct.x} cy={calibPreviewPt.pct.y} r="0.8" fill="#00e5ff"/>
+                    </g>
+                  )}
+
+                  {/* Standalone Star Spokes Tool */}
+                  {starOverlay?.points && COMPASS.map(name => {
+                    const pt = starOverlay.points[name];
+                    if (!pt?.pct) return null;
+                    const diff = starResults?.points?.[name]?.diff;
+                    const col  = diffColor(diff);
+                    return (
+                      <line key={name} x1={starOverlay.cx} y1={starOverlay.cy}
+                            x2={pt.pct.x} y2={pt.pct.y}
+                            stroke={col} strokeWidth="0.4" opacity="0.85"/>
+                    );
+                  })}
+
+                  {/* Saved ROI Polygons/Circles in RAM State */}
+                  {currentResults?.shape && currentRois.map(roi => {
+                    const [H, W] = currentResults.shape;
+                    if (!roi?.points || !Array.isArray(roi.points) || roi.points.length === 0) return null;
+                    const ptsStr = roi.points.map(p => `${(p.x/W)*100},${(p.y/H)*100}`).join(' ');
+                    return (
+                      <polygon key={roi.id} points={ptsStr}
+                               fill={roi.color || '#ff4444'} fillOpacity="0.25"
+                               stroke={roi.color || '#ff4444'} strokeWidth="0.6"/>
+                    );
+                  })}
+
+                  {/* ── AUTOMATIC CENTERED 8-POINT STAR INSIDE EVERY ROI LABEL ── */}
+                  {currentResults?.shape && currentRois.map(roi => {
+                    const [H, W] = currentResults.shape;
+                    const star = roi.star || (currentResults.raw?.tempMatrix ? computeLabelStarGradient(currentResults.raw.tempMatrix, W, H, roi, activePxPerCm) : null);
+                    if (!star || !star.points) return null;
+
+                    const cxPct = (star.cx / W) * 100;
+                    const cyPct = (star.cy / H) * 100;
+                    const rPctX = (star.radius_px / W) * 100;
+                    const rPctY = (star.radius_px / H) * 100;
+
+                    return (
+                      <g key={`star-grp-${roi.id}`}>
+                        {/* Bounding Radius Incircle Outline */}
+                        <ellipse cx={cxPct} cy={cyPct} rx={rPctX} ry={rPctY}
+                                 fill="none" stroke={roi.color || '#ff4444'} strokeWidth="0.35" strokeDasharray="1 1" opacity="0.75"/>
+
+                        {/* 8 Radial Compass Spokes */}
+                        {COMPASS.map(name => {
+                          const p = star.points[name];
+                          if (!p?.pct) return null;
+                          const col = diffColor(p.diff);
+                          return (
+                            <line key={`spoke-${roi.id}-${name}`}
+                                  x1={cxPct} y1={cyPct} x2={p.pct.x} y2={p.pct.y}
+                                  stroke={col} strokeWidth="0.4" opacity="0.9"/>
+                          );
+                        })}
+
+                        {/* Center 9th Point */}
+                        <circle cx={cxPct} cy={cyPct} r="0.7" fill="#ffffff" stroke={roi.color || '#ff4444'} strokeWidth="0.3"/>
+                      </g>
+                    );
+                  })}
+
+                  {/* Live 1:1 Circle Drawing Preview */}
+                  {currentResults?.shape && drawMode === 'circle' && circleCenter?.pct && circleRadius && (
+                    <g>
+                      <ellipse cx={circleCenter.pct.x} cy={circleCenter.pct.y}
+                               rx={(circleRadius / currentResults.shape[1]) * 100}
+                               ry={(circleRadius / currentResults.shape[0]) * 100}
+                               fill={activeLabelObj.color} fillOpacity="0.2"
+                               stroke={activeLabelObj.color} strokeWidth="0.7" strokeDasharray="1.5 1"/>
+                      <circle cx={circleCenter.pct.x} cy={circleCenter.pct.y} r="0.8" fill={activeLabelObj.color}/>
+                      <line x1={circleCenter.pct.x} y1={circleCenter.pct.y}
+                            x2={circleCenter.pct.x + (circleRadius / currentResults.shape[1]) * 100}
+                            y2={circleCenter.pct.y}
+                            stroke={activeLabelObj.color} strokeWidth="0.4" strokeDasharray="0.5 0.5"/>
+                    </g>
+                  )}
+
+                  {/* Current Drawing Polygon Draft */}
+                  {currentResults && drawMode === 'polygon' && drawingPts.length > 0 && (
+                    <g>
+                      <polyline points={drawingPts.map(p => `${p.pct.x},${p.pct.y}`).join(' ')}
+                                fill="none" stroke={activeLabelObj.color} strokeWidth="0.6" strokeDasharray="1 1"/>
+                      {drawingPts.map((p, idx) => (
+                        <circle key={idx} cx={p.pct.x} cy={p.pct.y} r="0.8" fill={activeLabelObj.color}/>
+                      ))}
+                    </g>
+                  )}
+                </svg>
+
+                {/* Saved ROI Polygon Text Label Badges */}
+                {currentResults?.shape && currentRois.map(roi => {
+                  const [H, W] = currentResults.shape;
+                  const star = roi.star || (currentResults.raw?.tempMatrix ? computeLabelStarGradient(currentResults.raw.tempMatrix, W, H, roi, activePxPerCm) : null);
+                  let cxPct = 50, cyPct = 50;
+                  if (star) {
+                    cxPct = (star.cx / W) * 100;
+                    cyPct = (star.cy / H) * 100;
+                  } else if (roi?.points && roi.points.length > 0) {
+                    cxPct = (roi.points.reduce((sum, p) => sum + p.x, 0) / roi.points.length / W) * 100;
+                    cyPct = (roi.points.reduce((sum, p) => sum + p.y, 0) / roi.points.length / H) * 100;
+                  }
+
+                  return (
+                    <div key={`lbl-${roi.id}`} className="polygon-label-tag"
+                         style={{
+                           left: `${cxPct}%`,
+                           top: `${cyPct}%`,
+                           borderColor: roi.color,
+                           boxShadow: `0 0 8px ${roi.color}88`
+                         }}>
+                      <span className="polygon-label-dot" style={{ backgroundColor: roi.color }}/>
+                      <span>{roi.labelName}</span>
+                      {star?.dominant && <span style={{ fontSize: '9px', color: 'var(--cyan)', marginLeft: '4px' }}>[{star.dominant}]</span>}
+                    </div>
+                  );
+                })}
+
+                {/* Calibration Dots */}
+                {calibPt1?.pct && <div className="ov-dot calib-dot" style={{left:`${calibPt1.pct.x}%`,top:`${calibPt1.pct.y}%`}}>1</div>}
+                {calibPt2?.pct && <div className="ov-dot calib-dot" style={{left:`${calibPt2.pct.x}%`,top:`${calibPt2.pct.y}%`}}>2</div>}
+
+                {/* Standalone Star Tool Dots */}
+                {starOverlay && (
+                  <div className="ov-dot centre-dot" style={{left:`${starOverlay.cx}%`,top:`${starOverlay.cy}%`}}>+</div>
+                )}
+                {starOverlay?.points && COMPASS.map(name => {
+                  const pt   = starOverlay.points[name];
+                  if (!pt?.pct) return null;
                   const diff = starResults?.points?.[name]?.diff;
                   const col  = diffColor(diff);
                   return (
-                    <line key={name} x1={starOverlay.cx} y1={starOverlay.cy}
-                          x2={pt.pct.x} y2={pt.pct.y}
-                          stroke={col} strokeWidth="0.4" opacity="0.85"/>
+                    <div key={name} className="ov-dot star-dot"
+                         style={{left:`${pt.pct.x}%`, top:`${pt.pct.y}%`, borderColor: col}}>
+                      <span className="star-dot-label">{name}</span>
+                    </div>
                   );
                 })}
 
-                {/* Saved ROI Polygons/Circles in RAM State */}
-                {currentResults && currentRois.map(roi => {
-                  const [H, W] = currentResults.shape;
-                  const ptsStr = roi.points.map(p => `${(p.x/W)*100},${(p.y/H)*100}`).join(' ');
-                  return (
-                    <polygon key={roi.id} points={ptsStr}
-                             fill={roi.color} fillOpacity="0.25"
-                             stroke={roi.color} strokeWidth="0.6"/>
-                  );
-                })}
-
-                {/* ── AUTOMATIC CENTERED 8-POINT STAR INSIDE EVERY ROI LABEL ── */}
-                {currentResults && currentRois.map(roi => {
-                  const [H, W] = currentResults.shape;
-                  const star = roi.star || (currentResults.raw?.tempMatrix ? computeLabelStarGradient(currentResults.raw.tempMatrix, W, H, roi, activePxPerCm) : null);
-                  if (!star) return null;
-
-                  const cxPct = (star.cx / W) * 100;
-                  const cyPct = (star.cy / H) * 100;
-                  const rPctX = (star.radius_px / W) * 100;
-                  const rPctY = (star.radius_px / H) * 100;
-
-                  return (
-                    <g key={`star-grp-${roi.id}`}>
-                      {/* Bounding Radius Incircle Outline */}
-                      <ellipse cx={cxPct} cy={cyPct} rx={rPctX} ry={rPctY}
-                               fill="none" stroke={roi.color} strokeWidth="0.35" strokeDasharray="1 1" opacity="0.75"/>
-
-                      {/* 8 Radial Compass Spokes */}
-                      {COMPASS.map(name => {
-                        const p = star.points[name];
-                        if (!p) return null;
-                        const col = diffColor(p.diff);
-                        return (
-                          <line key={`spoke-${roi.id}-${name}`}
-                                x1={cxPct} y1={cyPct} x2={p.pct.x} y2={p.pct.y}
-                                stroke={col} strokeWidth="0.4" opacity="0.9"/>
-                        );
-                      })}
-
-                      {/* Center 9th Point */}
-                      <circle cx={cxPct} cy={cyPct} r="0.7" fill="#ffffff" stroke={roi.color} strokeWidth="0.3"/>
-                    </g>
-                  );
-                })}
-
-                {/* Live 1:1 Circle Drawing Preview */}
-                {currentResults && drawMode === 'circle' && circleCenter && circleRadius && (
-                  <g>
-                    <ellipse cx={circleCenter.pct.x} cy={circleCenter.pct.y}
-                             rx={(circleRadius / currentResults.shape[1]) * 100}
-                             ry={(circleRadius / currentResults.shape[0]) * 100}
-                             fill={activeLabelObj.color} fillOpacity="0.2"
-                             stroke={activeLabelObj.color} strokeWidth="0.7" strokeDasharray="1.5 1"/>
-                    <circle cx={circleCenter.pct.x} cy={circleCenter.pct.y} r="0.8" fill={activeLabelObj.color}/>
-                    <line x1={circleCenter.pct.x} y1={circleCenter.pct.y}
-                          x2={circleCenter.pct.x + (circleRadius / currentResults.shape[1]) * 100}
-                          y2={circleCenter.pct.y}
-                          stroke={activeLabelObj.color} strokeWidth="0.4" strokeDasharray="0.5 0.5"/>
-                  </g>
+                {/* Current Drawing Action Bar for 1:1 Circle & Pen */}
+                {drawMode === 'circle' && circleCenter && (
+                  <div className="drawing-toolbar">
+                    <span>Placing 1:1 Circle <strong>{activeLabelObj.name}</strong> — Click again to set radius</span>
+                    <button className="btn-ghost btn-tiny" onClick={() => { setCircleCenter(null); setCircleRadius(null); }}>Cancel</button>
+                  </div>
                 )}
 
-                {/* Current Drawing Polygon Draft */}
-                {currentResults && drawMode === 'polygon' && drawingPts.length > 0 && (
-                  <g>
-                    <polyline points={drawingPts.map(p => `${p.pct.x},${p.pct.y}`).join(' ')}
-                              fill="none" stroke={activeLabelObj.color} strokeWidth="0.6" strokeDasharray="1 1"/>
-                    {drawingPts.map((p, idx) => (
-                      <circle key={idx} cx={p.pct.x} cy={p.pct.y} r="0.8" fill={activeLabelObj.color}/>
-                    ))}
-                  </g>
+                {drawMode === 'polygon' && drawingPts.length > 0 && (
+                  <div className="drawing-toolbar">
+                    <span>Drawing Pen <strong>{activeLabelObj.name}</strong> ({drawingPts.length} pts)</span>
+                    <button className="btn-primary btn-tiny" disabled={drawingPts.length < 3} onClick={finishPolygon}>
+                      ✓ Finish (Enter)
+                    </button>
+                    <button className="btn-ghost btn-tiny" onClick={() => setDrawingPts([])}>Cancel</button>
+                  </div>
                 )}
-              </svg>
-
-              {/* Saved ROI Polygon Text Label Badges */}
-              {currentResults && currentRois.map(roi => {
-                const [H, W] = currentResults.shape;
-                const star = roi.star || (currentResults.raw?.tempMatrix ? computeLabelStarGradient(currentResults.raw.tempMatrix, W, H, roi, activePxPerCm) : null);
-                const cxPct = star ? (star.cx / W) * 100 : (roi.points.reduce((sum, p) => sum + p.x, 0) / roi.points.length / W) * 100;
-                const cyPct = star ? (star.cy / H) * 100 : (roi.points.reduce((sum, p) => sum + p.y, 0) / roi.points.length / H) * 100;
-
-                return (
-                  <div key={`lbl-${roi.id}`} className="polygon-label-tag"
-                       style={{
-                         left: `${cxPct}%`,
-                         top: `${cyPct}%`,
-                         borderColor: roi.color,
-                         boxShadow: `0 0 8px ${roi.color}88`
-                       }}>
-                    <span className="polygon-label-dot" style={{ backgroundColor: roi.color }}/>
-                    <span>{roi.labelName}</span>
-                    {star && <span style={{ fontSize: '9px', color: 'var(--cyan)', marginLeft: '4px' }}>[{star.dominant}]</span>}
-                  </div>
-                );
-              })}
-
-              {/* Calibration Dots */}
-              {calibPt1 && <div className="ov-dot calib-dot" style={{left:`${calibPt1.pct.x}%`,top:`${calibPt1.pct.y}%`}}>1</div>}
-              {calibPt2 && <div className="ov-dot calib-dot" style={{left:`${calibPt2.pct.x}%`,top:`${calibPt2.pct.y}%`}}>2</div>}
-
-              {/* Standalone Star Tool Dots */}
-              {starOverlay && (
-                <div className="ov-dot centre-dot" style={{left:`${starOverlay.cx}%`,top:`${starOverlay.cy}%`}}>+</div>
-              )}
-              {starOverlay && COMPASS.map(name => {
-                const pt   = starOverlay.points[name];
-                const diff = starResults?.points?.[name]?.diff;
-                const col  = diffColor(diff);
-                return (
-                  <div key={name} className="ov-dot star-dot"
-                       style={{left:`${pt.pct.x}%`, top:`${pt.pct.y}%`, borderColor: col}}>
-                    <span className="star-dot-label">{name}</span>
-                  </div>
-                );
-              })}
-
-              {/* Current Drawing Action Bar for 1:1 Circle & Pen */}
-              {drawMode === 'circle' && circleCenter && (
-                <div className="drawing-toolbar">
-                  <span>Placing 1:1 Circle <strong>{activeLabelObj.name}</strong> — Click again to set radius</span>
-                  <button className="btn-ghost btn-tiny" onClick={() => { setCircleCenter(null); setCircleRadius(null); }}>Cancel</button>
-                </div>
-              )}
-
-              {drawMode === 'polygon' && drawingPts.length > 0 && (
-                <div className="drawing-toolbar">
-                  <span>Drawing Pen <strong>{activeLabelObj.name}</strong> ({drawingPts.length} pts)</span>
-                  <button className="btn-primary btn-tiny" disabled={drawingPts.length < 3} onClick={finishPolygon}>
-                    ✓ Finish (Enter)
-                  </button>
-                  <button className="btn-ghost btn-tiny" onClick={() => setDrawingPts([])}>Cancel</button>
-                </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
 
           {/* RIGHT SIDEBAR: TOOLS & CARDS */}

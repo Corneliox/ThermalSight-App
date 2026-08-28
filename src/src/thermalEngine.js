@@ -1,6 +1,20 @@
 // src/src/thermalEngine.js
 // 100% Client-Side Pure JavaScript Thermal Analysis Engine
 
+// ── Polygon Point-in-Polygon (Ray Casting Algorithm) ─────────────────────────
+function isPointInPoly(px, py, points) {
+  if (!points || !Array.isArray(points) || points.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const xi = points[i].x, yi = points[i].y;
+    const xj = points[j].x, yj = points[j].y;
+    const intersect = ((yi > py) !== (yj > py)) &&
+      (px < (xj - xi) * (py - yi) / (yj - yi + 1e-12) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
 // ── Color Palette Definitions ────────────────────────────────────────────────
 function interpolateColor(color1, color2, factor) {
   const result = color1.slice();
@@ -75,11 +89,25 @@ function hsvToRgb(h, s, v) {
 // ── Image Loader & Matrix Extractor ──────────────────────────────────────────
 export function loadThermalImageData(imageSource) {
   return new Promise((resolve, reject) => {
+    if (!imageSource) {
+      reject(new Error('No image source provided'));
+      return;
+    }
+
     const img = new Image();
     img.crossOrigin = 'Anonymous';
+    let blobUrl = null;
+
     img.onload = () => {
+      if (blobUrl) {
+        try { URL.revokeObjectURL(blobUrl); } catch {}
+      }
       const W = img.naturalWidth || img.width;
       const H = img.naturalHeight || img.height;
+      if (!W || !H) {
+        reject(new Error('Image has zero dimensions'));
+        return;
+      }
       const canvas = document.createElement('canvas');
       canvas.width = W;
       canvas.height = H;
@@ -115,11 +143,21 @@ export function loadThermalImageData(imageSource) {
         shape: [H, W],
       });
     };
-    img.onerror = (err) => reject(err);
-    if (typeof imageSource === 'string') {
+
+    img.onerror = (err) => {
+      if (blobUrl) {
+        try { URL.revokeObjectURL(blobUrl); } catch {}
+      }
+      reject(new Error(`Failed to decode thermal image: ${err?.message || 'Invalid image file'}`));
+    };
+
+    if (imageSource instanceof Blob || imageSource instanceof File) {
+      blobUrl = URL.createObjectURL(imageSource);
+      img.src = blobUrl;
+    } else if (typeof imageSource === 'string') {
       img.src = imageSource;
-    } else if (imageSource instanceof Blob || imageSource instanceof File) {
-      img.src = URL.createObjectURL(imageSource);
+    } else {
+      reject(new Error('Unsupported image source type'));
     }
   });
 }
@@ -185,7 +223,7 @@ function computeSobel(src, W, H) {
 }
 
 // ── Render Arrays to Canvas & DataURL ───────────────────────────────────────
-function renderToDataUrl(W, H, renderFn) {
+function renderToCanvas(W, H, renderFn) {
   const canvas = document.createElement('canvas');
   canvas.width = W;
   canvas.height = H;
@@ -193,7 +231,7 @@ function renderToDataUrl(W, H, renderFn) {
   const imgData = ctx.createImageData(W, H);
   renderFn(imgData.data);
   ctx.putImageData(imgData, 0, 0);
-  return canvas.toDataURL('image/png');
+  return canvas;
 }
 
 // ── Complete Thermal Analysis Pipeline ──────────────────────────────────────
@@ -222,7 +260,7 @@ export function runClientThermalAnalysis(tempMatrix, W, H, stem = 'image') {
   const maxMag = sortedMag[sortedMag.length - 1] || 1.0;
 
   // ── Panel 1: Original Temperature (Inferno) ───────────────────────────────
-  const originalUrl = renderToDataUrl(W, H, (d) => {
+  const origCanvas = renderToCanvas(W, H, (d) => {
     for (let i = 0; i < W * H; i++) {
       const idx = Math.min(255, Math.max(0, Math.floor(norm[i])));
       d[i * 4 + 0] = INFERNO_LUT[idx * 3 + 0];
@@ -231,9 +269,10 @@ export function runClientThermalAnalysis(tempMatrix, W, H, stem = 'image') {
       d[i * 4 + 3] = 255;
     }
   });
+  const originalUrl = origCanvas.toDataURL('image/png');
 
   // ── Panel 2: Gradient Magnitude (Hot) ────────────────────────────────────
-  const magnitudeUrl = renderToDataUrl(W, H, (d) => {
+  const magCanvas = renderToCanvas(W, H, (d) => {
     for (let i = 0; i < W * H; i++) {
       const idx = Math.min(255, Math.max(0, Math.floor((mag[i] / maxMag) * 255.0)));
       d[i * 4 + 0] = HOT_LUT[idx * 3 + 0];
@@ -242,9 +281,10 @@ export function runClientThermalAnalysis(tempMatrix, W, H, stem = 'image') {
       d[i * 4 + 3] = 255;
     }
   });
+  const magnitudeUrl = magCanvas.toDataURL('image/png');
 
   // ── Panel 3: Strong Edges Thresholded ────────────────────────────────────
-  const magThreshUrl = renderToDataUrl(W, H, (d) => {
+  const threshCanvas = renderToCanvas(W, H, (d) => {
     for (let i = 0; i < W * H; i++) {
       const val = mag[i] >= p75 ? (mag[i] / maxMag) * 255.0 : 0;
       const idx = Math.min(255, Math.max(0, Math.floor(val)));
@@ -254,9 +294,10 @@ export function runClientThermalAnalysis(tempMatrix, W, H, stem = 'image') {
       d[i * 4 + 3] = 255;
     }
   });
+  const magThreshUrl = threshCanvas.toDataURL('image/png');
 
   // ── Panel 4: Flow Angle (HSV Colormap) ───────────────────────────────────
-  const angleUrl = renderToDataUrl(W, H, (d) => {
+  const angleCanvas = renderToCanvas(W, H, (d) => {
     for (let i = 0; i < W * H; i++) {
       const h = (ang[i] + Math.PI) / (2 * Math.PI); // 0.0 - 1.0
       const rgb = hsvToRgb(h, 1.0, 1.0);
@@ -266,9 +307,10 @@ export function runClientThermalAnalysis(tempMatrix, W, H, stem = 'image') {
       d[i * 4 + 3] = 255;
     }
   });
+  const angleUrl = angleCanvas.toDataURL('image/png');
 
   // ── Panel 5: Overlay (Inferno + Hot Edges) ────────────────────────────────
-  const overlayUrl = renderToDataUrl(W, H, (d) => {
+  const overlayCanvas = renderToCanvas(W, H, (d) => {
     for (let i = 0; i < W * H; i++) {
       const tIdx = Math.min(255, Math.max(0, Math.floor(norm[i])));
       const eIdx = Math.min(255, Math.max(0, Math.floor((mag[i] / maxMag) * 255.0)));
@@ -278,6 +320,7 @@ export function runClientThermalAnalysis(tempMatrix, W, H, stem = 'image') {
       d[i * 4 + 3] = 255;
     }
   });
+  const overlayUrl = overlayCanvas.toDataURL('image/png');
 
   // ── Panel 6: Quiver Flow Vector Overlay ───────────────────────────────────
   const quiverCanvas = document.createElement('canvas');
@@ -334,7 +377,7 @@ export function runClientThermalAnalysis(tempMatrix, W, H, stem = 'image') {
   }
   const quiverUrl = quiverCanvas.toDataURL('image/png');
 
-  // ── Panel 7: 2x3 Grid Overview ────────────────────────────────────────────
+  // ── Panel 7: 2x3 Grid Overview (Synchronously Drawn from Canvases) ─────────
   const gridCanvas = document.createElement('canvas');
   gridCanvas.width = W * 3;
   gridCanvas.height = H * 2;
@@ -342,20 +385,18 @@ export function runClientThermalAnalysis(tempMatrix, W, H, stem = 'image') {
   gCtx.fillStyle = '#111';
   gCtx.fillRect(0, 0, gridCanvas.width, gridCanvas.height);
 
-  const panels = [
-    { title: 'Temperature (°C)', url: originalUrl, x: 0, y: 0 },
-    { title: 'Gradient Mag', url: magnitudeUrl, x: W, y: 0 },
-    { title: 'Strong Edges', url: magThreshUrl, x: W * 2, y: 0 },
-    { title: 'Flow Angle', url: angleUrl, x: 0, y: H },
-    { title: 'Overlay', url: overlayUrl, x: W, y: H },
-    { title: 'Quiver Flow', url: quiverUrl, x: W * 2, y: H },
+  const tilePanels = [
+    { title: 'Temperature (°C)', canvas: origCanvas, x: 0, y: 0 },
+    { title: 'Gradient Mag', canvas: magCanvas, x: W, y: 0 },
+    { title: 'Strong Edges', canvas: threshCanvas, x: W * 2, y: 0 },
+    { title: 'Flow Angle', canvas: angleCanvas, x: 0, y: H },
+    { title: 'Overlay', canvas: overlayCanvas, x: W, y: H },
+    { title: 'Quiver Flow', canvas: quiverCanvas, x: W * 2, y: H },
   ];
 
-  panels.forEach(p => {
-    const tileImg = new Image();
-    tileImg.src = p.url;
-    gCtx.drawImage(tileImg, p.x, p.y, W, H);
-    gCtx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  tilePanels.forEach(p => {
+    gCtx.drawImage(p.canvas, p.x, p.y, W, H);
+    gCtx.fillStyle = 'rgba(0, 0, 0, 0.65)';
     gCtx.fillRect(p.x + 8, p.y + 8, 120, 22);
     gCtx.fillStyle = '#ffffff';
     gCtx.font = '11px sans-serif';
@@ -384,6 +425,7 @@ export function runClientThermalAnalysis(tempMatrix, W, H, stem = 'image') {
 
 // ── Bilinear Interpolation Helper ───────────────────────────────────────────
 function sampleBilinear(arr, W, H, x, y) {
+  if (!arr || arr.length === 0) return 0;
   const x0 = Math.max(0, Math.min(W - 1, Math.floor(x)));
   const x1 = Math.max(0, Math.min(W - 1, x0 + 1));
   const y0 = Math.max(0, Math.min(H - 1, Math.floor(y)));
@@ -391,10 +433,10 @@ function sampleBilinear(arr, W, H, x, y) {
   const fx = x - x0;
   const fy = y - y0;
 
-  const v00 = arr[y0 * W + x0];
-  const v10 = arr[y0 * W + x1];
-  const v01 = arr[y1 * W + x0];
-  const v11 = arr[y1 * W + x1];
+  const v00 = arr[y0 * W + x0] ?? 0;
+  const v10 = arr[y0 * W + x1] ?? 0;
+  const v01 = arr[y1 * W + x0] ?? 0;
+  const v11 = arr[y1 * W + x1] ?? 0;
 
   const top = v00 * (1 - fx) + v10 * fx;
   const bot = v01 * (1 - fx) + v11 * fx;
@@ -406,7 +448,7 @@ const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 const BASE_ANGLES = { N: 0, NE: 45, E: 90, SE: 135, S: 180, SW: 225, W: 270, NW: 315 };
 
 export function clientMeasureStar(tempMatrix, W, H, cx, cy, dist_cm, rot_deg, pxPerCm) {
-  const dist_px = dist_cm * pxPerCm;
+  const dist_px = dist_cm * (pxPerCm || 10);
   const temp_centre = sampleBilinear(tempMatrix, W, H, cx, cy);
 
   const points = {};
@@ -423,8 +465,8 @@ export function clientMeasureStar(tempMatrix, W, H, cx, cy, dist_cm, rot_deg, px
     points[name] = {
       px,
       py,
-      temp,
-      diff,
+      temp: Number(temp.toFixed(4)),
+      diff: Number(diff.toFixed(4)),
       pct: { x: (px / W) * 100, y: (py / H) * 100 }
     };
 
@@ -437,7 +479,7 @@ export function clientMeasureStar(tempMatrix, W, H, cx, cy, dist_cm, rot_deg, px
   return {
     cx,
     cy,
-    temp_centre,
+    temp_centre: Number(temp_centre.toFixed(4)),
     rotation_deg: rot_deg,
     dist_cm,
     dominant,
@@ -529,12 +571,16 @@ export function computeLabelStarGradient(tempMatrix, W, H, roi, pxPerCm = null) 
 // ── Crop & Mask Polygon ROI ─────────────────────────────────────────────────
 export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiIndex, pxPerCm = null, roiObj = null) {
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  points.forEach(p => {
+  (points || []).forEach(p => {
     if (p.x < minX) minX = p.x;
     if (p.x > maxX) maxX = p.x;
     if (p.y < minY) minY = p.y;
     if (p.y > maxY) maxY = p.y;
   });
+
+  if (minX === Infinity) {
+    minX = 0; maxX = W - 1; minY = 0; maxY = H - 1;
+  }
 
   minX = Math.max(0, Math.floor(minX));
   maxX = Math.min(W - 1, Math.ceil(maxX));
@@ -565,7 +611,7 @@ export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiInd
       const pixelIdx = (cy * cropW + cx) * 4;
 
       if (isPointInPoly(x, y, points)) {
-        const temp = tempMatrix[y * W + x];
+        const temp = tempMatrix[y * W + x] ?? 0;
         count++;
         sum += temp;
         if (temp < minTemp) minTemp = temp;
