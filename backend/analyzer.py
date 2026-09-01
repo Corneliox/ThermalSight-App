@@ -327,13 +327,13 @@ def save_star_csv(star: dict, cx: float, cy: float, dist_cm: float,
             w.writerow([f"# {name}",
                         f"temp={p['temp']:.6f}",
                         f"diff={p['diff']:+.6f}",
-                        f"diff_per_cm={p['diff']/dist_cm:+.6f}"])
+                        f"diff_per_cm={p['diff']/max(dist_cm, 1e-8):+.6f}"])
         w.writerow(["#"])
         w.writerow(["direction", "px_x", "px_y", "x_cm", "y_cm",
                     "angle_deg", "temp", "diff_from_centre", "diff_per_cm"])
         w.writerow(["CENTER",
                     f"{cx:.2f}", f"{cy:.2f}",
-                    f"{cx/px_cm:.4f}", f"{cy/px_cm:.4f}",
+                    f"{cx/max(px_cm, 1e-8):.4f}", f"{cy/max(px_cm, 1e-8):.4f}",
                     "—",
                     f"{star['temp_centre']:.6f}",
                     "0.000000", "0.000000"])

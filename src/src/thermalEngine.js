@@ -1,4 +1,10 @@
 // src/src/thermalEngine.js
+
+// Security: SVG/HTML entity escape to prevent XSS injection
+const escSvg = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+import { getProtocolStep } from './protocol';
+
 // 100% Client-Side Pure JavaScript Thermal Analysis Engine
 
 // ── Polygon Point-in-Polygon (Ray Casting Algorithm) ─────────────────────────
@@ -633,6 +639,14 @@ export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiInd
     }
   }
 
+  // Compute mean and standard deviation from collected temperatures
+  const meanTemp = count > 0 ? sum / count : 0;
+  let stdTemp = 0;
+  if (count > 1) {
+    const variance = collectedTemps.reduce((acc, t) => acc + (t - meanTemp) ** 2, 0) / (count - 1);
+    stdTemp = Math.sqrt(variance);
+  }
+
   // Calculate the 8-Point Star Gradient inside this label
   const starData = computeLabelStarGradient(tempMatrix, W, H, roiObj || { points }, pxPerCm);
 
@@ -963,8 +977,8 @@ export function generateFullSequenceComparisonCanvas(imageList, resultsMap = {},
   return canvas.toDataURL('image/png');
 }
 
-// ── 8-Direction Polar Radar Chart Generator (SVG) ───────────────────────────
-export function generateRadarGradientSvg(labelName, series, theme = 'dark') {
+// ── Signed Thermal Direction Chart Generator (SVG) ──────────────────────────
+export function generateThermalDirectionSvg(labelName, series, theme = 'dark') {
   if (!series || series.length === 0) return '';
 
   const isDark = theme === 'dark';
@@ -973,109 +987,129 @@ export function generateRadarGradientSvg(labelName, series, theme = 'dark') {
   const textMain = isDark ? '#ffffff' : '#111111';
   const textSub = isDark ? '#8888a0' : '#666666';
   const gridStroke = isDark ? '#2a2a3a' : '#e2e2ec';
+  const hotColor = '#ff5252';
+  const coolColor = '#448aff';
 
-  const W = 680;
-  const H = 540;
-  const cx = 270;
-  const cy = 270;
+  const W = 700;
+  const H = 580;
+  const cx = 280;
+  const cy = 290;
   const maxR = 190;
 
-  // Helper to extract directional gradient robustly
-  const getPointGrad = (s, name) => {
-    const p = s.star?.points?.[name];
-    if (p && typeof p.grad === 'number' && p.grad > 0) return p.grad;
-    const r_cm = s.star_radius_cm || s.star?.radius_cm || 1.0;
-    if (p && typeof p.diff === 'number') {
-      return Math.abs(p.diff) / Math.max(0.0001, r_cm);
-    }
-    if (s.gradient_max && s.gradient_max > 0) {
-      return s.gradient_max * 0.6;
-    }
-    return 0.25;
-  };
-
-  // Find max gradient across all steps and compass points
-  let maxGrad = 0.5;
+  // Find max absolute signed diff across all series for 0-1 normalization
+  let maxAbsDiff = 0;
   series.forEach(s => {
     COMPASS.forEach(name => {
-      const g = getPointGrad(s, name);
-      if (g > maxGrad) maxGrad = g;
+      const diff = s.star?.points?.[name]?.diff ?? 0;
+      if (Math.abs(diff) > maxAbsDiff) maxAbsDiff = Math.abs(diff);
     });
   });
-  maxGrad = Math.max(0.5, Math.ceil(maxGrad * 2) / 2); // round up to nice number e.g. 1.0, 1.5, 2.0
+  maxAbsDiff = Math.max(0.01, maxAbsDiff);
 
   const stepColors = [
     '#00e5ff', '#3d5afe', '#7c4dff', '#e040fb', '#ff4081', '#ff5252', '#ff9100', '#ffd600'
   ];
+  const nSteps = series.length;
+
+  // Angular spread per direction for multi-step bars (degrees)
+  const spreadDeg = nSteps > 1 ? Math.min(14, 36 / nSteps) : 0;
+  const barW = Math.max(3, Math.min(12, 40 / nSteps));
 
   let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" style="background:${bg};font-family:Segoe UI,sans-serif;">
   <rect width="${W}" height="${H}" fill="${bg}"/>
-  <text x="24" y="32" fill="${textMain}" font-size="16" font-weight="bold">🕸 8-Direction Polar Thermal Gradient Profile — ${labelName}</text>
-  <text x="24" y="50" fill="${textSub}" font-size="11">Comparative Directional Gradient ($G_k$ in °C/cm) across Sequence Steps</text>
-  <g transform="translate(0, 20)">
+  <text x="24" y="32" fill="${textMain}" font-size="16" font-weight="bold">🌡 Signed Thermal Direction Chart — ${escSvg(labelName)}</text>
+  <text x="24" y="52" fill="${textSub}" font-size="11">Directional ΔT (edge − center) normalized 0–1  ·  Scale max: ±${maxAbsDiff.toFixed(2)} °C</text>
+  <text x="24" y="68" fill="${textSub}" font-size="10">🔴 Edge hotter than center (+ΔT)  ·  🔵 Edge cooler than center (−ΔT)</text>
+  <g transform="translate(0, 30)">
 `;
 
-  // Draw concentric radar circles
+  // Draw normalized concentric grid circles (0.25, 0.5, 0.75, 1.0)
   const levels = 4;
   for (let l = 1; l <= levels; l++) {
     const r = (maxR / levels) * l;
-    const val = ((maxGrad / levels) * l).toFixed(2);
+    const normLabel = (l / levels).toFixed(2);
+    const absLabel = ((l / levels) * maxAbsDiff).toFixed(2);
     svg += `  <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${gridStroke}" stroke-width="1" stroke-dasharray="3 3"/>\n`;
-    svg += `  <text x="${cx + 4}" y="${cy - r + 10}" fill="${textSub}" font-size="9">${val} °C/cm</text>\n`;
+    svg += `  <text x="${cx + 5}" y="${cy - r + 12}" fill="${textSub}" font-size="8">${normLabel} (±${absLabel}°C)</text>\n`;
   }
+
+  // Center origin marker
+  svg += `  <circle cx="${cx}" cy="${cy}" r="5" fill="${isDark ? '#2a2a3a' : '#e0e0e0'}" stroke="${textSub}" stroke-width="1"/>\n`;
+  svg += `  <text x="${cx + 10}" y="${cy + 3}" fill="${textSub}" font-size="8">center</text>\n`;
 
   // Draw 8 radial spokes & compass labels
   COMPASS.forEach(name => {
     const angRad = (BASE_ANGLES[name] * Math.PI) / 180.0;
-    const sx = cx + maxR * Math.sin(angRad);
-    const sy = cy - maxR * Math.cos(angRad);
-    const lx = cx + (maxR + 18) * Math.sin(angRad);
-    const ly = cy - (maxR + 18) * Math.cos(angRad);
-
-    svg += `  <line x1="${cx}" y1="${cy}" x2="${sx}" y2="${sy}" stroke="${gridStroke}" stroke-width="1.2"/>\n`;
-    svg += `  <text x="${lx}" y="${ly + 4}" fill="${textMain}" font-size="11" font-weight="bold" text-anchor="middle">${name}</text>\n`;
+    const spokeX = cx + (maxR + 6) * Math.sin(angRad);
+    const spokeY = cy - (maxR + 6) * Math.cos(angRad);
+    const labelX = cx + (maxR + 26) * Math.sin(angRad);
+    const labelY = cy - (maxR + 26) * Math.cos(angRad);
+    svg += `  <line x1="${cx}" y1="${cy}" x2="${spokeX.toFixed(1)}" y2="${spokeY.toFixed(1)}" stroke="${gridStroke}" stroke-width="0.6"/>\n`;
+    svg += `  <text x="${labelX.toFixed(1)}" y="${(labelY + 4).toFixed(1)}" fill="${textMain}" font-size="12" font-weight="bold" text-anchor="middle">${name}</text>\n`;
   });
 
-  // Draw each step's polygon profile
+  // Draw signed directional bars for each step
   series.forEach((s, idx) => {
     const col = stepColors[idx % stepColors.length];
-    const pointsStr = COMPASS.map(name => {
-      const g = getPointGrad(s, name);
-      const r = (g / maxGrad) * maxR;
-      const angRad = (BASE_ANGLES[name] * Math.PI) / 180.0;
-      const px = cx + r * Math.sin(angRad);
-      const py = cy - r * Math.cos(angRad);
-      return `${px.toFixed(1)},${py.toFixed(1)}`;
-    }).join(' ');
 
-    svg += `  <!-- Step ${idx + 1} Polygon -->\n`;
-    svg += `  <polygon points="${pointsStr}" fill="${col}" fill-opacity="0.18" stroke="${col}" stroke-width="2"/>\n`;
-    
-    // Draw dots at vertices
     COMPASS.forEach(name => {
-      const g = getPointGrad(s, name);
-      const r = (g / maxGrad) * maxR;
-      const angRad = (BASE_ANGLES[name] * Math.PI) / 180.0;
-      const px = cx + r * Math.sin(angRad);
-      const py = cy - r * Math.cos(angRad);
-      svg += `  <circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="3" fill="${col}"/>\n`;
+      const diff = s.star?.points?.[name]?.diff ?? 0;
+      const normVal = Math.abs(diff) / maxAbsDiff;
+      const barLen = Math.max(3, normVal * maxR);
+
+      // Offset each step slightly within the direction for visibility
+      const stepOffset = nSteps > 1
+        ? -spreadDeg / 2 + (spreadDeg * idx / (nSteps - 1))
+        : 0;
+      const angRad = ((BASE_ANGLES[name] + stepOffset) * Math.PI) / 180.0;
+
+      const endX = cx + barLen * Math.sin(angRad);
+      const endY = cy - barLen * Math.cos(angRad);
+
+      // Diverging color: red if edge hotter, blue if edge cooler
+      const barColor = diff >= 0 ? hotColor : coolColor;
+
+      // Draw bar
+      svg += `  <line x1="${cx}" y1="${cy}" x2="${endX.toFixed(1)}" y2="${endY.toFixed(1)}" stroke="${barColor}" stroke-width="${barW}" stroke-opacity="0.6" stroke-linecap="round"/>\n`;
+
+      // Endpoint dot with step identity color
+      svg += `  <circle cx="${endX.toFixed(1)}" cy="${endY.toFixed(1)}" r="${Math.max(3, barW / 2 + 1)}" fill="${col}" stroke="${barColor}" stroke-width="1.5"/>\n`;
+
+      // Value label at endpoint
+      if (nSteps <= 3) {
+        const lblX = endX + 8 * Math.sin(angRad);
+        const lblY = endY - 8 * Math.cos(angRad);
+        svg += `  <text x="${lblX.toFixed(1)}" y="${(lblY + 3).toFixed(1)}" fill="${barColor}" font-size="8" font-weight="600" text-anchor="middle">${diff >= 0 ? '+' : ''}${diff.toFixed(2)}</text>\n`;
+      }
     });
   });
 
-  // Legend Card on the right
-  svg += `  <g transform="translate(500, 70)">
-    <rect width="160" height="${series.length * 26 + 32}" rx="6" fill="${isDark ? '#161622' : '#f4f4f8'}" stroke="${border}"/>
-    <text x="12" y="20" fill="${textMain}" font-size="11" font-weight="bold">Sequence Steps:</text>
+  // Legend Card
+  const legendH = nSteps * 26 + 80;
+  svg += `  <g transform="translate(500, 40)">
+    <rect width="180" height="${legendH}" rx="8" fill="${isDark ? '#141420' : '#f6f6fa'}" stroke="${border}" stroke-width="1"/>
+    <text x="14" y="22" fill="${textMain}" font-size="11" font-weight="bold">Sequence Steps:</text>
 `;
   series.forEach((s, idx) => {
     const col = stepColors[idx % stepColors.length];
-    const yPos = 38 + idx * 26;
-    svg += `    <circle cx="18" cy="${yPos}" r="5" fill="${col}"/>
-    <text x="32" y="${yPos + 4}" fill="${textMain}" font-size="10" font-weight="600">Step #${idx + 1} (${s.pictureName})</text>
+    const yPos = 42 + idx * 26;
+    svg += `    <circle cx="20" cy="${yPos}" r="5" fill="${col}"/>
+    <text x="36" y="${yPos + 4}" fill="${textMain}" font-size="10" font-weight="600">Step #${idx + 1} (${escSvg(s.pictureName)})</text>
 `;
   });
-  svg += `  </g>\n</g>\n</svg>`;
+
+  // Diverging color legend
+  const clY = 50 + nSteps * 26;
+  svg += `    <rect x="10" y="${clY}" width="160" height="1" fill="${gridStroke}"/>
+    <line x1="14" y1="${clY + 14}" x2="34" y2="${clY + 14}" stroke="${hotColor}" stroke-width="5" stroke-linecap="round"/>
+    <text x="40" y="${clY + 18}" fill="${textSub}" font-size="9">Edge hotter (+ΔT)</text>
+    <line x1="14" y1="${clY + 32}" x2="34" y2="${clY + 32}" stroke="${coolColor}" stroke-width="5" stroke-linecap="round"/>
+    <text x="40" y="${clY + 36}" fill="${textSub}" font-size="9">Edge cooler (−ΔT)</text>
+  </g>
+</g>
+</svg>`;
 
   return svg;
 }
+
 

@@ -2,7 +2,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, execFileSync } = require('child_process');
 
 let mainWindow;
 
@@ -448,10 +448,15 @@ ipcMain.handle('open-external', async (_event, url) => {
 
 ipcMain.handle('save-file', async (_event, filePath, content) => {
   try {
-    const dir = path.dirname(filePath);
+    // Security: reject path traversal attempts
+    const resolved = path.resolve(filePath);
+    if (resolved.includes('..')) {
+      return { error: 'Path traversal detected — operation rejected.' };
+    }
+    const dir = path.dirname(resolved);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(filePath, content, 'utf-8');
-    return { status: 'ok', path: filePath };
+    fs.writeFileSync(resolved, content, 'utf-8');
+    return { status: 'ok', path: resolved };
   } catch (e) {
     return { error: e.message };
   }
@@ -462,7 +467,12 @@ ipcMain.handle('export-result-package', async (_event, resultDir, filesMap) => {
     if (!fs.existsSync(resultDir)) fs.mkdirSync(resultDir, { recursive: true });
 
     for (const [relPath, content] of Object.entries(filesMap)) {
-      const fullPath = path.join(resultDir, relPath);
+      // Security: validate relPath does not escape resultDir
+      const fullPath = path.resolve(resultDir, relPath);
+      if (!fullPath.startsWith(path.resolve(resultDir))) {
+        sendLogToRenderer('error', `[SECURITY] Path traversal blocked: ${relPath}`);
+        continue;
+      }
       const dir = path.dirname(fullPath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       if (relPath.endsWith('.png')) {
@@ -519,7 +529,7 @@ ipcMain.handle('test-backend-connection', async () => {
   sendLogToRenderer('info', '[DIAGNOSTICS] Testing Python backend connectivity...');
   const { executable } = getBackendArgs('analyze', ['--help']);
   try {
-    const out = execSync(`"${executable}" --help 2>&1`, { timeout: 8000 }).toString();
+    const out = execFileSync(executable, ['--help'], { timeout: 8000, stdio: ['pipe', 'pipe', 'pipe'] }).toString();
     sendLogToRenderer('info', `[DIAGNOSTICS SUCCESS] Backend binary responded:\n${out.slice(0, 200)}`);
     return { success: true, output: out, executable };
   } catch (err) {
@@ -527,7 +537,7 @@ ipcMain.handle('test-backend-connection', async () => {
       const scriptPath = path.join(process.resourcesPath, 'backend', 'analyzer.py');
       if (fs.existsSync(scriptPath)) {
         try {
-          const pyOut = execSync(`python3 "${scriptPath}" --help 2>&1`, { timeout: 8000 }).toString();
+          const pyOut = execFileSync('python3', [scriptPath, '--help'], { timeout: 8000, stdio: ['pipe', 'pipe', 'pipe'] }).toString();
           sendLogToRenderer('info', `[DIAGNOSTICS SUCCESS via python3] Fallback script responded:\n${pyOut.slice(0, 200)}`);
           return { success: true, output: pyOut, executable: `python3 ${scriptPath}`, mode: 'python3-fallback' };
         } catch (pyErr) {

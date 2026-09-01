@@ -1,7 +1,7 @@
 // src/src/AnalyticsView.jsx
 import React, { useState, useMemo } from 'react';
 import { ICA_PROTOCOL, getProtocolStep } from './protocol';
-import { COMPASS, BASE_ANGLES, generateRadarGradientSvg, generateFullSequenceComparisonCanvas } from './thermalEngine';
+import { COMPASS, BASE_ANGLES, generateThermalDirectionSvg, generateFullSequenceComparisonCanvas } from './thermalEngine';
 
 export default function AnalyticsView({ 
   analyticsData, 
@@ -97,20 +97,26 @@ export default function AnalyticsView({
     '#00e5ff', '#3d5afe', '#7c4dff', '#e040fb', '#ff4081', '#ff5252', '#ff9100', '#ffd600'
   ];
 
-  // Compute Max Radar Gradient
-  let radarMaxGrad = 0.5;
+  // Compute Max Absolute Signed Diff for 0-1 Normalized Directional Profile
+  let maxAbsDiff = 0.1;
   series.forEach(s => {
     COMPASS.forEach(name => {
-      const g = s.star?.points?.[name]?.grad || (s.gradient_max ? s.gradient_max * 0.7 : 0);
-      if (g > radarMaxGrad) radarMaxGrad = g;
+      const diff = s.star?.points?.[name]?.diff ?? 0;
+      if (Math.abs(diff) > maxAbsDiff) maxAbsDiff = Math.abs(diff);
     });
   });
-  radarMaxGrad = Math.max(0.5, Math.ceil(radarMaxGrad * 2) / 2);
+  maxAbsDiff = Math.max(0.1, maxAbsDiff);
 
-  // Radar geometry constants
+  // Directional geometry constants
   const rCx = 260;
   const rCy = 240;
   const rMax = 160;
+  const nSteps = series.length;
+  const spreadDeg = nSteps > 1 ? Math.min(14, 36 / nSteps) : 0;
+  const barW = Math.max(3, Math.min(10, 36 / nSteps));
+
+  // Security: CSV escape to prevent formula injection in Excel
+  const csvEsc = (val) => { const s = String(val ?? '').replace(/"/g, '""'); return /[,"\n\r=+\-@\t]/.test(s) ? `"${s}"` : s; };
 
   const exportSummaryCsv = () => {
     let csvContent = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,delta_mean_vs_step1_c,delta_center_vs_step1_c,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm\n`;
@@ -118,7 +124,7 @@ export default function AnalyticsView({
       const proto = getProtocolStep(idx);
       const deltaM = (s.mean_temp - baselineMean).toFixed(4);
       const deltaC = ((s.star_center_temp || s.mean_temp) - baselineCenter).toFixed(4);
-      csvContent += `${idx + 1},${s.pictureName},"${proto.sessionName}",${proto.timestampMin},${activeLabel},${s.mean_temp},${s.min_temp},${s.max_temp},${s.std_temp},${s.pixel_count},${deltaM >= 0 ? '+' : ''}${deltaM},${deltaC >= 0 ? '+' : ''}${deltaC},${s.gradient_max || 0},"${s.gradient_modus || ''}",${s.star_center_temp || 0},${s.star_radius_cm || 0}\n`;
+      csvContent += `${idx + 1},${csvEsc(s.pictureName)},${csvEsc(proto.sessionName)},${proto.timestampMin},${csvEsc(activeLabel)},${s.mean_temp},${s.min_temp},${s.max_temp},${s.std_temp},${s.pixel_count},${deltaM >= 0 ? '+' : ''}${deltaM},${deltaC >= 0 ? '+' : ''}${deltaC},${s.gradient_max || 0},${csvEsc(s.gradient_modus || '')},${s.star_center_temp || 0},${s.star_radius_cm || 0}\n`;
     });
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -129,6 +135,7 @@ export default function AnalyticsView({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const downloadSvgGraph = () => {
@@ -143,6 +150,7 @@ export default function AnalyticsView({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const downloadRadarSvg = () => {
@@ -157,6 +165,7 @@ export default function AnalyticsView({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   return (
@@ -179,7 +188,7 @@ export default function AnalyticsView({
             🖼 Multi-Step Sequence Strip (Relative Focus)
           </button>
           <button className={`tab-btn ${viewMode === 'radar' ? 'active' : ''}`} onClick={() => setViewMode('radar')}>
-            🕸 8-Compass Polar Radar Profile
+            🧭 8-Direction Thermal Distribution (Signed & Normalized)
           </button>
         </div>
 
@@ -399,97 +408,117 @@ export default function AnalyticsView({
           </div>
         )}
 
-        {/* ── VIEW 3: 8-COMPASS POLAR RADAR PROFILE ───────────────────────── */}
+        {/* ── VIEW 3: 8-COMPASS SIGNED DIRECTIONAL THERMAL DISTRIBUTION ───── */}
         {viewMode === 'radar' && (
           <div style={{ background: theme.bg, border: `1px solid ${theme.border}`, borderRadius: '8px', padding: '16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
               <div>
                 <span style={{ fontSize: '13px', fontWeight: 'bold', color: theme.textMain }}>
-                  🕸 8-Direction Polar Thermal Gradient Profile — {activeLabel.toUpperCase()}
+                  🧭 8-Direction Thermal Distribution (Signed & 0–1 Normalized) — {activeLabel.toUpperCase()}
                 </span>
                 <p style={{ margin: '2px 0 0', fontSize: '11px', color: theme.textSub }}>
-                  Overlaid directional gradient magnitude ($G_k$ in °C/cm) across all steps for {activeLabel}.
+                  Directional ΔT (edge − center) normalized 0–1 across steps · Scale max: ±{maxAbsDiff.toFixed(2)} °C
                 </p>
+                <div style={{ display: 'flex', gap: '12px', marginTop: '4px', fontSize: '10px' }}>
+                  <span style={{ color: '#ff5252', fontWeight: '600' }}>🔴 Red: Edge hotter than center (+ΔT)</span>
+                  <span style={{ color: '#448aff', fontWeight: '600' }}>🔵 Blue: Edge cooler than center (−ΔT)</span>
+                </div>
               </div>
               <button className="btn-secondary btn-tiny" onClick={downloadRadarSvg}>
-                📥 Download Radar SVG
+                📥 Download Chart SVG
               </button>
             </div>
 
-            {/* PURE REACT SVG RADAR COMPONENT */}
+            {/* PURE REACT SVG SIGNED DIRECTION COMPONENT */}
             <div style={{ display: 'flex', justifyContent: 'center', overflowX: 'auto' }}>
-              <svg id="radar-svg-element" viewBox="0 0 680 500" width="680" height="500" style={{ background: theme.bg }}>
-                <g transform="translate(0, 10)">
-                  {/* Concentric grid circles */}
+              <svg id="radar-svg-element" viewBox="0 0 700 520" width="700" height="520" style={{ background: theme.bg }}>
+                <g transform="translate(0, 20)">
+                  {/* Concentric normalized grid circles */}
                   {[1, 2, 3, 4].map(l => {
                     const r = (rMax / 4) * l;
-                    const val = ((radarMaxGrad / 4) * l).toFixed(2);
+                    const normLabel = (l / 4).toFixed(2);
+                    const absVal = ((l / 4) * maxAbsDiff).toFixed(2);
                     return (
                       <g key={l}>
                         <circle cx={rCx} cy={rCy} r={r} fill="none" stroke={theme.grid} strokeWidth="1" strokeDasharray="3 3"/>
-                        <text x={rCx + 4} y={rCy - r + 10} fill={theme.textSub} fontSize="9">{val} °C/cm</text>
+                        <text x={rCx + 5} y={rCy - r + 10} fill={theme.textSub} fontSize="8">{normLabel} (±{absVal}°C)</text>
                       </g>
                     );
                   })}
 
+                  {/* Center Origin Dot */}
+                  <circle cx={rCx} cy={rCy} r={5} fill={isDark ? '#2a2a3a' : '#e0e0e0'} stroke={theme.textSub} strokeWidth={1}/>
+                  <text x={rCx + 8} y={rCy + 3} fill={theme.textSub} fontSize="8">center</text>
+
                   {/* 8 Radial Spokes & Compass Labels */}
                   {COMPASS.map(name => {
                     const angRad = (BASE_ANGLES[name] * Math.PI) / 180.0;
-                    const sx = rCx + rMax * Math.sin(angRad);
-                    const sy = rCy - rMax * Math.cos(angRad);
-                    const lx = rCx + (rMax + 18) * Math.sin(angRad);
-                    const ly = rCy - (rMax + 18) * Math.cos(angRad);
+                    const sx = rCx + (rMax + 6) * Math.sin(angRad);
+                    const sy = rCy - (rMax + 6) * Math.cos(angRad);
+                    const lx = rCx + (rMax + 22) * Math.sin(angRad);
+                    const ly = rCy - (rMax + 22) * Math.cos(angRad);
                     return (
                       <g key={name}>
-                        <line x1={rCx} y1={rCy} x2={sx} y2={sy} stroke={theme.grid} strokeWidth="1.2"/>
+                        <line x1={rCx} y1={rCy} x2={sx} y2={sy} stroke={theme.grid} strokeWidth="0.8"/>
                         <text x={lx} y={ly + 4} fill={theme.textMain} fontSize="11" fontWeight="bold" textAnchor="middle">{name}</text>
                       </g>
                     );
                   })}
 
-                  {/* Overlaid Step Polygons */}
+                  {/* Directional Signed Bars for Each Step */}
                   {series.map((s, idx) => {
                     const col = stepColors[idx % stepColors.length];
-                    const ptsStr = COMPASS.map(name => {
-                      const g = s.star?.points?.[name]?.grad || (s.gradient_max ? s.gradient_max * 0.6 : 0.2);
-                      const r = (g / radarMaxGrad) * rMax;
-                      const angRad = (BASE_ANGLES[name] * Math.PI) / 180.0;
-                      const px = rCx + r * Math.sin(angRad);
-                      const py = rCy - r * Math.cos(angRad);
-                      return `${px.toFixed(1)},${py.toFixed(1)}`;
-                    }).join(' ');
-
                     return (
                       <g key={idx}>
-                        <polygon points={ptsStr} fill={col} fillOpacity="0.18" stroke={col} strokeWidth="2"/>
                         {COMPASS.map(name => {
-                          const g = s.star?.points?.[name]?.grad || (s.gradient_max ? s.gradient_max * 0.6 : 0.2);
-                          const r = (g / radarMaxGrad) * rMax;
-                          const angRad = (BASE_ANGLES[name] * Math.PI) / 180.0;
-                          const px = rCx + r * Math.sin(angRad);
-                          const py = rCy - r * Math.cos(angRad);
-                          return <circle key={name} cx={px} cy={py} r="3" fill={col}/>;
+                          const diff = s.star?.points?.[name]?.diff ?? 0;
+                          const normVal = Math.abs(diff) / maxAbsDiff;
+                          const barLen = Math.max(3, normVal * rMax);
+                          const stepOffset = nSteps > 1 ? -spreadDeg / 2 + (spreadDeg * idx / (nSteps - 1)) : 0;
+                          const angRad = ((BASE_ANGLES[name] + stepOffset) * Math.PI) / 180.0;
+                          const endX = rCx + barLen * Math.sin(angRad);
+                          const endY = rCy - barLen * Math.cos(angRad);
+                          const barColor = diff >= 0 ? '#ff5252' : '#448aff';
+
+                          return (
+                            <g key={name}>
+                              <line x1={rCx} y1={rCy} x2={endX} y2={endY} stroke={barColor} strokeWidth={barW} strokeOpacity={0.65} strokeLinecap="round"/>
+                              <circle cx={endX} cy={endY} r={Math.max(3, barW / 2 + 1)} fill={col} stroke={barColor} strokeWidth={1.5}/>
+                              {nSteps <= 3 && (
+                                <text x={endX + 6 * Math.sin(angRad)} y={endY - 6 * Math.cos(angRad) + 3} fill={barColor} fontSize="8" fontWeight="bold" textAnchor="middle">
+                                  {diff >= 0 ? '+' : ''}{diff.toFixed(2)}
+                                </text>
+                              )}
+                            </g>
+                          );
                         })}
                       </g>
                     );
                   })}
 
                   {/* Legend Box */}
-                  <g transform="translate(480, 50)">
-                    <rect width="180" height={series.length * 28 + 36} rx="8" fill={isDark ? '#14141e' : '#f8f8fc'} stroke={theme.border}/>
-                    <text x="14" y="22" fill={theme.textMain} fontSize="12" fontWeight="bold">Sequence Steps:</text>
+                  <g transform="translate(480, 30)">
+                    <rect width="190" height={series.length * 26 + 84} rx="8" fill={isDark ? '#14141e' : '#f8f8fc'} stroke={theme.border} strokeWidth="1"/>
+                    <text x="14" y="20" fill={theme.textMain} fontSize="11" fontWeight="bold">Sequence Steps:</text>
                     {series.map((s, idx) => {
                       const col = stepColors[idx % stepColors.length];
-                      const yPos = 42 + idx * 28;
+                      const yPos = 38 + idx * 26;
                       return (
                         <g key={idx}>
                           <circle cx="20" cy={yPos} r="5" fill={col}/>
-                          <text x="34" y={yPos + 4} fill={theme.textMain} fontSize="11" fontWeight="600">
+                          <text x="34" y={yPos + 4} fill={theme.textMain} fontSize="10" fontWeight="600">
                             Step #{idx + 1} ({s.pictureName})
                           </text>
                         </g>
                       );
                     })}
+
+                    {/* Diverging Bar Key */}
+                    <rect x="10" y={44 + series.length * 26} width="170" height="1" fill={theme.grid}/>
+                    <line x1="14" y1={58 + series.length * 26} x2="32" y2={58 + series.length * 26} stroke="#ff5252" strokeWidth="4" strokeLinecap="round"/>
+                    <text x="38" y={62 + series.length * 26} fill={theme.textSub} fontSize="9">Edge hotter (+ΔT)</text>
+                    <line x1="14" y1={74 + series.length * 26} x2="32" y2={74 + series.length * 26} stroke="#448aff" strokeWidth="4" strokeLinecap="round"/>
+                    <text x="38" y={78 + series.length * 26} fill={theme.textSub} fontSize="9">Edge cooler (−ΔT)</text>
                   </g>
                 </g>
               </svg>
@@ -528,7 +557,7 @@ export default function AnalyticsView({
                     <td>
                       <div style={{ fontSize: '11px', color: 'var(--text0)', fontWeight: '600' }}>{proto.sessionName}</div>
                     </td>
-                    <td className="temp-avg">{s.mean_temp.toFixed(2)}</td>
+                    <td className="temp-avg">{(s.mean_temp ?? 0).toFixed(2)}</td>
                     <td style={{ color: deltaMean >= 0 ? 'var(--accent)' : 'var(--cyan)', fontWeight: 'bold' }}>
                       {i === 0 ? 'Baseline' : `${deltaMean >= 0 ? '+' : ''}${deltaMean.toFixed(2)}°C`}
                     </td>
@@ -538,7 +567,7 @@ export default function AnalyticsView({
                     </td>
                     <td style={{ color: 'var(--accent2)', fontWeight: '600' }}>{s.gradient_max !== undefined ? s.gradient_max.toFixed(2) : '-'}</td>
                     <td style={{ color: 'var(--cyan)', fontSize: '11px' }}>{s.gradient_modus || '-'}</td>
-                    <td style={{ fontSize: '10px' }}>{s.min_temp.toFixed(1)} / {s.max_temp.toFixed(1)}</td>
+                    <td style={{ fontSize: '10px' }}>{(s.min_temp ?? 0).toFixed(1)} / {(s.max_temp ?? 0).toFixed(1)}</td>
                     <td>{s.pixel_count}</td>
                   </tr>
                 );

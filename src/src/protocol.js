@@ -3,6 +3,9 @@
  * Protocol Pengambilan Gambar Thermal Kamera (by Ica)
  */
 
+// Security: SVG/HTML entity escape to prevent XSS injection
+const escSvg = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
 export const ICA_PROTOCOL = [
   {
     step: 1,
@@ -160,7 +163,7 @@ export const generateGraphSvg = (labelName, series, chartTheme = 'dark') => {
     const yPos = (svgHeight - margin.bottom + 20).toFixed(1);
     return `
       <g transform="translate(${xPos}, ${yPos})">
-        <text fill="${theme.textSub}" font-size="10" text-anchor="end" transform="rotate(-30)" font-family="sans-serif">${proto.shortLabel} (${s.pictureName})</text>
+        <text fill="${theme.textSub}" font-size="10" text-anchor="end" transform="rotate(-30)" font-family="sans-serif">${escSvg(proto.shortLabel)} (${escSvg(s.pictureName)})</text>
       </g>
     `;
   }).join('');
@@ -181,7 +184,7 @@ export const generateGraphSvg = (labelName, series, chartTheme = 'dark') => {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="${svgWidth}" height="${svgHeight}" xmlns="http://www.w3.org/2000/svg" style="background:${theme.bg}">
   <rect width="100%" height="100%" fill="${theme.bg}"/>
-  <text x="${margin.left}" y="24" fill="${theme.textMain}" font-size="14" font-weight="bold" font-family="sans-serif">Thermal Range Analytics: ${labelName} (${chartTheme.toUpperCase()} Theme)</text>
+  <text x="${margin.left}" y="24" fill="${theme.textMain}" font-size="14" font-weight="bold" font-family="sans-serif">Thermal Range Analytics: ${escSvg(labelName)} (${chartTheme.toUpperCase()} Theme)</text>
   ${gridSvg}
   ${xAxisSvg}
   ${series.length > 1 ? `<polygon points="${bandPoints}" fill="${theme.bandFill}" stroke="${theme.bandStroke}" stroke-width="1"/>` : ''}

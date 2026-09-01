@@ -10,7 +10,7 @@ import {
   clientCropPolygonROI,
   computeLabelStarGradient,
   generateFullSequenceComparisonCanvas,
-  generateRadarGradientSvg
+  generateThermalDirectionSvg
 } from './thermalEngine';
 
 // Access secure electronAPI exposed via contextBridge in preload.js
@@ -1103,6 +1103,8 @@ export default function App() {
 
       // Assemble Summary CSVs and SVG Graphs for {Parentfoldername}_Result
       const exportFilesMap = {};
+      // Security: CSV escape to prevent formula injection in Excel
+      const csvEsc = (val) => { const s = String(val ?? '').replace(/"/g, '""'); return /[,"\n\r=+\-@\t]/.test(s) ? `"${s}"` : s; };
       const compassHeaders = COMPASS.map(c => `grad_${c}_c_per_cm`).join(',');
 
       let masterCsv = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm,${compassHeaders}\n`;
@@ -1115,7 +1117,7 @@ export default function App() {
           const proto = getProtocolStep(idx);
           const starPts = s.star?.points || {};
           const compassGrads = COMPASS.map(c => (starPts[c]?.grad ?? 0).toFixed(4)).join(',');
-          const row = `${idx + 1},${s.pictureName},"${proto.sessionName}",${proto.timestampMin},${labelName},${s.mean_temp},${s.min_temp},${s.max_temp},${s.std_temp},${s.pixel_count},${s.gradient_max},"${s.gradient_modus}",${s.star_center_temp},${s.star_radius_cm},${compassGrads}\n`;
+          const row = `${idx + 1},${csvEsc(s.pictureName)},${csvEsc(proto.sessionName)},${proto.timestampMin},${csvEsc(labelName)},${s.mean_temp},${s.min_temp},${s.max_temp},${s.std_temp},${s.pixel_count},${s.gradient_max},${csvEsc(s.gradient_modus)},${s.star_center_temp},${s.star_radius_cm},${compassGrads}\n`;
           labelCsv += row;
           masterCsv += row;
         });
@@ -1127,9 +1129,9 @@ export default function App() {
         exportFilesMap[`graph_${labelName}_dark.svg`] = generateGraphSvg(labelName, series, 'dark');
         exportFilesMap[`graph_${labelName}_white.svg`] = generateGraphSvg(labelName, series, 'white');
 
-        // Generate 8-Compass Polar Radar Gradient Profiles (Dark & White)
-        exportFilesMap[`radar_gradient_${labelName}_dark.svg`] = generateRadarGradientSvg(labelName, series, 'dark');
-        exportFilesMap[`radar_gradient_${labelName}_white.svg`] = generateRadarGradientSvg(labelName, series, 'white');
+        // Generate 8-Compass Signed Directional Thermal Profiles (Dark & White)
+        exportFilesMap[`thermal_direction_${labelName}_dark.svg`] = generateThermalDirectionSvg(labelName, series, 'dark');
+        exportFilesMap[`thermal_direction_${labelName}_white.svg`] = generateThermalDirectionSvg(labelName, series, 'white');
 
         // Generate Relative Sequence Comparison Montage PNG for this label
         const relMontage = generateFullSequenceComparisonCanvas(targetPaths, resultsMap, segmentations, calibrationsMap, labelName, aggregatedStats);
@@ -1354,7 +1356,7 @@ export default function App() {
   };
 
   const handleCopyMacCommand = (cmd = 'xattr -cr /Applications/thermalsight.app') => {
-    navigator.clipboard.writeText(cmd);
+    navigator.clipboard.writeText(cmd).catch(() => {});
     alert(`✓ Copied command to clipboard:\n\n${cmd}\n\n1. Open Terminal.app on your Mac\n2. Paste (Cmd+V) and press Return ↵\n3. Relaunch ThermalSight`);
   };
 
@@ -1859,7 +1861,7 @@ export default function App() {
                   <div className="terminal-footer">
                     <button className="btn-ghost btn-tiny" onClick={() => {
                       const text = terminalLogs.map(l => `[${l.timestamp}] [${l.type.toUpperCase()}] ${l.text}`).join('\n');
-                      navigator.clipboard.writeText(text);
+                      navigator.clipboard.writeText(text).catch(() => {});
                       alert('Terminal logs copied to clipboard!');
                     }}>📋 Copy Logs</button>
                   </div>
