@@ -1,6 +1,6 @@
 {
   "name": "thermalsight",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Thermal Analysis Student Explorer",
   "author": "Aditya",
   "repository": "https://github.com/Aditya42069/ThermalSight-App",
@@ -17,13 +17,6 @@
     },
     "extraResources": [
       {
-        "from": "../backend/dist/analyzer.exe",
-        "to": "backend/analyzer.exe",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
         "from": "../backend/dist/analyzer",
         "to": "backend/analyzer",
         "filter": [
@@ -37,26 +30,19 @@
     ],
     "mac": {
       "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
+        "dmg",
+        "zip"
       ],
       "minimumSystemVersion": "10.15.0",
       "category": "public.app-category.education",
       "identity": null,
       "hardenedRuntime": false,
       "gatekeeperAssess": false
+    },
+    "dmg": {
+      "writeUpdateInfo": false,
+      "format": "ULFO",
+      "internetEnabled": false
     },
     "win": {
       "target": "nsis"

@@ -96,8 +96,16 @@ jobs:
         working-directory: ./src
         run: npm run build
 
+      - name: Optimize macOS Disk Image & Spotlight
+        if: runner.os == 'macOS'
+        run: |
+          sudo mdutil -a -i off || true
+
       - name: Package with Electron Builder
         working-directory: ./src
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: true
         run: ${{ matrix.builder_cmd }}
 
       # ── Publish Release Artifacts to GitHub ──────────────────────────────────
