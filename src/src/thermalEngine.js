@@ -702,6 +702,25 @@ export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiInd
     }
   });
 
+  // Extract square orthogonal patch for 2D Quiver & 3D Surface
+  const radInt = Math.max(8, Math.round(starData.radius_px));
+  const sqX0 = Math.max(0, Math.round(starData.cx - radInt));
+  const sqX1 = Math.min(W - 1, Math.round(starData.cx + radInt));
+  const sqY0 = Math.max(0, Math.round(starData.cy - radInt));
+  const sqY1 = Math.min(H - 1, Math.round(starData.cy + radInt));
+  const sqW = Math.max(1, sqX1 - sqX0 + 1);
+  const sqH = Math.max(1, sqY1 - sqY0 + 1);
+
+  const squarePatch = new Float32Array(sqW * sqH);
+  for (let py = 0; py < sqH; py++) {
+    for (let px = 0; px < sqW; px++) {
+      squarePatch[py * sqW + px] = tempMatrix[(sqY0 + py) * W + (sqX0 + px)] ?? 0;
+    }
+  }
+
+  const png2dQuiverDataUrl = render2DGradientQuiverCanvas(squarePatch, sqW, sqH, pxPerCm, labelName);
+  const png3dSurfaceDataUrl = render3DGradientSurfaceCanvas(squarePatch, sqW, sqH, pxPerCm, labelName);
+
   return {
     labelName,
     roiIndex,
@@ -716,9 +735,305 @@ export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiInd
     star_center_temp: starData.temp_centre,
     star_radius_cm: starData.radius_cm,
     croppedPngDataUrl: croppedCanvas.toDataURL('image/png'),
+    png2dQuiverDataUrl,
+    png3dSurfaceDataUrl,
     csvContent,
     starCsvContent
   };
+}
+
+// ── 2D Quiver & Gradient Magnitude Generator ─────────────────────────────────
+export function render2DGradientQuiverCanvas(tempPatch, patchW, patchH, pxPerCm, title = 'Thermal Map') {
+  const canvas = document.createElement('canvas');
+  const figW = 900;
+  const figH = 420;
+  canvas.width = figW;
+  canvas.height = figH;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, figW, figH);
+
+  const dx_cm = 1.0 / Math.max(0.1, pxPerCm || 10);
+  const Lx = patchW * dx_cm;
+  const Ly = patchH * dx_cm;
+
+  const gx = new Float32Array(patchW * patchH);
+  const gy = new Float32Array(patchW * patchH);
+  const mag = new Float32Array(patchW * patchH);
+  let minT = Infinity, maxT = -Infinity;
+  let maxMag = 0.001;
+
+  for (let y = 0; y < patchH; y++) {
+    for (let x = 0; x < patchW; x++) {
+      const idx = y * patchW + x;
+      const t = tempPatch[idx] ?? 0;
+      if (t < minT) minT = t;
+      if (t > maxT) maxT = t;
+
+      const x0 = Math.max(0, x - 1);
+      const x1 = Math.min(patchW - 1, x + 1);
+      const y0 = Math.max(0, y - 1);
+      const y1 = Math.min(patchH - 1, y + 1);
+
+      const dTx = (tempPatch[y * patchW + x1] - tempPatch[y * patchW + x0]) / ((x1 - x0) * dx_cm || 1);
+      const dTy = (tempPatch[y1 * patchW + x] - tempPatch[y0 * patchW + x]) / ((y1 - y0) * dx_cm || 1);
+
+      gx[idx] = dTx;
+      gy[idx] = dTy;
+      const m = Math.sqrt(dTx * dTx + dTy * dTy);
+      mag[idx] = m;
+      if (m > maxMag) maxMag = m;
+    }
+  }
+
+  const plotW = 340;
+  const plotH = 300;
+  const topY = 60;
+  const left1X = 60;
+  const left2X = 480;
+
+  // 1. Temperature Heatmap + Quiver Vector Field
+  const imgData1 = ctx.createImageData(plotW, plotH);
+  for (let py = 0; py < plotH; py++) {
+    const srcY = Math.floor((1 - py / plotH) * (patchH - 1));
+    for (let px = 0; px < plotW; px++) {
+      const srcX = Math.floor((px / plotW) * (patchW - 1));
+      const t = tempPatch[srcY * patchW + srcX] ?? minT;
+      const norm = Math.min(255, Math.max(0, Math.floor(((t - minT) / Math.max(0.1, maxT - minT)) * 255)));
+      const pIdx = (py * plotW + px) * 4;
+      imgData1.data[pIdx + 0] = INFERNO_LUT[norm * 3 + 0];
+      imgData1.data[pIdx + 1] = INFERNO_LUT[norm * 3 + 1];
+      imgData1.data[pIdx + 2] = INFERNO_LUT[norm * 3 + 2];
+      imgData1.data[pIdx + 3] = 255;
+    }
+  }
+  ctx.putImageData(imgData1, left1X, topY);
+
+  // Draw Quiver Arrows on Panel 1
+  const stepGrid = Math.max(1, Math.floor(Math.min(patchW, patchH) / 8));
+  ctx.strokeStyle = '#ff1744';
+  ctx.fillStyle = '#ff1744';
+  ctx.lineWidth = 1.5;
+
+  for (let gy_idx = Math.floor(stepGrid / 2); gy_idx < patchH; gy_idx += stepGrid) {
+    for (let gx_idx = Math.floor(stepGrid / 2); gx_idx < patchW; gx_idx += stepGrid) {
+      const idx = gy_idx * patchW + gx_idx;
+      const vx = gx[idx];
+      const vy = gy[idx];
+      const m = mag[idx];
+      if (m < 0.05) continue;
+
+      const screenX = left1X + (gx_idx / (patchW - 1)) * plotW;
+      const screenY = topY + (1 - gy_idx / (patchH - 1)) * plotH;
+      const len = Math.min(24, Math.max(6, (m / maxMag) * 22));
+      const angle = Math.atan2(-vy, vx);
+
+      const targetX = screenX + Math.cos(angle) * len;
+      const targetY = screenY + Math.sin(angle) * len;
+
+      ctx.beginPath();
+      ctx.moveTo(screenX, screenY);
+      ctx.lineTo(targetX, targetY);
+      ctx.stroke();
+
+      const headLen = 4;
+      ctx.beginPath();
+      ctx.moveTo(targetX, targetY);
+      ctx.lineTo(targetX - headLen * Math.cos(angle - Math.PI / 6), targetY - headLen * Math.sin(angle - Math.PI / 6));
+      ctx.lineTo(targetX - headLen * Math.cos(angle + Math.PI / 6), targetY - headLen * Math.sin(angle + Math.PI / 6));
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  ctx.strokeStyle = '#333333';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(left1X, topY, plotW, plotH);
+  ctx.fillStyle = '#111111';
+  ctx.font = 'bold 13px sans-serif';
+  ctx.fillText(`${title}: Thermal Map`, left1X + 40, topY - 16);
+  ctx.font = '11px sans-serif';
+  ctx.fillText(`X: 0 → ${Lx.toFixed(1)} cm`, left1X + plotW / 2 - 30, topY + plotH + 20);
+  ctx.fillText(`Y: 0 → ${Ly.toFixed(1)} cm`, left1X - 50, topY + plotH / 2);
+
+  // 2. Gradient Magnitude Map
+  const imgData2 = ctx.createImageData(plotW, plotH);
+  for (let py = 0; py < plotH; py++) {
+    const srcY = Math.floor((1 - py / plotH) * (patchH - 1));
+    for (let px = 0; px < plotW; px++) {
+      const srcX = Math.floor((px / plotW) * (patchW - 1));
+      const m = mag[srcY * patchW + srcX] ?? 0;
+      const norm = Math.min(255, Math.max(0, Math.floor((m / maxMag) * 255)));
+      const pIdx = (py * plotW + px) * 4;
+      imgData2.data[pIdx + 0] = INFERNO_LUT[norm * 3 + 0];
+      imgData2.data[pIdx + 1] = INFERNO_LUT[norm * 3 + 1];
+      imgData2.data[pIdx + 2] = INFERNO_LUT[norm * 3 + 2];
+      imgData2.data[pIdx + 3] = 255;
+    }
+  }
+  ctx.putImageData(imgData2, left2X, topY);
+
+  ctx.strokeRect(left2X, topY, plotW, plotH);
+  ctx.fillStyle = '#111111';
+  ctx.font = 'bold 13px sans-serif';
+  ctx.fillText(`${title}: Gradient Magnitude`, left2X + 40, topY - 16);
+  ctx.font = '11px sans-serif';
+  ctx.fillText(`X: 0 → ${Lx.toFixed(1)} cm`, left2X + plotW / 2 - 30, topY + plotH + 20);
+
+  const cbX = left2X + plotW + 16;
+  const cbW = 16;
+  for (let cby = 0; cby < plotH; cby++) {
+    const norm = Math.floor((1 - cby / plotH) * 255);
+    ctx.fillStyle = `rgb(${INFERNO_LUT[norm * 3 + 0]},${INFERNO_LUT[norm * 3 + 1]},${INFERNO_LUT[norm * 3 + 2]})`;
+    ctx.fillRect(cbX, topY + cby, cbW, 1);
+  }
+  ctx.strokeRect(cbX, topY, cbW, plotH);
+  ctx.fillStyle = '#333333';
+  ctx.font = '10px sans-serif';
+  ctx.fillText(`${maxMag.toFixed(1)} °C/cm`, cbX + 22, topY + 10);
+  ctx.fillText(`0.0 °C/cm`, cbX + 22, topY + plotH);
+
+  return canvas.toDataURL('image/png');
+}
+
+// ── 3D Thermal Gradient Surface Mesh Generator ──────────────────────────────
+export function render3DGradientSurfaceCanvas(tempPatch, patchW, patchH, pxPerCm, title = 'Thermal Gradient Surface') {
+  const canvas = document.createElement('canvas');
+  const figW = 800;
+  const figH = 650;
+  canvas.width = figW;
+  canvas.height = figH;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, figW, figH);
+
+  const dx_cm = 1.0 / Math.max(0.1, pxPerCm || 10);
+  const Lx = patchW * dx_cm;
+  const Ly = patchH * dx_cm;
+
+  let minT = Infinity, maxT = -Infinity;
+  for (let i = 0; i < patchW * patchH; i++) {
+    const t = tempPatch[i] ?? 0;
+    if (t < minT) minT = t;
+    if (t > maxT) maxT = t;
+  }
+  const spanT = Math.max(0.5, maxT - minT);
+
+  const originX = figW / 2;
+  const originY = figH * 0.72;
+  const scaleXY = Math.min(figW, figH) * 0.32;
+  const scaleZ = 160;
+  const angX = 0.55;
+  const angY = 0.55;
+
+  const project3D = (gx, gy, gz) => {
+    const nx = (gx / (patchW - 1) - 0.5) * 2;
+    const ny = (gy / (patchH - 1) - 0.5) * 2;
+    const nz = (gz - minT) / spanT;
+
+    const px = originX + (nx - ny) * Math.cos(angX) * scaleXY;
+    const py = originY + (nx + ny) * Math.sin(angY) * (scaleXY * 0.55) - nz * scaleZ;
+    return { px, py };
+  };
+
+  ctx.strokeStyle = '#e0e0e0';
+  ctx.lineWidth = 1;
+  const corners = [
+    project3D(0, 0, minT),
+    project3D(patchW - 1, 0, minT),
+    project3D(patchW - 1, patchH - 1, minT),
+    project3D(0, patchH - 1, minT)
+  ];
+  ctx.beginPath();
+  ctx.moveTo(corners[0].px, corners[0].py);
+  corners.forEach(c => ctx.lineTo(c.px, c.py));
+  ctx.closePath();
+  ctx.stroke();
+
+  // Bottom plane contours
+  const numContours = 8;
+  for (let lev = 1; lev <= numContours; lev++) {
+    const targetVal = minT + (lev / (numContours + 1)) * spanT;
+    const norm = Math.floor((lev / (numContours + 1)) * 255);
+    ctx.strokeStyle = `rgba(${INFERNO_LUT[norm * 3 + 0]},${INFERNO_LUT[norm * 3 + 1]},${INFERNO_LUT[norm * 3 + 2]}, 0.5)`;
+    ctx.lineWidth = 1.2;
+
+    for (let y = 0; y < patchH - 1; y++) {
+      for (let x = 0; x < patchW - 1; x++) {
+        const t00 = tempPatch[y * patchW + x];
+        const t10 = tempPatch[y * patchW + x + 1];
+        if ((t00 <= targetVal && t10 >= targetVal) || (t00 >= targetVal && t10 <= targetVal)) {
+          const ptA = project3D(x + 0.5, y, minT);
+          const ptB = project3D(x + 0.5, y + 0.8, minT);
+          ctx.beginPath();
+          ctx.moveTo(ptA.px, ptA.py);
+          ctx.lineTo(ptB.px, ptB.py);
+          ctx.stroke();
+        }
+      }
+    }
+  }
+
+  // 3D Surface Wireframe & Shaded Polygons
+  const stepS = Math.max(1, Math.floor(Math.min(patchW, patchH) / 22));
+  for (let y = 0; y < patchH - stepS; y += stepS) {
+    for (let x = 0; x < patchW - stepS; x += stepS) {
+      const t00 = tempPatch[y * patchW + x];
+      const t10 = tempPatch[y * patchW + x + stepS];
+      const t11 = tempPatch[(y + stepS) * patchW + x + stepS];
+      const t01 = tempPatch[(y + stepS) * patchW + x];
+      const avgT = (t00 + t10 + t11 + t01) / 4;
+
+      const norm = Math.min(255, Math.max(0, Math.floor(((avgT - minT) / spanT) * 255)));
+      ctx.fillStyle = `rgba(${INFERNO_LUT[norm * 3 + 0]},${INFERNO_LUT[norm * 3 + 1]},${INFERNO_LUT[norm * 3 + 2]}, 0.88)`;
+      ctx.strokeStyle = '#222222';
+      ctx.lineWidth = 0.4;
+
+      const p1 = project3D(x, y, t00);
+      const p2 = project3D(x + stepS, y, t10);
+      const p3 = project3D(x + stepS, y + stepS, t11);
+      const p4 = project3D(x, y + stepS, t01);
+
+      ctx.beginPath();
+      ctx.moveTo(p1.px, p1.py);
+      ctx.lineTo(p2.px, p2.py);
+      ctx.lineTo(p3.px, p3.py);
+      ctx.lineTo(p4.px, p4.py);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+
+  ctx.fillStyle = '#111111';
+  ctx.font = 'bold 15px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(`${title} — 3D Thermal Gradient Surface`, figW / 2, 38);
+
+  ctx.font = '11px sans-serif';
+  ctx.fillText(`X: 0 → ${Lx.toFixed(1)} cm`, corners[1].px + 20, corners[1].py + 10);
+  ctx.fillText(`Y: 0 → ${Ly.toFixed(1)} cm`, corners[3].px - 20, corners[3].py + 10);
+  ctx.fillText(`Z: ${minT.toFixed(1)} → ${maxT.toFixed(1)} °C`, originX - scaleXY - 20, originY - scaleZ);
+
+  const cbX = figW - 60;
+  const cbY = 120;
+  const cbH = 280;
+  const cbW = 16;
+  for (let cby = 0; cby < cbH; cby++) {
+    const norm = Math.floor((1 - cby / cbH) * 255);
+    ctx.fillStyle = `rgb(${INFERNO_LUT[norm * 3 + 0]},${INFERNO_LUT[norm * 3 + 1]},${INFERNO_LUT[norm * 3 + 2]})`;
+    ctx.fillRect(cbX, cbY + cby, cbW, 1);
+  }
+  ctx.strokeRect(cbX, cbY, cbW, cbH);
+  ctx.fillStyle = '#333333';
+  ctx.font = '10px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`${maxT.toFixed(1)} °C`, cbX + 22, cbY + 10);
+  ctx.fillText(`${minT.toFixed(1)} °C`, cbX + 22, cbY + cbH);
+
+  return canvas.toDataURL('image/png');
 }
 
 // ── Sequence Comparison Montage Generator (Overall & Relative Focus) ───────

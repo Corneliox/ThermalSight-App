@@ -177,7 +177,7 @@ export default function App() {
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
-    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.5.2 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
+    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.6.0 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
   ]);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const terminalEndRef = useRef(null);
@@ -297,7 +297,14 @@ export default function App() {
   // ── Keyboard Shortcuts Listener ──────────────────────────────────────────────
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+      const activeEl = document.activeElement;
+      if (
+        (e.target && (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.target.isContentEditable)) ||
+        (activeEl && (['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName) || activeEl.isContentEditable)) ||
+        e.target.closest?.('.inline-form, .modal-overlay, .analytics-modal')
+      ) {
+        return;
+      }
 
       const pressedKey = e.key.toLowerCase();
 
@@ -1181,6 +1188,14 @@ export default function App() {
               const base64Data = s.croppedPngDataUrl.split(',')[1];
               isolatedFolder.file(`${s.pictureName}_roi_${s.roiIndex}_${labelName}.png`, base64Data, { base64: true });
             }
+            if (s.png2dQuiverDataUrl) {
+              const base64Data2d = s.png2dQuiverDataUrl.split(',')[1];
+              isolatedFolder.file(`${s.pictureName}_roi_${s.roiIndex}_${labelName}_2d_quiver.png`, base64Data2d, { base64: true });
+            }
+            if (s.png3dSurfaceDataUrl) {
+              const base64Data3d = s.png3dSurfaceDataUrl.split(',')[1];
+              isolatedFolder.file(`${s.pictureName}_roi_${s.roiIndex}_${labelName}_3d_surface.png`, base64Data3d, { base64: true });
+            }
             if (s.csvContent) {
               isolatedFolder.file(`${s.pictureName}_roi_${s.roiIndex}_${labelName}.csv`, s.csvContent);
             }
@@ -1549,7 +1564,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.5.2 (Web & Desktop)</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.6.0 (Web & Desktop)</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -1699,7 +1714,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.5.2' : 'v1.5.2'}</span>
+          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.6.0' : 'v1.6.0'}</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (

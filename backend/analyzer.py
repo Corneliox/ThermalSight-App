@@ -225,6 +225,136 @@ def save_grid_png(data, panels, out_dir: Path, stem: str) -> str:
     return str(p)
 
 
+def save_gradient_2d_quiver(temp_patch: np.ndarray, out_path: Path, title: str, px_cm: float = 10.0) -> str:
+    """
+    Generates side-by-side 2D Heatmap with Quiver gradient vector field + 2D Gradient Magnitude map.
+    Matching scientific publication standard (Image 2).
+    """
+    H, W = temp_patch.shape
+    dx_cm = 1.0 / max(0.1, px_cm)
+    dy_cm = 1.0 / max(0.1, px_cm)
+    Lx = W * dx_cm
+    Ly = H * dy_cm
+
+    # Compute spatial derivatives
+    sobel_x = cv2.Sobel(temp_patch, cv2.CV_64F, 1, 0, ksize=3)
+    sobel_y = cv2.Sobel(temp_patch, cv2.CV_64F, 0, 1, ksize=3)
+    
+    # Scale to °C/cm (Sobel 3x3 has normalization factor of 8)
+    gx = (sobel_x / 8.0) / dx_cm
+    gy = (sobel_y / 8.0) / dy_cm
+    grad_mag = np.sqrt(gx**2 + gy**2)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.8), dpi=150, facecolor="white")
+
+    # 1. Left: Temperature Map + Quiver Vector Field
+    im1 = ax1.imshow(temp_patch, extent=[0, Lx, 0, Ly], origin="lower", cmap="viridis", aspect="equal")
+    
+    # Downsample quiver arrows for clean visualization
+    step = max(1, int(round(min(W, H) / 10.0)))
+    y_idxs, x_idxs = np.mgrid[step//2:H:step, step//2:W:step]
+    x_coords = x_idxs * dx_cm
+    y_coords = y_idxs * dy_cm
+    u_vals = gx[y_idxs, x_idxs]
+    v_vals = gy[y_idxs, x_idxs]
+
+    max_m = np.max(grad_mag) or 1.0
+    ax1.quiver(x_coords, y_coords, u_vals, v_vals, color="red", angles="xy", scale_units="xy", scale=max_m * 1.8, width=0.007)
+    ax1.set_title(f"{title}: Thermal Map", fontsize=11, fontweight="bold", pad=8)
+    ax1.set_xlabel("X (cm)", fontsize=10)
+    ax1.set_ylabel("Y (cm)", fontsize=10)
+    cbar1 = fig.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04)
+    cbar1.set_label("Temperature (°C)", fontsize=9)
+
+    # 2. Right: Gradient Magnitude Map
+    im2 = ax2.imshow(grad_mag, extent=[0, Lx, 0, Ly], origin="lower", cmap="viridis", aspect="equal")
+    ax2.set_title(f"{title}: Gradient Magnitude", fontsize=11, fontweight="bold", pad=8)
+    ax2.set_xlabel("X (cm)", fontsize=10)
+    ax2.set_ylabel("Y (cm)", fontsize=10)
+    cbar2 = fig.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04)
+    cbar2.set_label("Gradient Magnitude (°C/cm)", fontsize=9)
+
+    plt.tight_layout()
+    fig.savefig(str(out_path), bbox_inches="tight")
+    plt.close(fig)
+    log(f"  saved 2D Quiver & Magnitude Map: {out_path.name}")
+    return str(out_path)
+
+
+def save_gradient_3d_surface(temp_patch: np.ndarray, out_path: Path, title: str, px_cm: float = 10.0) -> str:
+    """
+    Generates 3D Surface mesh with colormap + Bottom-plane contour lines and 2D Quiver vectors.
+    Matching scientific publication standard (Image 1).
+    """
+    H, W = temp_patch.shape
+    dx_cm = 1.0 / max(0.1, px_cm)
+    dy_cm = 1.0 / max(0.1, px_cm)
+    Lx = W * dx_cm
+    Ly = H * dy_cm
+
+    x_arr = np.linspace(0, Lx, W)
+    y_arr = np.linspace(0, Ly, H)
+    X, Y = np.meshgrid(x_arr, y_arr)
+    Z = temp_patch
+
+    # Derivatives for bottom plane quiver
+    sobel_x = cv2.Sobel(temp_patch, cv2.CV_64F, 1, 0, ksize=3)
+    sobel_y = cv2.Sobel(temp_patch, cv2.CV_64F, 0, 1, ksize=3)
+    gx = (sobel_x / 8.0) / dx_cm
+    gy = (sobel_y / 8.0) / dy_cm
+
+    z_min = float(np.min(Z))
+    z_max = float(np.max(Z))
+    z_span = max(0.5, z_max - z_min)
+    z_bottom = z_min - z_span * 0.35 # position bottom plane slightly below surface
+
+    fig = plt.figure(figsize=(9, 7.5), dpi=150, facecolor="white")
+    ax = fig.add_subplot(111, projection='3d')
+    ax.set_facecolor("white")
+
+    # 1. 3D Surface Mesh
+    surf = ax.plot_surface(X, Y, Z, cmap='viridis', edgecolor='black', linewidth=0.25, alpha=0.88, rstride=1, cstride=1)
+
+    # 2. Bottom Plane Contours
+    ax.contour(X, Y, Z, zdir='z', offset=z_bottom, cmap='viridis', levels=10, linewidths=1.0)
+
+    # 3. Bottom Plane Quiver Vector Field
+    step = max(1, int(round(min(W, H) / 9.0)))
+    y_idxs, x_idxs = np.mgrid[step//2:H:step, step//2:W:step]
+    x_q = X[y_idxs, x_idxs].flatten()
+    y_q = Y[y_idxs, x_idxs].flatten()
+    z_q = np.full_like(x_q, z_bottom)
+    u_q = gx[y_idxs, x_idxs].flatten()
+    v_q = gy[y_idxs, x_idxs].flatten()
+    w_q = np.zeros_like(x_q)
+
+    # Normalize vectors for clear quiver arrows on bottom plane
+    mag_q = np.sqrt(u_q**2 + v_q**2)
+    max_q = np.max(mag_q) or 1.0
+    norm_u = np.where(mag_q > 0.001, u_q / max_q * (Lx / 10.0), 0)
+    norm_v = np.where(mag_q > 0.001, v_q / max_q * (Ly / 10.0), 0)
+
+    ax.quiver(x_q, y_q, z_q, norm_u, norm_v, w_q, color="#0055ff", length=0.8, arrow_length_ratio=0.35, linewidth=0.9)
+
+    ax.set_zlim(z_bottom, z_max + z_span * 0.1)
+    ax.set_title(f"{title}\n3D Thermal Gradient Surface", fontsize=12, fontweight="bold", pad=12)
+    ax.set_xlabel("X (cm)", fontsize=10, labelpad=8)
+    ax.set_ylabel("Y (cm)", fontsize=10, labelpad=8)
+    ax.set_zlabel("Temperature (°C)", fontsize=10, labelpad=8)
+
+    # Clean 3D view angles
+    ax.view_init(elev=28, azim=-55)
+
+    cbar = fig.colorbar(surf, ax=ax, shrink=0.6, aspect=14, pad=0.08)
+    cbar.set_label("Temperature (°C)", fontsize=10)
+
+    plt.tight_layout()
+    fig.savefig(str(out_path), bbox_inches="tight")
+    plt.close(fig)
+    log(f"  saved 3D Surface Mesh: {out_path.name}")
+    return str(out_path)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Save CSVs
 # ─────────────────────────────────────────────────────────────────────────────
@@ -558,24 +688,51 @@ def cmd_crop(image_path: str, points_json_str: str, label_name: str,
     cv2.imwrite(str(png_path), colored_rgba)
     log(f"  saved isolated ROI PNG: {png_path.name}")
 
+    # Generate 2D Quiver & 3D Gradient Surface Plots from square orthogonal patch
+    rad_int = max(8, int(round(rad_px)))
+    sq_x0 = max(0, int(round(cx - rad_int)))
+    sq_x1 = min(temp.shape[1], int(round(cx + rad_int)))
+    sq_y0 = max(0, int(round(cy - rad_int)))
+    sq_y1 = min(temp.shape[0], int(round(cy + rad_int)))
+    temp_square_patch = temp[sq_y0:sq_y1, sq_x0:sq_x1]
+
+    png_2d_quiver_path = None
+    png_3d_surface_path = None
+    if temp_square_patch.size > 0 and temp_square_patch.shape[0] >= 4 and temp_square_patch.shape[1] >= 4:
+        try:
+            p2d = out_dir / f"isolated_{stem}_{safe_label}_{roi_index_str}_2d_quiver.png"
+            effective_px_cm = rad_px / max(0.001, dist_cm)
+            png_2d_quiver_path = save_gradient_2d_quiver(temp_square_patch, p2d, f"{label_name} ({stem})", effective_px_cm)
+        except Exception as e:
+            log(f"  warning: failed to render 2D quiver: {e}")
+
+        try:
+            p3d = out_dir / f"isolated_{stem}_{safe_label}_{roi_index_str}_3d_surface.png"
+            effective_px_cm = rad_px / max(0.001, dist_cm)
+            png_3d_surface_path = save_gradient_3d_surface(temp_square_patch, p3d, f"{label_name} ({stem})", effective_px_cm)
+        except Exception as e:
+            log(f"  warning: failed to render 3D surface: {e}")
+
     emit({
-        "status":           "ok",
-        "csv_path":         str(csv_path),
-        "star_csv_path":    str(star_csv_path),
-        "png_path":         str(png_path),
-        "stem":             stem,
-        "label":            label_name,
-        "roi_index":        int(roi_index_str),
-        "mean_temp":        mean_v,
-        "min_temp":         min_v,
-        "max_temp":         max_v,
-        "std_temp":         std_v,
-        "pixel_count":      len(valid_pixels),
-        "gradient_max":     grad_max,
-        "gradient_modus":   grad_modus,
-        "star_center_temp": star_data["temp_centre"],
-        "star_radius_cm":   dist_cm,
-        "star":             star_data,
+        "status":              "ok",
+        "csv_path":            str(csv_path),
+        "star_csv_path":       str(star_csv_path),
+        "png_path":            str(png_path),
+        "png_2d_quiver_path":  str(png_2d_quiver_path) if png_2d_quiver_path else None,
+        "png_3d_surface_path": str(png_3d_surface_path) if png_3d_surface_path else None,
+        "stem":                stem,
+        "label":               label_name,
+        "roi_index":           int(roi_index_str),
+        "mean_temp":           mean_v,
+        "min_temp":            min_v,
+        "max_temp":            max_v,
+        "std_temp":            std_v,
+        "pixel_count":         len(valid_pixels),
+        "gradient_max":        grad_max,
+        "gradient_modus":      grad_modus,
+        "star_center_temp":    star_data["temp_centre"],
+        "star_radius_cm":      dist_cm,
+        "star":                star_data,
     })
 
 

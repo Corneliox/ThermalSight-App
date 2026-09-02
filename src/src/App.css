@@ -37,6 +37,12 @@ body {
   user-select: none;
 }
 
+input, textarea, select, [contenteditable="true"] {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  pointer-events: auto !important;
+}
+
 /* ── HEADER ──────────────────────────────────────────────────────────────── */
 .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 

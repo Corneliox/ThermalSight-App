@@ -190,6 +190,9 @@ export default function AnalyticsView({
           <button className={`tab-btn ${viewMode === 'radar' ? 'active' : ''}`} onClick={() => setViewMode('radar')}>
             🧭 8-Direction Thermal Distribution (Signed & Normalized)
           </button>
+          <button className={`tab-btn ${viewMode === 'gradient_surface' ? 'active' : ''}`} onClick={() => setViewMode('gradient_surface')}>
+            🏔 2D & 3D Gradient Surface
+          </button>
         </div>
 
         {/* SUB-TOOLBAR: LABELS, THEMES & TARGETS */}
@@ -522,6 +525,111 @@ export default function AnalyticsView({
                   </g>
                 </g>
               </svg>
+            </div>
+          </div>
+        )}
+
+        {/* ── VIEW 4: 2D & 3D GRADIENT SURFACE GALLERY ───────────────────── */}
+        {viewMode === 'gradient_surface' && (
+          <div style={{ background: 'var(--bg0)', border: '1px solid var(--border)', borderRadius: '8px', padding: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+              <div>
+                <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--text0)' }}>
+                  🏔 2D Spatial Quiver & 3D Thermal Gradient Surface — Label: {activeLabel.toUpperCase()}
+                </span>
+                <p style={{ margin: '2px 0 0', fontSize: '11px', color: 'var(--text2)' }}>
+                  Physical coordinate mesh (X, Y in cm) with continuous spatial gradient vectors (∇T) and 3D surface elevation.
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {series.map((s, idx) => {
+                const proto = getProtocolStep(idx);
+                const p2d = s.png2dQuiverDataUrl || s.png_2d_quiver_path;
+                const p3d = s.png3dSurfaceDataUrl || s.png_3d_surface_path;
+
+                const downloadImage = (dataSrc, fileName) => {
+                  if (!dataSrc) return;
+                  const a = document.createElement('a');
+                  a.href = dataSrc.startsWith('data:') ? dataSrc : `file://${dataSrc}`;
+                  a.download = fileName;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                };
+
+                return (
+                  <div key={idx} style={{
+                    background: 'var(--bg1)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '8px',
+                    padding: '14px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ background: 'var(--cyan)', color: '#000', fontWeight: '700', fontSize: '11px', padding: '2px 8px', borderRadius: '4px' }}>
+                          Step #{idx + 1}
+                        </span>
+                        <strong style={{ fontSize: '13px', color: 'var(--text0)' }}>{s.pictureName}</strong>
+                        <span style={{ fontSize: '11px', color: 'var(--text2)' }}>({proto.sessionName})</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '12px', fontSize: '11px' }}>
+                        <span>Avg: <strong style={{ color: 'var(--accent2)' }}>{s.mean_temp?.toFixed(2)}°C</strong></span>
+                        <span>$G_{'{max}'}$: <strong style={{ color: 'var(--cyan)' }}>{s.gradient_max?.toFixed(2)} °C/cm</strong></span>
+                        <span>Modus: <strong style={{ color: 'var(--green)' }}>{s.gradient_modus}</strong></span>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '16px' }}>
+                      {/* Left: 2D Quiver & Gradient Magnitude Map */}
+                      <div style={{ background: 'var(--bg2)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border)', textAlign: 'center' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text1)' }}>
+                            🗺 2D Quiver Vector Field & Magnitude Map
+                          </span>
+                          {p2d && (
+                            <button className="btn-ghost btn-tiny" onClick={() => downloadImage(p2d, `gradient_2d_quiver_${activeLabel}_step${idx+1}.png`)}>
+                              📥 PNG
+                            </button>
+                          )}
+                        </div>
+                        {p2d ? (
+                          <img src={p2d} alt="2D Quiver Map" style={{ maxWidth: '100%', height: 'auto', borderRadius: '4px', border: '1px solid var(--border)' }} />
+                        ) : (
+                          <div style={{ padding: '40px 10px', color: 'var(--text2)', fontSize: '11px' }}>
+                            2D Quiver map not generated for this step
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Right: 3D Thermal Gradient Surface */}
+                      <div style={{ background: 'var(--bg2)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border)', textAlign: 'center' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text1)' }}>
+                            🏔 3D Thermal Gradient Surface Mesh
+                          </span>
+                          {p3d && (
+                            <button className="btn-ghost btn-tiny" onClick={() => downloadImage(p3d, `gradient_3d_surface_${activeLabel}_step${idx+1}.png`)}>
+                              📥 PNG
+                            </button>
+                          )}
+                        </div>
+                        {p3d ? (
+                          <img src={p3d} alt="3D Surface Mesh" style={{ maxWidth: '100%', height: 'auto', borderRadius: '4px', border: '1px solid var(--border)' }} />
+                        ) : (
+                          <div style={{ padding: '40px 10px', color: 'var(--text2)', fontSize: '11px' }}>
+                            3D Surface mesh not generated for this step
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
