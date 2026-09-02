@@ -18,6 +18,7 @@ export default function AnalyticsView({
   const [stripTarget, setStripTarget] = useState(labels[0] || 'overall'); // 'overall' | labelName
   const [xAxisMode, setXAxisMode] = useState('raw'); // 'raw' | 'protocol'
   const [chartTheme, setChartTheme] = useState('dark'); // 'dark' | 'white'
+  const [scaleMode, setScaleMode] = useState('1x'); // '1x' | '2x'
 
   if (!labels.length || !activeLabel) {
     return (
@@ -526,6 +527,97 @@ export default function AnalyticsView({
                 </g>
               </svg>
             </div>
+
+            {/* 8-DIRECTION SCIENTIFIC HEATMAP MATRIX TABLE */}
+            <div style={{ marginTop: '16px', background: 'var(--bg1)', border: '1px solid var(--border)', borderRadius: '8px', padding: '14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <span style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--cyan)' }}>
+                  🧭 8-Direction Radial Gradient Matrix ({activeLabel})
+                </span>
+                <span style={{ fontSize: '11px', color: 'var(--text2)' }}>
+                  Values: ΔT vs Centroid (°C) | Directional Gradient G (°C/cm)
+                </span>
+              </div>
+
+              <div style={{ overflowX: 'auto' }}>
+                <table className="analytics-table" style={{ fontSize: '11px', width: '100%', textAlign: 'center' }}>
+                  <thead>
+                    <tr>
+                      <th>Step</th>
+                      <th>Image</th>
+                      <th>Session</th>
+                      <th>T_center</th>
+                      {COMPASS.map(c => <th key={c} style={{ color: 'var(--cyan)', fontWeight: 'bold' }}>{c}</th>)}
+                      <th>G_max (°C/cm)</th>
+                      <th>Modus Direction</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {series.map((s, idx) => {
+                      const proto = getProtocolStep(idx);
+                      const starPts = s.star?.points || {};
+                      const centerT = s.star_center_temp || s.mean_temp || 0;
+
+                      return (
+                        <tr key={idx}>
+                          <td><strong style={{ color: 'var(--cyan)' }}>#{idx + 1}</strong></td>
+                          <td><strong>{s.pictureName}</strong></td>
+                          <td style={{ fontSize: '10px', color: 'var(--text1)' }}>{proto.sessionName}</td>
+                          <td style={{ fontWeight: 'bold' }}>{centerT.toFixed(2)}°C</td>
+                          {COMPASS.map(name => {
+                            const p = starPts[name];
+                            if (!p) return <td key={name}>-</td>;
+                            const diff = p.diff ?? 0;
+                            const grad = p.grad ?? Math.abs(diff) / (s.star_radius_cm || 1);
+                            const isHot = diff >= 0;
+
+                            return (
+                              <td key={name} style={{ padding: '4px 6px' }}>
+                                <div style={{
+                                  background: isHot ? 'rgba(255, 82, 82, 0.15)' : 'rgba(68, 138, 255, 0.15)',
+                                  border: `1px solid ${isHot ? 'rgba(255, 82, 82, 0.4)' : 'rgba(68, 138, 255, 0.4)'}`,
+                                  borderRadius: '4px',
+                                  padding: '3px 4px',
+                                  lineHeight: 1.2
+                                }}>
+                                  <div style={{ color: isHot ? '#ff5252' : '#448aff', fontWeight: 'bold', fontSize: '10px' }}>
+                                    {isHot ? '+' : ''}{diff.toFixed(2)}°
+                                  </div>
+                                  <div style={{ color: 'var(--text2)', fontSize: '9px' }}>
+                                    {grad.toFixed(2)} cm⁻¹
+                                  </div>
+                                </div>
+                              </td>
+                            );
+                          })}
+                          <td style={{ color: 'var(--accent2)', fontWeight: 'bold' }}>{s.gradient_max?.toFixed(2) || '-'}</td>
+                          <td style={{ color: 'var(--green)', fontWeight: '600', fontSize: '10px' }}>{s.gradient_modus || '-'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* EDUCATIONAL GUIDE CARD */}
+              <div style={{ marginTop: '12px', background: 'var(--bg2)', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '11px', color: 'var(--text1)', lineHeight: '1.5' }}>
+                <strong style={{ color: 'var(--text0)' }}>📘 How to Read the 8-Direction Thermal Distribution:</strong>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px', marginTop: '6px' }}>
+                  <div>
+                    🔴 <strong style={{ color: '#ff5252' }}>Red (+ΔT)</strong>: Tissue in this compass direction is <em>hotter</em> than the center (indicates heat influx, inflammatory hotspot, or primary vascular inflow).
+                  </div>
+                  <div>
+                    🔵 <strong style={{ color: '#448aff' }}>Blue (−ΔT)</strong>: Tissue in this compass direction is <em>cooler</em> than the center (indicates normal outward heat dissipation or focal center hotspot).
+                  </div>
+                  <div>
+                    ⚡ <strong style={{ color: 'var(--accent2)' }}>Gradient G_k</strong>: Physical rate of temperature change per unit distance (°C/cm) along that compass axis.
+                  </div>
+                  <div>
+                    🎯 <strong style={{ color: 'var(--green)' }}>Modus Direction</strong>: The principal compass ray exhibiting the highest thermal gradient differential.
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -541,13 +633,31 @@ export default function AnalyticsView({
                   Physical coordinate mesh (X, Y in cm) with continuous spatial gradient vectors (∇T) and 3D surface elevation.
                 </p>
               </div>
+
+              {/* MULTI-SCALE VIEW SWITCHER */}
+              <div style={{ display: 'flex', gap: '4px', background: 'var(--bg1)', padding: '3px', borderRadius: '6px', border: '1px solid var(--border)' }}>
+                <button className={`btn-ghost btn-tiny ${scaleMode==='1x'?'active':''}`}
+                        style={{ background: scaleMode==='1x'?'var(--bg3)':'transparent', color: scaleMode==='1x'?'var(--cyan)':'var(--text2)', fontWeight: '600' }}
+                        onClick={() => setScaleMode('1x')}>
+                  🔍 1x Tight ROI
+                </button>
+                <button className={`btn-ghost btn-tiny ${scaleMode==='2x'?'active':''}`}
+                        style={{ background: scaleMode==='2x'?'var(--bg3)':'transparent', color: scaleMode==='2x'?'var(--accent2)':'var(--text2)', fontWeight: '600' }}
+                        onClick={() => setScaleMode('2x')}>
+                  🔎 2x Context Area (with ROI Outline)
+                </button>
+              </div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               {series.map((s, idx) => {
                 const proto = getProtocolStep(idx);
-                const p2d = s.png2dQuiverDataUrl || s.png_2d_quiver_path;
-                const p3d = s.png3dSurfaceDataUrl || s.png_3d_surface_path;
+                const p2d = scaleMode === '2x'
+                  ? (s.png2x2dDataUrl || s.png_2x_2d_path || s.png2dQuiverDataUrl || s.png_2d_quiver_path)
+                  : (s.png2dQuiverDataUrl || s.png_2d_quiver_path);
+                const p3d = scaleMode === '2x'
+                  ? (s.png2x3dDataUrl || s.png_2x_3d_path || s.png3dSurfaceDataUrl || s.png_3d_surface_path)
+                  : (s.png3dSurfaceDataUrl || s.png_3d_surface_path);
 
                 const downloadImage = (dataSrc, fileName) => {
                   if (!dataSrc) return;
@@ -576,6 +686,9 @@ export default function AnalyticsView({
                         </span>
                         <strong style={{ fontSize: '13px', color: 'var(--text0)' }}>{s.pictureName}</strong>
                         <span style={{ fontSize: '11px', color: 'var(--text2)' }}>({proto.sessionName})</span>
+                        <span style={{ fontSize: '10px', background: 'var(--bg3)', padding: '2px 6px', borderRadius: '4px', color: 'var(--accent2)' }}>
+                          Scale: {scaleMode.toUpperCase()}
+                        </span>
                       </div>
                       <div style={{ display: 'flex', gap: '12px', fontSize: '11px' }}>
                         <span>Avg: <strong style={{ color: 'var(--accent2)' }}>{s.mean_temp?.toFixed(2)}°C</strong></span>
@@ -589,10 +702,10 @@ export default function AnalyticsView({
                       <div style={{ background: 'var(--bg2)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border)', textAlign: 'center' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                           <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text1)' }}>
-                            🗺 2D Quiver Vector Field & Magnitude Map
+                            🗺 2D Quiver Vector Field & Magnitude Map ({scaleMode.toUpperCase()})
                           </span>
                           {p2d && (
-                            <button className="btn-ghost btn-tiny" onClick={() => downloadImage(p2d, `gradient_2d_quiver_${activeLabel}_step${idx+1}.png`)}>
+                            <button className="btn-ghost btn-tiny" onClick={() => downloadImage(p2d, `gradient_2d_quiver_${activeLabel}_${scaleMode}_step${idx+1}.png`)}>
                               📥 PNG
                             </button>
                           )}
@@ -610,10 +723,10 @@ export default function AnalyticsView({
                       <div style={{ background: 'var(--bg2)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border)', textAlign: 'center' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                           <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text1)' }}>
-                            🏔 3D Thermal Gradient Surface Mesh
+                            🏔 3D Thermal Gradient Surface Mesh ({scaleMode.toUpperCase()})
                           </span>
                           {p3d && (
-                            <button className="btn-ghost btn-tiny" onClick={() => downloadImage(p3d, `gradient_3d_surface_${activeLabel}_step${idx+1}.png`)}>
+                            <button className="btn-ghost btn-tiny" onClick={() => downloadImage(p3d, `gradient_3d_surface_${activeLabel}_${scaleMode}_step${idx+1}.png`)}>
                               📥 PNG
                             </button>
                           )}

@@ -702,7 +702,7 @@ export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiInd
     }
   });
 
-  // Extract square orthogonal patch for 2D Quiver & 3D Surface
+  // Extract 1x square orthogonal patch for 2D Quiver & 3D Surface
   const radInt = Math.max(8, Math.round(starData.radius_px));
   const sqX0 = Math.max(0, Math.round(starData.cx - radInt));
   const sqX1 = Math.min(W - 1, Math.round(starData.cx + radInt));
@@ -721,6 +721,30 @@ export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiInd
   const png2dQuiverDataUrl = render2DGradientQuiverCanvas(squarePatch, sqW, sqH, pxPerCm, labelName);
   const png3dSurfaceDataUrl = render3DGradientSurfaceCanvas(squarePatch, sqW, sqH, pxPerCm, labelName);
 
+  // Extract 2x Expanded Context Patch (4R x 4R) with ROI outline
+  const rad2x = Math.max(16, Math.round(starData.radius_px * 2.0));
+  const ctxX0 = Math.max(0, Math.round(starData.cx - rad2x));
+  const ctxX1 = Math.min(W - 1, Math.round(starData.cx + rad2x));
+  const ctxY0 = Math.max(0, Math.round(starData.cy - rad2x));
+  const ctxY1 = Math.min(H - 1, Math.round(starData.cy + rad2x));
+  const ctxW = Math.max(1, ctxX1 - ctxX0 + 1);
+  const ctxH = Math.max(1, ctxY1 - ctxY0 + 1);
+
+  const patch2x = new Float32Array(ctxW * ctxH);
+  for (let py = 0; py < ctxH; py++) {
+    for (let px = 0; px < ctxW; px++) {
+      patch2x[py * ctxW + px] = tempMatrix[(ctxY0 + py) * W + (ctxX0 + px)] ?? 0;
+    }
+  }
+
+  const polyRel2x = (points || []).map(p => ({
+    x: (p.x - ctxX0) / (ctxW - 1),
+    y: (p.y - ctxY0) / (ctxH - 1)
+  }));
+
+  const png2x2dDataUrl = render2DGradientQuiverCanvas(patch2x, ctxW, ctxH, pxPerCm, `${labelName} 2x Context`, polyRel2x);
+  const png2x3dDataUrl = render3DGradientSurfaceCanvas(patch2x, ctxW, ctxH, pxPerCm, `${labelName} 2x Context`, polyRel2x);
+
   return {
     labelName,
     roiIndex,
@@ -737,13 +761,15 @@ export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiInd
     croppedPngDataUrl: croppedCanvas.toDataURL('image/png'),
     png2dQuiverDataUrl,
     png3dSurfaceDataUrl,
+    png2x2dDataUrl,
+    png2x3dDataUrl,
     csvContent,
     starCsvContent
   };
 }
 
 // ── 2D Quiver & Gradient Magnitude Generator ─────────────────────────────────
-export function render2DGradientQuiverCanvas(tempPatch, patchW, patchH, pxPerCm, title = 'Thermal Map') {
+export function render2DGradientQuiverCanvas(tempPatch, patchW, patchH, pxPerCm, title = 'Thermal Map', roiPolyRel = null) {
   const canvas = document.createElement('canvas');
   const figW = 900;
   const figH = 420;
@@ -810,6 +836,23 @@ export function render2DGradientQuiverCanvas(tempPatch, patchW, patchH, pxPerCm,
   }
   ctx.putImageData(imgData1, left1X, topY);
 
+  // Optional ROI Boundary Overlay on Panel 1
+  if (roiPolyRel && roiPolyRel.length >= 3) {
+    ctx.strokeStyle = '#ffff00';
+    ctx.lineWidth = 1.8;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    roiPolyRel.forEach((p, i) => {
+      const sx = left1X + p.x * plotW;
+      const sy = topY + (1 - p.y) * plotH;
+      if (i === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    });
+    ctx.closePath();
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
   // Draw Quiver Arrows on Panel 1
   const stepGrid = Math.max(1, Math.floor(Math.min(patchW, patchH) / 8));
   ctx.strokeStyle = '#ff1744';
@@ -874,6 +917,23 @@ export function render2DGradientQuiverCanvas(tempPatch, patchW, patchH, pxPerCm,
   }
   ctx.putImageData(imgData2, left2X, topY);
 
+  // Optional ROI Boundary Overlay on Panel 2
+  if (roiPolyRel && roiPolyRel.length >= 3) {
+    ctx.strokeStyle = '#ffff00';
+    ctx.lineWidth = 1.8;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    roiPolyRel.forEach((p, i) => {
+      const sx = left2X + p.x * plotW;
+      const sy = topY + (1 - p.y) * plotH;
+      if (i === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    });
+    ctx.closePath();
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
   ctx.strokeRect(left2X, topY, plotW, plotH);
   ctx.fillStyle = '#111111';
   ctx.font = 'bold 13px sans-serif';
@@ -898,7 +958,7 @@ export function render2DGradientQuiverCanvas(tempPatch, patchW, patchH, pxPerCm,
 }
 
 // ── 3D Thermal Gradient Surface Mesh Generator ──────────────────────────────
-export function render3DGradientSurfaceCanvas(tempPatch, patchW, patchH, pxPerCm, title = 'Thermal Gradient Surface') {
+export function render3DGradientSurfaceCanvas(tempPatch, patchW, patchH, pxPerCm, title = 'Thermal Gradient Surface', roiPolyRel = null) {
   const canvas = document.createElement('canvas');
   const figW = 800;
   const figH = 650;
@@ -976,6 +1036,22 @@ export function render3DGradientSurfaceCanvas(tempPatch, patchW, patchH, pxPerCm
     }
   }
 
+  // Optional ROI Boundary on Bottom Plane
+  if (roiPolyRel && roiPolyRel.length >= 3) {
+    ctx.strokeStyle = '#ffff00';
+    ctx.lineWidth = 1.8;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    roiPolyRel.forEach((p, i) => {
+      const pt3d = project3D(p.x * (patchW - 1), (1 - p.y) * (patchH - 1), minT);
+      if (i === 0) ctx.moveTo(pt3d.px, pt3d.py);
+      else ctx.lineTo(pt3d.px, pt3d.py);
+    });
+    ctx.closePath();
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
   // 3D Surface Wireframe & Shaded Polygons
   const stepS = Math.max(1, Math.floor(Math.min(patchW, patchH) / 22));
   for (let y = 0; y < patchH - stepS; y += stepS) {
@@ -1032,6 +1108,85 @@ export function render3DGradientSurfaceCanvas(tempPatch, patchW, patchH, pxPerCm
   ctx.textAlign = 'left';
   ctx.fillText(`${maxT.toFixed(1)} °C`, cbX + 22, cbY + 10);
   ctx.fillText(`${minT.toFixed(1)} °C`, cbX + 22, cbY + cbH);
+
+  return canvas.toDataURL('image/png');
+}
+
+// ── Full Labeled Scene Image Generator (All Labels Overlaid) ────────────────
+export function generateFullLabeledSceneCanvas(tempMatrix, W, H, rois = [], labelDefs = []) {
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  const imgData = ctx.createImageData(W, H);
+
+  let minT = Infinity, maxT = -Infinity;
+  for (let i = 0; i < W * H; i++) {
+    const t = tempMatrix ? (tempMatrix[i] ?? 0) : 0;
+    if (t < minT) minT = t;
+    if (t > maxT) maxT = t;
+  }
+  const span = Math.max(0.1, maxT - minT);
+
+  for (let i = 0; i < W * H; i++) {
+    const t = tempMatrix ? (tempMatrix[i] ?? minT) : minT;
+    const norm = Math.min(255, Math.max(0, Math.floor(((t - minT) / span) * 255)));
+    imgData.data[i * 4 + 0] = INFERNO_LUT[norm * 3 + 0];
+    imgData.data[i * 4 + 1] = INFERNO_LUT[norm * 3 + 1];
+    imgData.data[i * 4 + 2] = INFERNO_LUT[norm * 3 + 2];
+    imgData.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(imgData, 0, 0);
+
+  // Draw all ROI polygons, center dots, and label badges
+  (rois || []).forEach(roi => {
+    const def = labelDefs.find(l => l.id === roi.labelId) || { name: roi.labelName || 'ROI', color: '#00e5ff' };
+    const color = def.color || '#00e5ff';
+
+    if (roi.type === 'circle' && roi.cx !== undefined) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(roi.cx, roi.cy, roi.radius, 0, 2 * Math.PI);
+      ctx.stroke();
+
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(roi.cx, roi.cy, 3, 0, 2 * Math.PI);
+      ctx.fill();
+
+      // Label text
+      ctx.fillStyle = 'rgba(0,0,0,0.75)';
+      ctx.fillRect(roi.cx - 18, roi.cy - roi.radius - 16, 36, 14);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.fillText(def.name, roi.cx - 12, roi.cy - roi.radius - 5);
+    } else if (roi.points && roi.points.length >= 3) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      roi.points.forEach((p, idx) => {
+        if (idx === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      });
+      ctx.closePath();
+      ctx.stroke();
+
+      const cx = roi.points.reduce((a, b) => a + b.x, 0) / roi.points.length;
+      const cy = roi.points.reduce((a, b) => a + b.y, 0) / roi.points.length;
+
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 3, 0, 2 * Math.PI);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(0,0,0,0.75)';
+      ctx.fillRect(cx - 18, cy - 18, 36, 14);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.fillText(def.name, cx - 12, cy - 7);
+    }
+  });
 
   return canvas.toDataURL('image/png');
 }

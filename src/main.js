@@ -293,13 +293,37 @@ ipcMain.handle('measure-star', async (_event, imagePath, cx, cy, dist_cm, rotati
 // ── IPC: crop-labels ──────────────────────────────────────────────────────────
 ipcMain.handle('crop-labels', async (_event, imagePath, roiPoints, labelName, roiIndex, outputDir) => {
   const pointsJson = JSON.stringify(roiPoints);
-  return runPython('crop', [
+  const res = await runPython('crop', [
     imagePath,
     pointsJson,
     labelName,
     String(roiIndex),
     outputDir,
   ]);
+
+  if (res && res.status === 'ok') {
+    try {
+      if (res.png_path && fs.existsSync(res.png_path)) {
+        res.croppedPngDataUrl = `data:image/png;base64,${fs.readFileSync(res.png_path).toString('base64')}`;
+      }
+      if (res.png_2d_quiver_path && fs.existsSync(res.png_2d_quiver_path)) {
+        res.png2dQuiverDataUrl = `data:image/png;base64,${fs.readFileSync(res.png_2d_quiver_path).toString('base64')}`;
+      }
+      if (res.png_3d_surface_path && fs.existsSync(res.png_3d_surface_path)) {
+        res.png3dSurfaceDataUrl = `data:image/png;base64,${fs.readFileSync(res.png_3d_surface_path).toString('base64')}`;
+      }
+      if (res.png_2x_2d_path && fs.existsSync(res.png_2x_2d_path)) {
+        res.png2x2dDataUrl = `data:image/png;base64,${fs.readFileSync(res.png_2x_2d_path).toString('base64')}`;
+      }
+      if (res.png_2x_3d_path && fs.existsSync(res.png_2x_3d_path)) {
+        res.png2x3dDataUrl = `data:image/png;base64,${fs.readFileSync(res.png_2x_3d_path).toString('base64')}`;
+      }
+    } catch (err) {
+      sendLogToRenderer('warning', `Failed to encode cropped PNGs to base64: ${err.message}`);
+    }
+  }
+
+  return res;
 });
 
 // ── IPC: open-file-dialog ─────────────────────────────────────────────────────

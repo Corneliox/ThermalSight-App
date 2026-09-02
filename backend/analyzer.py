@@ -225,7 +225,7 @@ def save_grid_png(data, panels, out_dir: Path, stem: str) -> str:
     return str(p)
 
 
-def save_gradient_2d_quiver(temp_patch: np.ndarray, out_path: Path, title: str, px_cm: float = 10.0) -> str:
+def save_gradient_2d_quiver(temp_patch: np.ndarray, out_path: Path, title: str, px_cm: float = 10.0, roi_polygon: list = None) -> str:
     """
     Generates side-by-side 2D Heatmap with Quiver gradient vector field + 2D Gradient Magnitude map.
     Matching scientific publication standard (Image 2).
@@ -260,6 +260,14 @@ def save_gradient_2d_quiver(temp_patch: np.ndarray, out_path: Path, title: str, 
 
     max_m = np.max(grad_mag) or 1.0
     ax1.quiver(x_coords, y_coords, u_vals, v_vals, color="red", angles="xy", scale_units="xy", scale=max_m * 1.8, width=0.007)
+
+    # Optional ROI Boundary Outline (for 2x context or all-labels)
+    if roi_polygon and len(roi_polygon) >= 3:
+        pxs = [pt[0] for pt in roi_polygon] + [roi_polygon[0][0]]
+        pys = [pt[1] for pt in roi_polygon] + [roi_polygon[0][1]]
+        ax1.plot(pxs, pys, color="yellow", linestyle="--", linewidth=1.5, label="ROI Target")
+        ax2.plot(pxs, pys, color="yellow", linestyle="--", linewidth=1.5)
+
     ax1.set_title(f"{title}: Thermal Map", fontsize=11, fontweight="bold", pad=8)
     ax1.set_xlabel("X (cm)", fontsize=10)
     ax1.set_ylabel("Y (cm)", fontsize=10)
@@ -281,7 +289,7 @@ def save_gradient_2d_quiver(temp_patch: np.ndarray, out_path: Path, title: str, 
     return str(out_path)
 
 
-def save_gradient_3d_surface(temp_patch: np.ndarray, out_path: Path, title: str, px_cm: float = 10.0) -> str:
+def save_gradient_3d_surface(temp_patch: np.ndarray, out_path: Path, title: str, px_cm: float = 10.0, roi_polygon: list = None) -> str:
     """
     Generates 3D Surface mesh with colormap + Bottom-plane contour lines and 2D Quiver vectors.
     Matching scientific publication standard (Image 1).
@@ -335,6 +343,13 @@ def save_gradient_3d_surface(temp_patch: np.ndarray, out_path: Path, title: str,
     norm_v = np.where(mag_q > 0.001, v_q / max_q * (Ly / 10.0), 0)
 
     ax.quiver(x_q, y_q, z_q, norm_u, norm_v, w_q, color="#0055ff", length=0.8, arrow_length_ratio=0.35, linewidth=0.9)
+
+    # Optional ROI Boundary Outline projected on bottom plane
+    if roi_polygon and len(roi_polygon) >= 3:
+        pxs = [pt[0] for pt in roi_polygon] + [roi_polygon[0][0]]
+        pys = [pt[1] for pt in roi_polygon] + [roi_polygon[0][1]]
+        pzs = [z_bottom] * len(pxs)
+        ax.plot(pxs, pys, pzs, color="yellow", linestyle="--", linewidth=1.5)
 
     ax.set_zlim(z_bottom, z_max + z_span * 0.1)
     ax.set_title(f"{title}\n3D Thermal Gradient Surface", fontsize=12, fontweight="bold", pad=12)
@@ -688,7 +703,7 @@ def cmd_crop(image_path: str, points_json_str: str, label_name: str,
     cv2.imwrite(str(png_path), colored_rgba)
     log(f"  saved isolated ROI PNG: {png_path.name}")
 
-    # Generate 2D Quiver & 3D Gradient Surface Plots from square orthogonal patch
+    # Generate 1x Tight 2D Quiver & 3D Gradient Surface Plots from square orthogonal patch
     rad_int = max(8, int(round(rad_px)))
     sq_x0 = max(0, int(round(cx - rad_int)))
     sq_x1 = min(temp.shape[1], int(round(cx + rad_int)))
@@ -696,22 +711,52 @@ def cmd_crop(image_path: str, points_json_str: str, label_name: str,
     sq_y1 = min(temp.shape[0], int(round(cy + rad_int)))
     temp_square_patch = temp[sq_y0:sq_y1, sq_x0:sq_x1]
 
+    effective_px_cm = rad_px / max(0.001, dist_cm)
     png_2d_quiver_path = None
     png_3d_surface_path = None
     if temp_square_patch.size > 0 and temp_square_patch.shape[0] >= 4 and temp_square_patch.shape[1] >= 4:
         try:
             p2d = out_dir / f"isolated_{stem}_{safe_label}_{roi_index_str}_2d_quiver.png"
-            effective_px_cm = rad_px / max(0.001, dist_cm)
             png_2d_quiver_path = save_gradient_2d_quiver(temp_square_patch, p2d, f"{label_name} ({stem})", effective_px_cm)
         except Exception as e:
             log(f"  warning: failed to render 2D quiver: {e}")
 
         try:
             p3d = out_dir / f"isolated_{stem}_{safe_label}_{roi_index_str}_3d_surface.png"
-            effective_px_cm = rad_px / max(0.001, dist_cm)
             png_3d_surface_path = save_gradient_3d_surface(temp_square_patch, p3d, f"{label_name} ({stem})", effective_px_cm)
         except Exception as e:
             log(f"  warning: failed to render 3D surface: {e}")
+
+    # Generate 2x Expanded Context Area Plots (with original ROI boundary overlay)
+    rad_2x = max(16, int(round(rad_px * 2.0)))
+    ctx_x0 = max(0, int(round(cx - rad_2x)))
+    ctx_x1 = min(temp.shape[1], int(round(cx + rad_2x)))
+    ctx_y0 = max(0, int(round(cy - rad_2x)))
+    ctx_y1 = min(temp.shape[0], int(round(cy + rad_2x)))
+    temp_2x_patch = temp[ctx_y0:ctx_y1, ctx_x0:ctx_x1]
+
+    png_2x_2d_path = None
+    png_2x_3d_path = None
+    if temp_2x_patch.size > 0 and temp_2x_patch.shape[0] >= 4 and temp_2x_patch.shape[1] >= 4:
+        try:
+            p2d_2x = out_dir / f"isolated_{stem}_{safe_label}_{roi_index_str}_2x_context_2d.png"
+            patch_poly_cm = [
+                ((float(pt[0]) - ctx_x0) / effective_px_cm, (ctx_y1 - float(pt[1])) / effective_px_cm)
+                for pt in pts_arr
+            ]
+            png_2x_2d_path = save_gradient_2d_quiver(temp_2x_patch, p2d_2x, f"{label_name} 2x Context ({stem})", effective_px_cm, roi_polygon=patch_poly_cm)
+        except Exception as e:
+            log(f"  warning: failed to render 2x context 2D quiver: {e}")
+
+        try:
+            p3d_2x = out_dir / f"isolated_{stem}_{safe_label}_{roi_index_str}_2x_context_3d.png"
+            patch_poly_cm = [
+                ((float(pt[0]) - ctx_x0) / effective_px_cm, (ctx_y1 - float(pt[1])) / effective_px_cm)
+                for pt in pts_arr
+            ]
+            png_2x_3d_path = save_gradient_3d_surface(temp_2x_patch, p3d_2x, f"{label_name} 2x Context ({stem})", effective_px_cm, roi_polygon=patch_poly_cm)
+        except Exception as e:
+            log(f"  warning: failed to render 2x context 3D surface: {e}")
 
     emit({
         "status":              "ok",
@@ -720,6 +765,8 @@ def cmd_crop(image_path: str, points_json_str: str, label_name: str,
         "png_path":            str(png_path),
         "png_2d_quiver_path":  str(png_2d_quiver_path) if png_2d_quiver_path else None,
         "png_3d_surface_path": str(png_3d_surface_path) if png_3d_surface_path else None,
+        "png_2x_2d_path":      str(png_2x_2d_path) if png_2x_2d_path else None,
+        "png_2x_3d_path":      str(png_2x_3d_path) if png_2x_3d_path else None,
         "stem":                stem,
         "label":               label_name,
         "roi_index":           int(roi_index_str),
