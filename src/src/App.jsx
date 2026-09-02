@@ -1117,7 +1117,7 @@ export default function App() {
 
       let masterCsv = '\uFEFF' + `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,gradient_min_c_per_cm,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm,${compassHeaders}\n`;
 
-      Object.keys(aggregatedStats).forEach(labelName => {
+      for (const labelName of Object.keys(aggregatedStats)) {
         const series = aggregatedStats[labelName];
         let labelCsv = '\uFEFF' + `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,gradient_min_c_per_cm,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm,${compassHeaders}\n`;
 
@@ -1153,34 +1153,32 @@ export default function App() {
         exportFilesMap[`thermal_direction_${labelName}_white.svg`] = generateThermalDirectionSvg(labelName, series, 'white');
 
         // Generate Relative Sequence Comparison Montage PNG for this label
-        const relMontage = generateFullSequenceComparisonCanvas(targetPaths, resultsMap, segmentations, calibrationsMap, labelName, aggregatedStats);
+        const relMontage = await generateFullSequenceComparisonCanvas(targetPaths, resultsMap, segmentations, calibrationsMap, labelName, aggregatedStats);
         if (relMontage) {
           exportFilesMap[`comparison_relative_${labelName}.png`] = relMontage.split(',')[1];
         }
-      });
+      }
 
       exportFilesMap[`master_summary_all_labels.csv`] = masterCsv;
       exportFilesMap[`Sheet/master_summary_all_labels.csv`] = masterCsv;
 
-      // Generate Full Labeled Scene Image PNG for each Step (All ROIs drawn on full image)
-      targetPaths.forEach((imgPath, idx) => {
+      // Generate Full Labeled Scene Image PNG for each Step (All ROIs drawn on each step's actual image)
+      for (let idx = 0; idx < targetPaths.length; idx++) {
+        const imgPath = targetPaths[idx];
         const item = imageList.find(img => (typeof img === 'string' ? img : img.path) === imgPath);
         const stem = (typeof item === 'object' && item?.stem) ? item.stem : `step_${idx + 1}`;
         const segs = segmentations[imgPath] || [];
         const res = resultsMap[imgPath];
-        const raw = res?.raw || res?.data || res;
-        const tempMatrix = raw?.tempMatrix || raw?.temp || res?.temp;
-        const w = raw?.width || (Array.isArray(tempMatrix) && tempMatrix[0]?.length) || 320;
-        const h = raw?.height || (Array.isArray(tempMatrix) && tempMatrix.length) || 240;
+        const [h, w] = res?.shape || [240, 320];
 
-        const labeledCanvas = generateFullLabeledSceneCanvas(tempMatrix, w, h, segs, labels, imgRef.current);
+        const labeledCanvas = await generateFullLabeledSceneCanvas(res, w, h, segs, labels);
         if (labeledCanvas) {
           exportFilesMap[`labeled_scene_${stem}.png`] = labeledCanvas.split(',')[1];
         }
-      });
+      }
 
       // Generate Overall Sequence Comparison Montage PNG (All Labels Together)
-      const overallMontage = generateFullSequenceComparisonCanvas(targetPaths, resultsMap, segmentations, calibrationsMap, 'overall', aggregatedStats);
+      const overallMontage = await generateFullSequenceComparisonCanvas(targetPaths, resultsMap, segmentations, calibrationsMap, 'overall', aggregatedStats);
       if (overallMontage) {
         exportFilesMap[`comparison_overall_all_labels.png`] = overallMontage.split(',')[1];
       }

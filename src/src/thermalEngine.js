@@ -1124,22 +1124,50 @@ export function render3DGradientSurfaceCanvas(tempPatch, patchW, patchH, pxPerCm
 }
 
 // ── Full Labeled Scene Image Generator (All Labels Overlaid) ────────────────
-export function generateFullLabeledSceneCanvas(tempMatrixOrImg, W = 320, H = 240, rois = [], labelDefs = [], bgCanvasOrImg = null) {
+export async function generateFullLabeledSceneCanvas(resOrMatrix, W = 320, H = 240, rois = [], labelDefs = []) {
   const canvas = document.createElement('canvas');
-  canvas.width = (bgCanvasOrImg && bgCanvasOrImg.width) ? bgCanvasOrImg.width : (W || 320);
-  canvas.height = (bgCanvasOrImg && bgCanvasOrImg.height) ? bgCanvasOrImg.height : (H || 240);
+  canvas.width = W || 320;
+  canvas.height = H || 240;
   const ctx = canvas.getContext('2d');
 
-  if (bgCanvasOrImg && (bgCanvasOrImg instanceof HTMLImageElement || bgCanvasOrImg instanceof HTMLCanvasElement)) {
-    ctx.drawImage(bgCanvasOrImg, 0, 0);
-  } else if (tempMatrixOrImg && (tempMatrixOrImg.length || tempMatrixOrImg instanceof Float32Array)) {
-    const is2D = Array.isArray(tempMatrixOrImg) && Array.isArray(tempMatrixOrImg[0]);
+  let renderedBg = false;
+
+  // 1. If we have an image path or dataURL from Python backend or client
+  const imgUrl = resOrMatrix?.images?.inferno || resOrMatrix?.images?.original || (typeof resOrMatrix === 'string' && (resOrMatrix.startsWith('data:') || resOrMatrix.startsWith('file:') || resOrMatrix.includes('/')) ? resOrMatrix : null);
+  if (imgUrl) {
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      const fileUrl = imgUrl.startsWith('data:') || imgUrl.startsWith('blob:') || imgUrl.startsWith('http')
+        ? imgUrl
+        : (imgUrl.startsWith('file://') ? imgUrl : `file://${imgUrl.replace(/\\/g, '/')}`);
+      
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+        img.src = fileUrl;
+      });
+      canvas.width = img.naturalWidth || W || 320;
+      canvas.height = img.naturalHeight || H || 240;
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      renderedBg = true;
+    } catch (e) {
+      console.warn('generateFullLabeledSceneCanvas: image load error, falling back to matrix/color', e);
+    }
+  }
+
+  // 2. If no image drawn, render from tempMatrix
+  const tempMatrix = resOrMatrix?.raw?.tempMatrix || (resOrMatrix instanceof Float32Array || Array.isArray(resOrMatrix) ? resOrMatrix : null);
+  if (!renderedBg && tempMatrix) {
+    canvas.width = W || 320;
+    canvas.height = H || 240;
+    const is2D = Array.isArray(tempMatrix) && Array.isArray(tempMatrix[0]);
     const imgData = ctx.createImageData(canvas.width, canvas.height);
     let minT = Infinity, maxT = -Infinity;
     
     for (let y = 0; y < canvas.height; y++) {
       for (let x = 0; x < canvas.width; x++) {
-        const t = is2D ? (tempMatrixOrImg[y]?.[x] ?? 0) : (tempMatrixOrImg[y * canvas.width + x] ?? 0);
+        const t = is2D ? (tempMatrix[y]?.[x] ?? 0) : (tempMatrix[y * canvas.width + x] ?? 0);
         if (t < minT) minT = t;
         if (t > maxT) maxT = t;
       }
@@ -1148,7 +1176,7 @@ export function generateFullLabeledSceneCanvas(tempMatrixOrImg, W = 320, H = 240
 
     for (let y = 0; y < canvas.height; y++) {
       for (let x = 0; x < canvas.width; x++) {
-        const t = is2D ? (tempMatrixOrImg[y]?.[x] ?? minT) : (tempMatrixOrImg[y * canvas.width + x] ?? minT);
+        const t = is2D ? (tempMatrix[y]?.[x] ?? minT) : (tempMatrix[y * canvas.width + x] ?? minT);
         const norm = Math.min(255, Math.max(0, Math.floor(((t - minT) / span) * 255)));
         const idx = (y * canvas.width + x) * 4;
         imgData.data[idx + 0] = INFERNO_LUT[norm * 3 + 0];
@@ -1158,58 +1186,133 @@ export function generateFullLabeledSceneCanvas(tempMatrixOrImg, W = 320, H = 240
       }
     }
     ctx.putImageData(imgData, 0, 0);
-  } else {
+    renderedBg = true;
+  }
+
+  if (!renderedBg) {
     ctx.fillStyle = '#1a1a24';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 
-  // Draw all ROI polygons, center dots, and label badges
+  // Draw all ROI polygons, center dots, and label badges scaled exactly to canvas dimensions
+  const scaleX = canvas.width / (W || 320);
+  const scaleY = canvas.height / (H || 240);
+
   (rois || []).forEach(roi => {
-    const def = labelDefs.find(l => l.id === roi.labelId) || { name: roi.labelName || 'ROI', color: '#00e5ff' };
-    const color = def.color || '#00e5ff';
+    const def = (labelDefs || []).find(l => l.id === roi.labelId || l.name === roi.labelName) || { name: roi.labelName || 'ROI', color: roi.color || '#00e5ff' };
+    const color = roi.color || def.color || '#00e5ff';
+    const name = roi.labelName || def.name || 'ROI';
 
     if (roi.type === 'circle' && roi.cx !== undefined) {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
+      const cx = roi.cx * scaleX;
+      const cy = roi.cy * scaleY;
+      const r = (roi.radius || 15) * Math.min(scaleX, scaleY);
+
+      // Semi-transparent fill
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.25;
       ctx.beginPath();
-      ctx.arc(roi.cx, roi.cy, roi.radius, 0, 2 * Math.PI);
+      ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.globalAlpha = 1.0;
+
+      // Outer stroke
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, 2 * Math.PI);
       ctx.stroke();
 
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(roi.cx, roi.cy, 3, 0, 2 * Math.PI);
-      ctx.fill();
-
-      // Label text
-      ctx.fillStyle = 'rgba(0,0,0,0.75)';
-      ctx.fillRect(roi.cx - 18, roi.cy - roi.radius - 16, 36, 14);
+      // Center dot
       ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 10px sans-serif';
-      ctx.fillText(def.name, roi.cx - 12, roi.cy - roi.radius - 5);
-    } else if (roi.points && roi.points.length >= 3) {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
       ctx.beginPath();
-      roi.points.forEach((p, idx) => {
+      ctx.arc(cx, cy, 3.5, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // Label text badge
+      ctx.font = 'bold 12px sans-serif';
+      const tw = ctx.measureText(name).width;
+      const bw = tw + 14;
+      const bh = 18;
+      const bx = cx - bw / 2;
+      const by = cy - r - bh - 4;
+
+      ctx.fillStyle = 'rgba(0,0,0,0.85)';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, 4);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(name, cx, by + bh / 2);
+      ctx.textAlign = 'left';
+    } else if (roi.points && roi.points.length >= 3) {
+      const scaledPts = roi.points.map(p => ({ x: p.x * scaleX, y: p.y * scaleY }));
+
+      // Semi-transparent fill
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.25;
+      ctx.beginPath();
+      scaledPts.forEach((p, idx) => {
+        if (idx === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      });
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1.0;
+
+      // Polygon stroke
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      scaledPts.forEach((p, idx) => {
         if (idx === 0) ctx.moveTo(p.x, p.y);
         else ctx.lineTo(p.x, p.y);
       });
       ctx.closePath();
       ctx.stroke();
 
-      const cx = roi.points.reduce((a, b) => a + b.x, 0) / roi.points.length;
-      const cy = roi.points.reduce((a, b) => a + b.y, 0) / roi.points.length;
+      // Centroid
+      const cx = scaledPts.reduce((a, b) => a + b.x, 0) / scaledPts.length;
+      const cy = scaledPts.reduce((a, b) => a + b.y, 0) / scaledPts.length;
 
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(cx, cy, 3, 0, 2 * Math.PI);
-      ctx.fill();
-
-      ctx.fillStyle = 'rgba(0,0,0,0.75)';
-      ctx.fillRect(cx - 18, cy - 18, 36, 14);
+      // Center dot
       ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 10px sans-serif';
-      ctx.fillText(def.name, cx - 12, cy - 7);
+      ctx.beginPath();
+      ctx.arc(cx, cy, 3.5, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // Label text badge
+      ctx.font = 'bold 12px sans-serif';
+      const tw = ctx.measureText(name).width;
+      const bw = tw + 14;
+      const bh = 18;
+      const bx = cx - bw / 2;
+      const by = cy - bh - 8;
+
+      ctx.fillStyle = 'rgba(0,0,0,0.85)';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, 4);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(name, cx, by + bh / 2);
+      ctx.textAlign = 'left';
     }
   });
 
@@ -1217,7 +1320,7 @@ export function generateFullLabeledSceneCanvas(tempMatrixOrImg, W = 320, H = 240
 }
 
 // ── Sequence Comparison Montage Generator (Overall & Relative Focus) ───────
-export function generateFullSequenceComparisonCanvas(imageList, resultsMap = {}, segmentations = {}, calibrationsMap = {}, targetLabel = 'overall', aggregatedStats = {}) {
+export async function generateFullSequenceComparisonCanvas(imageList, resultsMap = {}, segmentations = {}, calibrationsMap = {}, targetLabel = 'overall', aggregatedStats = {}) {
   if (!imageList || imageList.length === 0) return null;
 
   const N = imageList.length;
@@ -1297,10 +1400,12 @@ export function generateFullSequenceComparisonCanvas(imageList, resultsMap = {},
     ctx.strokeRect(tileX, tileY, tileW, tileH);
 
     let drawnImage = false;
+    const [H, W] = res?.shape || [240, 320];
+    const sx = tileW / W;
+    const sy = tileH / H;
 
-    // 1. If raw matrix available in RAM: Draw full thermal heatmap + overlays
-    if (res?.raw?.tempMatrix && res?.shape) {
-      const [H, W] = res.shape;
+    // 1. If raw matrix available in RAM: Draw full thermal heatmap
+    if (res?.raw?.tempMatrix) {
       const offscreen = document.createElement('canvas');
       offscreen.width = W;
       offscreen.height = H;
@@ -1317,21 +1422,35 @@ export function generateFullSequenceComparisonCanvas(imageList, resultsMap = {},
         oImgData.data[p * 4 + 3] = 255;
       }
       oCtx.putImageData(oImgData, 0, 0);
-
-      // Draw thermal image scaled to tile
       ctx.drawImage(offscreen, tileX, tileY, tileW, tileH);
       drawnImage = true;
+    } else if (res?.images?.inferno || res?.images?.original) {
+      // 2. Load inferno image file
+      const imgUrl = res.images.inferno || res.images.original;
+      try {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        const fileUrl = imgUrl.startsWith('data:') || imgUrl.startsWith('blob:') || imgUrl.startsWith('http')
+          ? imgUrl
+          : (imgUrl.startsWith('file://') ? imgUrl : `file://${imgUrl.replace(/\\/g, '/')}`);
+        
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+          img.src = fileUrl;
+        });
+        ctx.drawImage(img, tileX, tileY, tileW, tileH);
+        drawnImage = true;
+      } catch (e) {
+        console.warn('Failed loading tile image in montage:', e);
+      }
+    }
 
-      // Scale factors from raw image to tile
-      const sx = tileW / W;
-      const sy = tileH / H;
-
-      // Draw ROIs and 8-Star Gradients
+    // Draw ROIs and 8-Star Gradients
+    if (drawnImage) {
       rois.forEach(roi => {
         const isTarget = targetLabel === 'overall' || roi.labelName === targetLabel;
         if (!isTarget) return;
-
-        const star = roi.star || computeLabelStarGradient(matrix, W, H, roi, scale);
 
         // Polygon outline
         if (roi.points && roi.points.length > 0) {
@@ -1349,6 +1468,7 @@ export function generateFullSequenceComparisonCanvas(imageList, resultsMap = {},
         }
 
         // 8-Point Star Overlay
+        const star = roi.star || (res?.raw?.tempMatrix ? computeLabelStarGradient(res.raw.tempMatrix, W, H, roi, scale) : null);
         if (star) {
           const scx = tileX + star.cx * sx;
           const scy = tileY + star.cy * sy;
@@ -1367,7 +1487,7 @@ export function generateFullSequenceComparisonCanvas(imageList, resultsMap = {},
 
           // 8 Spokes
           COMPASS.forEach(name => {
-            const p = star.points[name];
+            const p = star.points?.[name];
             if (p) {
               const spX = tileX + p.px * sx;
               const spY = tileY + p.py * sy;
@@ -1428,12 +1548,6 @@ export function generateFullSequenceComparisonCanvas(imageList, resultsMap = {},
       ctx.font = 'bold 14px sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(`🌡 ${stemName}`, tileX + tileW / 2, tileY + 70);
-
-      ctx.fillStyle = '#ffb300';
-      ctx.font = 'bold 22px monospace';
-      ctx.fillText(`${meanTemp.toFixed(2)} °C`, tileX + tileW / 2, tileY + 110);
-
-      ctx.fillStyle = '#8888a0';
       ctx.font = '11px sans-serif';
       ctx.fillText(`Target: ${targetLabel.toUpperCase()}`, tileX + tileW / 2, tileY + 140);
       ctx.fillText(`G_max: ${gMax.toFixed(2)} °C/cm`, tileX + tileW / 2, tileY + 165);
