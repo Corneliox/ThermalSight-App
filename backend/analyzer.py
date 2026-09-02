@@ -647,12 +647,15 @@ def cmd_crop(image_path: str, points_json_str: str, label_name: str,
     dom_diff = star_data["points"][dom]["diff"]
     dom_grad = abs(dom_diff) / max(0.0001, dist_cm)
     grad_modus = f"{dom} ({'+' if dom_diff >= 0 else ''}{dom_diff:.2f}°C)"
-    grad_max = float(dom_grad)
+    
+    grads = [abs(p["diff"]) / max(0.0001, dist_cm) for p in star_data["points"].values()]
+    grad_max = round(max(grads), 4) if grads else float(dom_grad)
+    grad_min = round(min(grads), 4) if grads else 0.0
 
     # Save detailed 9-point star gradient CSV
     star_csv_filename = f"isolated_{stem}_{safe_label}_{roi_index_str}_gradient_star.csv"
     star_csv_path = out_dir / star_csv_filename
-    with open(star_csv_path, "w", newline="") as sf:
+    with open(star_csv_path, "w", newline="", encoding="utf-8-sig") as sf:
         sw = csv.writer(sf)
         sw.writerow(["point", "direction", "angle_deg", "px", "py", "temp_c", "diff_centre_c", "gradient_c_per_cm"])
         sw.writerow(["centre", "Center", 0, f"{cx:.1f}", f"{cy:.1f}", f"{star_data['temp_centre']:.4f}", "0.0000", "0.0000"])
@@ -665,6 +668,7 @@ def cmd_crop(image_path: str, points_json_str: str, label_name: str,
 
         star_data["radius_cm"] = float(dist_cm)
         star_data["gradient_max"] = float(grad_max)
+        star_data["gradient_min"] = float(grad_min)
         star_data["gradient_modus"] = str(grad_modus)
 
     # Render cropped thermal PNG with masked transparency and 8-point star overlay

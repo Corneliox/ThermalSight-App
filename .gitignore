@@ -1,0 +1,8 @@
+﻿node_modules/
+build/
+*.pyc
+__pycache__/
+.DS_Store
+.firebase/
+test_out/
+*.log
