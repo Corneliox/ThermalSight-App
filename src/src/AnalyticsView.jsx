@@ -692,7 +692,8 @@ export default function AnalyticsView({
                       </div>
                       <div style={{ display: 'flex', gap: '12px', fontSize: '11px' }}>
                         <span>Avg: <strong style={{ color: 'var(--accent2)' }}>{s.mean_temp?.toFixed(2)}°C</strong></span>
-                        <span>$G_{'{max}'}$: <strong style={{ color: 'var(--cyan)' }}>{s.gradient_max?.toFixed(2)} °C/cm</strong></span>
+                        <span>G_min: <strong style={{ color: 'var(--green)' }}>{(s.gradient_min !== undefined ? s.gradient_min : (s.star?.gradient_min ?? 0)).toFixed(2)} °C/cm</strong></span>
+                        <span>G_max: <strong style={{ color: 'var(--cyan)' }}>{(s.gradient_max !== undefined ? s.gradient_max : (s.star?.gradient_max ?? 0)).toFixed(2)} °C/cm</strong></span>
                         <span>Modus: <strong style={{ color: 'var(--green)' }}>{s.gradient_modus}</strong></span>
                       </div>
                     </div>
@@ -759,6 +760,7 @@ export default function AnalyticsView({
                 <th>ΔT Mean (vs Step 1)</th>
                 <th>Center (°C)</th>
                 <th>ΔT Center (vs Step 1)</th>
+                <th>Gradient Min (°C/cm)</th>
                 <th>Gradient Max (°C/cm)</th>
                 <th>Gradient Modus</th>
                 <th>Min / Max</th>
@@ -771,6 +773,8 @@ export default function AnalyticsView({
                 const deltaMean = s.mean_temp - baselineMean;
                 const centerVal = s.star_center_temp || s.mean_temp;
                 const deltaCenter = centerVal - baselineCenter;
+                const gMin = s.gradient_min !== undefined ? s.gradient_min : (s.star?.gradient_min ?? 0);
+                const gMax = s.gradient_max !== undefined ? s.gradient_max : (s.star?.gradient_max ?? 0);
                 return (
                   <tr key={i}>
                     <td><strong style={{ color: 'var(--cyan)' }}>#{i + 1}</strong></td>
@@ -786,7 +790,8 @@ export default function AnalyticsView({
                     <td style={{ color: deltaCenter >= 0 ? 'var(--accent)' : 'var(--cyan)', fontWeight: 'bold' }}>
                       {i === 0 ? 'Baseline' : `${deltaCenter >= 0 ? '+' : ''}${deltaCenter.toFixed(2)}°C`}
                     </td>
-                    <td style={{ color: 'var(--accent2)', fontWeight: '600' }}>{s.gradient_max !== undefined ? s.gradient_max.toFixed(2) : '-'}</td>
+                    <td style={{ color: 'var(--green)', fontWeight: '600' }}>{gMin !== undefined ? gMin.toFixed(2) : '-'}</td>
+                    <td style={{ color: 'var(--accent2)', fontWeight: '600' }}>{gMax !== undefined ? gMax.toFixed(2) : '-'}</td>
                     <td style={{ color: 'var(--cyan)', fontSize: '11px' }}>{s.gradient_modus || '-'}</td>
                     <td style={{ fontSize: '10px' }}>{(s.min_temp ?? 0).toFixed(1)} / {(s.max_temp ?? 0).toFixed(1)}</td>
                     <td>{s.pixel_count}</td>

@@ -379,7 +379,7 @@ def save_full_csvs(data: dict, out_dir: Path, stem: str) -> dict:
     for key in ("temp", "sobelx_raw", "sobely_raw"):
         arr  = data[key]
         path = out_dir / f"{stem}_{key}.csv"
-        with open(path, "w", newline="") as f:
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
             w = csv.writer(f)
             for row in arr:
                 w.writerow([f"{v:.6f}" for v in row])
@@ -455,7 +455,7 @@ def save_star_csv(star: dict, cx: float, cy: float, dist_cm: float,
                 f"_d{dist_cm:.1f}cm_r{rotation_deg:.0f}deg")
     csv_path = out_dir / f"{stem}_{tag}.csv"
 
-    with open(csv_path, "w", newline="") as f:
+    with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)
         w.writerow(["# STAR MEASUREMENT"])
         w.writerow(["# centre_px",    f"{cx:.2f},{cy:.2f}"])
@@ -585,34 +585,27 @@ def cmd_crop(image_path: str, points_json_str: str, label_name: str,
             elif isinstance(p, (list, tuple)) and len(p) >= 2:
                 raw_pts.append((float(p[0]), float(p[1])))
 
-    if len(raw_pts) == 2:
-        x0, y0 = raw_pts[0]
-        x1, y1 = raw_pts[1]
-        raw_pts = [
-            (min(x0, x1), min(y0, y1)),
-            (max(x0, x1), min(y0, y1)),
-            (max(x0, x1), max(y0, y1)),
-            (min(x0, x1), max(y0, y1))
-        ]
-
     if len(raw_pts) < 3:
-        fail("ROI points must form at least 3 vertices or 2 bounding box corners")
+        fail(f"Polygon must have at least 3 points, got {len(raw_pts)}")
 
-    pts_arr = np.array([[int(round(x)), int(round(y))] for x, y in raw_pts], dtype=np.int32)
-    pts_arr[:, 0] = np.clip(pts_arr[:, 0], 0, w - 1)
-    pts_arr[:, 1] = np.clip(pts_arr[:, 1], 0, h - 1)
-
+    # Create polygon mask on full image resolution
+    pts_arr = np.array(raw_pts, dtype=np.int32)
     mask = np.zeros((h, w), dtype=np.uint8)
-    cv2.fillPoly(mask, [pts_arr], 255)
+    cv2.fillPoly(mask, [pts_arr], 1)
 
+    # Bounding box
     rx, ry, rw, rh = cv2.boundingRect(pts_arr)
-    rw = max(1, rw)
-    rh = max(1, rh)
+    rx = max(0, min(rx, w - 1))
+    ry = max(0, min(ry, h - 1))
+    rw = max(1, min(rw, w - rx))
+    rh = max(1, min(rh, h - ry))
 
-    temp_crop = temp[ry:ry+rh, rx:rx+rw].copy()
+    # Crop temperature array and mask
+    temp_crop = temp[ry:ry+rh, rx:rx+rw]
     mask_crop = mask[ry:ry+rh, rx:rx+rw]
 
-    valid_pixels = temp_crop[mask_crop > 0]
+    # Calculate statistics inside polygon
+    valid_pixels = temp_crop[mask_crop == 1]
     if len(valid_pixels) == 0:
         valid_pixels = temp_crop.flatten()
 
@@ -621,22 +614,23 @@ def cmd_crop(image_path: str, points_json_str: str, label_name: str,
     max_v  = float(np.max(valid_pixels))
     std_v  = float(np.std(valid_pixels))
 
-    safe_label = "".join([c if c.isalnum() else "_" for c in label_name])
+    safe_label = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in label_name)
     csv_filename = f"isolated_{stem}_{safe_label}_{roi_index_str}.csv"
     csv_path = out_dir / csv_filename
 
-    with open(csv_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([f"# ISOLATED SEGMENTATION ROI - {stem} - {label_name}"])
-        writer.writerow(["# label", safe_label])
-        writer.writerow(["# roi_index", roi_index_str])
-        writer.writerow(["# mean_temp", f"{mean_v:.6f}"])
-        writer.writerow(["# min_temp",  f"{min_v:.6f}"])
-        writer.writerow(["# max_temp",  f"{max_v:.6f}"])
-        writer.writerow(["# std_temp",  f"{std_v:.6f}"])
-        writer.writerow(["# pixel_count", len(valid_pixels)])
-        writer.writerow(["#"])
-
+    with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
+        w_csv = csv.writer(f)
+        w_csv.writerow(["# ISOLATED ROI TEMPERATURE MATRIX"])
+        w_csv.writerow(["# stem", stem])
+        w_csv.writerow(["# label", label_name])
+        w_csv.writerow(["# roi_index", roi_index_str])
+        w_csv.writerow(["# mean_temp", f"{mean_v:.4f}"])
+        w_csv.writerow(["# min_temp", f"{min_v:.4f}"])
+        w_csv.writerow(["# max_temp", f"{max_v:.4f}"])
+        w_csv.writerow(["# std_temp", f"{std_v:.4f}"])
+        w_csv.writerow(["# pixel_count", len(valid_pixels)])
+        w_csv.writerow(["#"])
+        w_csv.writerow(["y_offset", ry, "x_offset", rx, "width", rw, "height", rh])
         for r_idx in range(rh):
             row_vals = []
             for c_idx in range(rw):
@@ -776,6 +770,7 @@ def cmd_crop(image_path: str, points_json_str: str, label_name: str,
         "std_temp":            std_v,
         "pixel_count":         len(valid_pixels),
         "gradient_max":        grad_max,
+        "gradient_min":        grad_min,
         "gradient_modus":      grad_modus,
         "star_center_temp":    star_data["temp_centre"],
         "star_radius_cm":      dist_cm,

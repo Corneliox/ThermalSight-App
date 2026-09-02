@@ -557,6 +557,15 @@ export function computeLabelStarGradient(tempMatrix, W, H, roi, pxPerCm = null) 
     }
   });
 
+  let minGradVal = Infinity;
+  COMPASS.forEach(([name]) => {
+    const p = points[name];
+    if (p && p.grad < minGradVal) {
+      minGradVal = p.grad;
+    }
+  });
+  const gradient_min = minGradVal === Infinity ? 0 : Number(minGradVal.toFixed(4));
+
   const domObj = points[dominant] || { diff: 0, grad: 0 };
   const gradient_modus = `${dominant} (${domObj.diff >= 0 ? '+' : ''}${domObj.diff.toFixed(2)}°C)`;
   const gradient_max = Number(maxGradVal.toFixed(4));
@@ -569,6 +578,7 @@ export function computeLabelStarGradient(tempMatrix, W, H, roi, pxPerCm = null) 
     temp_centre: Number(temp_centre.toFixed(4)),
     dominant,
     gradient_max,
+    gradient_min,
     gradient_modus,
     points
   };
@@ -608,7 +618,7 @@ export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiInd
   let maxTemp = -Infinity;
   const collectedTemps = [];
 
-  let csvContent = 'row,col,x,y,temp_c\n';
+  let csvContent = '\uFEFFrow,col,x,y,temp_c\n';
 
   for (let y = minY; y <= maxY; y++) {
     for (let x = minX; x <= maxX; x++) {
@@ -693,7 +703,7 @@ export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiInd
   ctx.restore();
 
   // Generate 9-Point Star Gradient Detailed CSV
-  let starCsvContent = 'point,direction,angle_deg,px,py,temp_c,diff_centre_c,gradient_c_per_cm\n';
+  let starCsvContent = '\uFEFFpoint,direction,angle_deg,px,py,temp_c,diff_centre_c,gradient_c_per_cm\n';
   starCsvContent += `centre,Center,0,${starData.cx.toFixed(1)},${starData.cy.toFixed(1)},${starData.temp_centre.toFixed(4)},0.0000,0.0000\n`;
   COMPASS.forEach(name => {
     const p = starData.points[name];
@@ -755,6 +765,7 @@ export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiInd
     std_temp: Number(stdTemp.toFixed(4)),
     star: starData,
     gradient_max: starData.gradient_max,
+    gradient_min: starData.gradient_min,
     gradient_modus: starData.gradient_modus,
     star_center_temp: starData.temp_centre,
     star_radius_cm: starData.radius_cm,
@@ -1113,30 +1124,44 @@ export function render3DGradientSurfaceCanvas(tempPatch, patchW, patchH, pxPerCm
 }
 
 // ── Full Labeled Scene Image Generator (All Labels Overlaid) ────────────────
-export function generateFullLabeledSceneCanvas(tempMatrix, W, H, rois = [], labelDefs = []) {
+export function generateFullLabeledSceneCanvas(tempMatrixOrImg, W = 320, H = 240, rois = [], labelDefs = [], bgCanvasOrImg = null) {
   const canvas = document.createElement('canvas');
-  canvas.width = W;
-  canvas.height = H;
+  canvas.width = (bgCanvasOrImg && bgCanvasOrImg.width) ? bgCanvasOrImg.width : (W || 320);
+  canvas.height = (bgCanvasOrImg && bgCanvasOrImg.height) ? bgCanvasOrImg.height : (H || 240);
   const ctx = canvas.getContext('2d');
-  const imgData = ctx.createImageData(W, H);
 
-  let minT = Infinity, maxT = -Infinity;
-  for (let i = 0; i < W * H; i++) {
-    const t = tempMatrix ? (tempMatrix[i] ?? 0) : 0;
-    if (t < minT) minT = t;
-    if (t > maxT) maxT = t;
-  }
-  const span = Math.max(0.1, maxT - minT);
+  if (bgCanvasOrImg && (bgCanvasOrImg instanceof HTMLImageElement || bgCanvasOrImg instanceof HTMLCanvasElement)) {
+    ctx.drawImage(bgCanvasOrImg, 0, 0);
+  } else if (tempMatrixOrImg && (tempMatrixOrImg.length || tempMatrixOrImg instanceof Float32Array)) {
+    const is2D = Array.isArray(tempMatrixOrImg) && Array.isArray(tempMatrixOrImg[0]);
+    const imgData = ctx.createImageData(canvas.width, canvas.height);
+    let minT = Infinity, maxT = -Infinity;
+    
+    for (let y = 0; y < canvas.height; y++) {
+      for (let x = 0; x < canvas.width; x++) {
+        const t = is2D ? (tempMatrixOrImg[y]?.[x] ?? 0) : (tempMatrixOrImg[y * canvas.width + x] ?? 0);
+        if (t < minT) minT = t;
+        if (t > maxT) maxT = t;
+      }
+    }
+    const span = Math.max(0.1, maxT - minT);
 
-  for (let i = 0; i < W * H; i++) {
-    const t = tempMatrix ? (tempMatrix[i] ?? minT) : minT;
-    const norm = Math.min(255, Math.max(0, Math.floor(((t - minT) / span) * 255)));
-    imgData.data[i * 4 + 0] = INFERNO_LUT[norm * 3 + 0];
-    imgData.data[i * 4 + 1] = INFERNO_LUT[norm * 3 + 1];
-    imgData.data[i * 4 + 2] = INFERNO_LUT[norm * 3 + 2];
-    imgData.data[i * 4 + 3] = 255;
+    for (let y = 0; y < canvas.height; y++) {
+      for (let x = 0; x < canvas.width; x++) {
+        const t = is2D ? (tempMatrixOrImg[y]?.[x] ?? minT) : (tempMatrixOrImg[y * canvas.width + x] ?? minT);
+        const norm = Math.min(255, Math.max(0, Math.floor(((t - minT) / span) * 255)));
+        const idx = (y * canvas.width + x) * 4;
+        imgData.data[idx + 0] = INFERNO_LUT[norm * 3 + 0];
+        imgData.data[idx + 1] = INFERNO_LUT[norm * 3 + 1];
+        imgData.data[idx + 2] = INFERNO_LUT[norm * 3 + 2];
+        imgData.data[idx + 3] = 255;
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+  } else {
+    ctx.fillStyle = '#1a1a24';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
-  ctx.putImageData(imgData, 0, 0);
 
   // Draw all ROI polygons, center dots, and label badges
   (rois || []).forEach(roi => {

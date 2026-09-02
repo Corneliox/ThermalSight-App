@@ -178,7 +178,7 @@ export default function App() {
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
-    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.6.1 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
+    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.6.2 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
   ]);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const terminalEndRef = useRef(null);
@@ -1115,23 +1115,34 @@ export default function App() {
       const csvEsc = (val) => { const s = String(val ?? '').replace(/"/g, '""'); return /[,"\n\r=+\-@\t]/.test(s) ? `"${s}"` : s; };
       const compassHeaders = COMPASS.map(c => `grad_${c}_c_per_cm`).join(',');
 
-      let masterCsv = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm,${compassHeaders}\n`;
+      let masterCsv = '\uFEFF' + `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,gradient_min_c_per_cm,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm,${compassHeaders}\n`;
 
       Object.keys(aggregatedStats).forEach(labelName => {
         const series = aggregatedStats[labelName];
-        let labelCsv = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm,${compassHeaders}\n`;
+        let labelCsv = '\uFEFF' + `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,gradient_min_c_per_cm,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm,${compassHeaders}\n`;
 
         series.forEach((s, idx) => {
           const proto = getProtocolStep(idx);
           const starPts = s.star?.points || {};
           const compassGrads = COMPASS.map(c => (starPts[c]?.grad ?? 0).toFixed(4)).join(',');
-          const row = `${idx + 1},${csvEsc(s.pictureName)},${csvEsc(proto.sessionName)},${proto.timestampMin},${csvEsc(labelName)},${s.mean_temp},${s.min_temp},${s.max_temp},${s.std_temp},${s.pixel_count},${s.gradient_max},${csvEsc(s.gradient_modus)},${s.star_center_temp},${s.star_radius_cm},${compassGrads}\n`;
+          const gMin = s.gradient_min !== undefined ? s.gradient_min : (s.star?.gradient_min ?? 0);
+          const gMax = s.gradient_max !== undefined ? s.gradient_max : (s.star?.gradient_max ?? 0);
+          const row = `${idx + 1},${csvEsc(s.pictureName)},${csvEsc(proto.sessionName)},${proto.timestampMin},${csvEsc(labelName)},${s.mean_temp},${s.min_temp},${s.max_temp},${s.std_temp},${s.pixel_count},${gMin},${gMax},${csvEsc(s.gradient_modus)},${s.star_center_temp},${s.star_radius_cm},${compassGrads}\n`;
           labelCsv += row;
           masterCsv += row;
+
+          // Mirror individual ROI CSVs into Sheet/ folder map
+          if (s.csvContent) {
+            exportFilesMap[`Sheet/${s.pictureName}_roi_${s.roiIndex}_${labelName}.csv`] = s.csvContent;
+          }
+          if (s.starCsvContent) {
+            exportFilesMap[`Sheet/${s.pictureName}_roi_${s.roiIndex}_${labelName}_gradient_star.csv`] = s.starCsvContent;
+          }
         });
 
         // Write label summary CSV e.g. m1_summary.csv, m2_summary.csv
         exportFilesMap[`${labelName}_summary.csv`] = labelCsv;
+        exportFilesMap[`Sheet/${labelName}_summary.csv`] = labelCsv;
 
         // Generate Dark and White SVG Graphs per label
         exportFilesMap[`graph_${labelName}_dark.svg`] = generateGraphSvg(labelName, series, 'dark');
@@ -1149,18 +1160,22 @@ export default function App() {
       });
 
       exportFilesMap[`master_summary_all_labels.csv`] = masterCsv;
+      exportFilesMap[`Sheet/master_summary_all_labels.csv`] = masterCsv;
 
       // Generate Full Labeled Scene Image PNG for each Step (All ROIs drawn on full image)
       targetPaths.forEach((imgPath, idx) => {
         const item = imageList.find(img => (typeof img === 'string' ? img : img.path) === imgPath);
         const stem = (typeof item === 'object' && item?.stem) ? item.stem : `step_${idx + 1}`;
         const segs = segmentations[imgPath] || [];
-        const raw = resultsMap[imgPath]?.raw;
-        if (raw && raw.tempMatrix) {
-          const labeledCanvas = generateFullLabeledSceneCanvas(raw.tempMatrix, raw.width, raw.height, segs, labels);
-          if (labeledCanvas) {
-            exportFilesMap[`labeled_scene_${stem}.png`] = labeledCanvas.split(',')[1];
-          }
+        const res = resultsMap[imgPath];
+        const raw = res?.raw || res?.data || res;
+        const tempMatrix = raw?.tempMatrix || raw?.temp || res?.temp;
+        const w = raw?.width || (Array.isArray(tempMatrix) && tempMatrix[0]?.length) || 320;
+        const h = raw?.height || (Array.isArray(tempMatrix) && tempMatrix.length) || 240;
+
+        const labeledCanvas = generateFullLabeledSceneCanvas(tempMatrix, w, h, segs, labels, imgRef.current);
+        if (labeledCanvas) {
+          exportFilesMap[`labeled_scene_${stem}.png`] = labeledCanvas.split(',')[1];
         }
       });
 
@@ -1195,9 +1210,16 @@ export default function App() {
         const zip = new JSZip();
         const rootFolder = zip.folder(`${parentFolderName}_Result`);
         const isolatedFolder = rootFolder.folder(`${parentFolderName}_isolated_labels`);
+        const sheetFolder = rootFolder.folder('Sheet');
+
+        sheetFolder.file('master_summary_all_labels.csv', masterCsv);
 
         Object.keys(aggregatedStats).forEach(labelName => {
           const series = aggregatedStats[labelName];
+          if (exportFilesMap[`${labelName}_summary.csv`]) {
+            sheetFolder.file(`${labelName}_summary.csv`, exportFilesMap[`${labelName}_summary.csv`]);
+          }
+
           series.forEach(s => {
             if (s.croppedPngDataUrl) {
               const base64Data = s.croppedPngDataUrl.split(',')[1];
@@ -1221,14 +1243,17 @@ export default function App() {
             }
             if (s.csvContent) {
               isolatedFolder.file(`${s.pictureName}_roi_${s.roiIndex}_${labelName}.csv`, s.csvContent);
+              sheetFolder.file(`${s.pictureName}_roi_${s.roiIndex}_${labelName}.csv`, s.csvContent);
             }
             if (s.starCsvContent) {
               isolatedFolder.file(`${s.pictureName}_roi_${s.roiIndex}_${labelName}_gradient_star.csv`, s.starCsvContent);
+              sheetFolder.file(`${s.pictureName}_roi_${s.roiIndex}_${labelName}_gradient_star.csv`, s.starCsvContent);
             }
           });
         });
 
         for (const [fname, content] of Object.entries(exportFilesMap)) {
+          if (fname.startsWith('Sheet/')) continue; // already added to sheetFolder
           if (fname.endsWith('.png')) {
             rootFolder.file(fname, content, { base64: true });
           } else {
@@ -1587,7 +1612,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.6.1 (Web & Desktop)</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.6.2 (Web & Desktop)</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -1737,7 +1762,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.6.1' : 'v1.6.1'}</span>
+          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.6.2' : 'v1.6.2'}</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (
