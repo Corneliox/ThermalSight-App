@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="760" height="380" xmlns="http://www.w3.org/2000/svg" style="background:#0b0c10">
+  <rect width="100%" height="100%" fill="#0b0c10"/>
+  <text x="70" y="24" fill="#f0f4fc" font-size="14" font-weight="bold" font-family="sans-serif">Thermal Range Analytics: m3 (DARK Theme)</text>
+  
+      <line x1="70" y1="40.0" x2="720" y2="40.0" stroke="#1f2536" stroke-dasharray="3 3"/>
+      <text x="60" y="44.0" fill="#8a94b8" font-size="10" text-anchor="end" font-family="sans-serif">38.0°C</text>
+    
+      <line x1="70" y1="107.5" x2="720" y2="107.5" stroke="#1f2536" stroke-dasharray="3 3"/>
+      <text x="60" y="111.5" fill="#8a94b8" font-size="10" text-anchor="end" font-family="sans-serif">36.5°C</text>
+    
+      <line x1="70" y1="175.0" x2="720" y2="175.0" stroke="#1f2536" stroke-dasharray="3 3"/>
+      <text x="60" y="179.0" fill="#8a94b8" font-size="10" text-anchor="end" font-family="sans-serif">35.0°C</text>
+    
+      <line x1="70" y1="242.5" x2="720" y2="242.5" stroke="#1f2536" stroke-dasharray="3 3"/>
+      <text x="60" y="246.5" fill="#8a94b8" font-size="10" text-anchor="end" font-family="sans-serif">33.5°C</text>
+    
+      <line x1="70" y1="310.0" x2="720" y2="310.0" stroke="#1f2536" stroke-dasharray="3 3"/>
+      <text x="60" y="314.0" fill="#8a94b8" font-size="10" text-anchor="end" font-family="sans-serif">32.0°C</text>
+    
+  
+      <g transform="translate(70.0, 330.0)">
+        <text fill="#8a94b8" font-size="10" text-anchor="end" transform="rotate(-30)" font-family="sans-serif">S1 (0m) (FLIR0201)</text>
+      </g>
+    
+      <g transform="translate(178.3, 330.0)">
+        <text fill="#8a94b8" font-size="10" text-anchor="end" transform="rotate(-30)" font-family="sans-serif">S2 (2m) (FLIR0202)</text>
+      </g>
+    
+      <g transform="translate(286.7, 330.0)">
+        <text fill="#8a94b8" font-size="10" text-anchor="end" transform="rotate(-30)" font-family="sans-serif">S3 (4m) (FLIR0203)</text>
+      </g>
+    
+      <g transform="translate(395.0, 330.0)">
+        <text fill="#8a94b8" font-size="10" text-anchor="end" transform="rotate(-30)" font-family="sans-serif">S4 (6m) (FLIR0204)</text>
+      </g>
+    
+      <g transform="translate(503.3, 330.0)">
+        <text fill="#8a94b8" font-size="10" text-anchor="end" transform="rotate(-30)" font-family="sans-serif">S5 (8m) (FLIR0205)</text>
+      </g>
+    
+      <g transform="translate(611.7, 330.0)">
+        <text fill="#8a94b8" font-size="10" text-anchor="end" transform="rotate(-30)" font-family="sans-serif">S6 (10m) (FLIR0206)</text>
+      </g>
+    
+      <g transform="translate(720.0, 330.0)">
+        <text fill="#8a94b8" font-size="10" text-anchor="end" transform="rotate(-30)" font-family="sans-serif">S7 (12m) (FLIR0207)</text>
+      </g>
+    
+  <polygon points="70.0,176.3 178.3,175.9 286.7,183.5 395.0,179.8 503.3,129.8 611.7,91.5 720.0,86.4 720.0,174.2 611.7,187.7 503.3,196.6 395.0,243.7 286.7,249.3 178.3,211.7 70.0,203.0" fill="rgba(255, 100, 80, 0.2)" stroke="rgba(255, 100, 80, 0.45)" stroke-width="1"/>
+  <polyline points="70.0,190.0 178.3,189.6 286.7,218.2 395.0,224.5 503.3,167.9 611.7,146.1 720.0,137.5" fill="none" stroke="#ff4444" stroke-width="2.5"/>
+  
+      <line x1="70.0" y1="203.0" x2="70.0" y2="176.3" stroke="#ff8866" stroke-width="1.5"/>
+      <circle cx="70.0" cy="203.0" r="3" fill="#ffaa88"/>
+      <circle cx="70.0" cy="176.3" r="3" fill="#ffaa88"/>
+      <circle cx="70.0" cy="190.0" r="5" fill="#ff4444" stroke="#0b0c10" stroke-width="1.5"/>
+    
+      <line x1="178.3" y1="211.7" x2="178.3" y2="175.9" stroke="#ff8866" stroke-width="1.5"/>
+      <circle cx="178.3" cy="211.7" r="3" fill="#ffaa88"/>
+      <circle cx="178.3" cy="175.9" r="3" fill="#ffaa88"/>
+      <circle cx="178.3" cy="189.6" r="5" fill="#ff4444" stroke="#0b0c10" stroke-width="1.5"/>
+    
+      <line x1="286.7" y1="249.3" x2="286.7" y2="183.5" stroke="#ff8866" stroke-width="1.5"/>
+      <circle cx="286.7" cy="249.3" r="3" fill="#ffaa88"/>
+      <circle cx="286.7" cy="183.5" r="3" fill="#ffaa88"/>
+      <circle cx="286.7" cy="218.2" r="5" fill="#ff4444" stroke="#0b0c10" stroke-width="1.5"/>
+    
+      <line x1="395.0" y1="243.7" x2="395.0" y2="179.8" stroke="#ff8866" stroke-width="1.5"/>
+      <circle cx="395.0" cy="243.7" r="3" fill="#ffaa88"/>
+      <circle cx="395.0" cy="179.8" r="3" fill="#ffaa88"/>
+      <circle cx="395.0" cy="224.5" r="5" fill="#ff4444" stroke="#0b0c10" stroke-width="1.5"/>
+    
+      <line x1="503.3" y1="196.6" x2="503.3" y2="129.8" stroke="#ff8866" stroke-width="1.5"/>
+      <circle cx="503.3" cy="196.6" r="3" fill="#ffaa88"/>
+      <circle cx="503.3" cy="129.8" r="3" fill="#ffaa88"/>
+      <circle cx="503.3" cy="167.9" r="5" fill="#ff4444" stroke="#0b0c10" stroke-width="1.5"/>
+    
+      <line x1="611.7" y1="187.7" x2="611.7" y2="91.5" stroke="#ff8866" stroke-width="1.5"/>
+      <circle cx="611.7" cy="187.7" r="3" fill="#ffaa88"/>
+      <circle cx="611.7" cy="91.5" r="3" fill="#ffaa88"/>
+      <circle cx="611.7" cy="146.1" r="5" fill="#ff4444" stroke="#0b0c10" stroke-width="1.5"/>
+    
+      <line x1="720.0" y1="174.2" x2="720.0" y2="86.4" stroke="#ff8866" stroke-width="1.5"/>
+      <circle cx="720.0" cy="174.2" r="3" fill="#ffaa88"/>
+      <circle cx="720.0" cy="86.4" r="3" fill="#ffaa88"/>
+      <circle cx="720.0" cy="137.5" r="5" fill="#ff4444" stroke="#0b0c10" stroke-width="1.5"/>
+    
+</svg>

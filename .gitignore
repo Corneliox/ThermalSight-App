@@ -1,8 +1,87 @@
-﻿node_modules/
+﻿# ==============================================================================
+#  ThermalSight - Git Ignore Rules
+# ==============================================================================
+
+# --- Dependencies ---
+node_modules/
+package-lock.json.bak
+jspm_packages/
+.pnp
+.pnp.js
+
+# --- Build Outputs & Binaries ---
+dist/
+src/dist/
 build/
-*.pyc
+bin/
+out/
+release/
+analyzer.spec
+*.spec
+
+# --- Python & PyInstaller Caches ---
 __pycache__/
-.DS_Store
+*.py[cod]
+*.class
+*.pyc
+*.pyd
+*.pyo
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.installed.cfg
+*.egg
+backend/dist/
+backend/build/
+
+# --- Firebase Caches ---
 .firebase/
-test_out/
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+
+# --- IDE & Editor Configurations ---
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini
+
+# --- Logs & Test Artifacts ---
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+test_out/
+scratch/
+.tmp/
+*.tmp
+1/
+
+# --- Large Archives & Temporary Analysis Dumps ---
+*.zip
+*.rar
+*.7z
+*.tar.gz
+*.iso
+*_analysis/
+*.jpg_analysis/
+*.png_analysis/
