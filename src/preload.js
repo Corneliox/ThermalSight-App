@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   cropLabels: (imagePath, roiPoints, labelName, roiIndex, outputDir) =>
     ipcRenderer.invoke('crop-labels', imagePath, roiPoints, labelName, roiIndex, outputDir),
 
+  generatePlantarFig1: (imagePath, rois, outputDir) =>
+    ipcRenderer.invoke('generate-plantar-fig1', imagePath, rois, outputDir),
+
   openFileDialog: () => ipcRenderer.invoke('open-file-dialog'),
   openFolderDialog: () => ipcRenderer.invoke('open-folder-dialog'),
   listFolderImages: (folderPath) => ipcRenderer.invoke('list-folder-images', folderPath),

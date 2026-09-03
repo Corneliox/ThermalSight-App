@@ -1003,13 +1003,209 @@ def cmd_gradient_scene(image_path: str, rois_json_str: str, px_cm: float, out_di
     })
 
 
+def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str):
+    out_dir = Path(out_dir_str)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = Path(image_path).stem
+
+    log(f"PLANTAR_FIG1: loading {image_path}")
+    temp = load_temperature(image_path)
+    H, W = temp.shape
+
+    try:
+        rois = json.loads(rois_json_str) if rois_json_str else []
+    except Exception as e:
+        log(f"  warning: failed to parse rois json: {e}")
+        rois = []
+
+    # 1. Determine Foot Side: Screen Left (avg_x < W/2) -> Right Foot in camera plantar view
+    xs = [r.get("cx", r.get("points", [{}])[0].get("x", W / 2)) for r in rois if isinstance(r, dict)]
+    avg_x = float(np.mean(xs)) if xs else (W / 4)
+
+    col_prof = np.mean(temp, axis=0)
+    c_start, c_end = int(W * 0.35), int(W * 0.65)
+    valley_idx = int(np.argmin(col_prof[c_start:c_end])) + c_start
+
+    if avg_x < valley_idx:
+        foot_side = "RightFoot"
+        foot_patch_raw = temp[:, :valley_idx]
+        offset_x = 0
+    else:
+        foot_side = "LeftFoot"
+        foot_patch_raw = temp[:, valley_idx:]
+        offset_x = valley_idx
+
+    # Crop foot bounding box
+    mask = foot_patch_raw > max(26.0, float(np.percentile(foot_patch_raw, 35)))
+    ys, xs_mask = np.where(mask)
+    pad = 4
+    if len(ys) > 50:
+        ymin = max(0, int(np.min(ys)) - pad)
+        ymax = min(H - 1, int(np.max(ys)) + pad)
+        xmin = max(0, int(np.min(xs_mask)) - pad)
+        xmax = min(foot_patch_raw.shape[1] - 1, int(np.max(xs_mask)) + pad)
+        foot_crop = foot_patch_raw[ymin:ymax+1, xmin:xmax+1]
+    else:
+        ymin, ymax, xmin, xmax = 0, H - 1, 0, foot_patch_raw.shape[1] - 1
+        foot_crop = foot_patch_raw
+
+    n_rows, n_cols = 104, 54
+    grid_dense = cv2.resize(foot_crop, (n_cols, n_rows), interpolation=cv2.INTER_AREA)
+    foot_mask = grid_dense > 28.5
+    grid_disp = grid_dense.copy()
+    grid_disp[~foot_mask] = 23.5
+
+    grid_smooth = cv2.GaussianBlur(grid_dense, (7, 7), 1.8)
+    sobel_x = cv2.Sobel(grid_smooth, cv2.CV_64F, 1, 0, ksize=3) / 8.0
+    sobel_y = cv2.Sobel(grid_smooth, cv2.CV_64F, 0, 1, ksize=3) / 8.0
+    grad_mag = np.sqrt(sobel_x**2 + sobel_y**2)
+
+    grid_contour = grid_smooth.copy()
+    grid_contour[~foot_mask] = np.nan
+
+    crop_w = max(1, xmax - xmin + 1)
+    crop_h = max(1, ymax - ymin + 1)
+    mapped_rois = []
+    radius_grid = 3.6
+
+    for r in rois:
+        if not isinstance(r, dict):
+            continue
+        name = str(r.get("labelName", "ROI")).upper()
+        rcx = float(r.get("cx", 0)) - offset_x - xmin
+        rcy = float(r.get("cy", 0)) - ymin
+        gx = (rcx / crop_w) * n_cols + 1
+        gy = (rcy / crop_h) * n_rows + 1
+        gx = float(np.clip(gx, 4.0, n_cols - 4.0))
+        gy = float(np.clip(gy, 4.0, n_rows - 4.0))
+        mapped_rois.append((name, gx, gy))
+
+    if not mapped_rois:
+        if foot_side == "RightFoot":
+            mapped_rois = [("T1", 17.0, 22.0), ("M1", 14.0, 40.0), ("M3", 27.0, 38.0), ("HL", 27.0, 88.0)]
+        else:
+            mapped_rois = [("T1", 37.0, 19.0), ("M1", 39.0, 41.0), ("M3", 26.0, 39.0), ("HL", 28.0, 87.0)]
+    else:
+        has_heel = any("H" in m[0] or "HEEL" in m[0] for m in mapped_rois)
+        if not has_heel:
+            hl_gx = 27.0 if foot_side == "RightFoot" else 28.0
+            mapped_rois.append(("HL", hl_gx, 88.0))
+
+    # White-Hot Colormap
+    cmap_thermal = LinearSegmentedColormap.from_list("flir_whitehot", [
+        (0.00, "#000000"), (0.12, "#180036"), (0.28, "#4f046e"),
+        (0.44, "#990060"), (0.60, "#d92c20"), (0.74, "#f57a00"),
+        (0.85, "#fcb800"), (0.93, "#ffea70"), (1.00, "#ffffff"),
+    ])
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8.5, 11), dpi=220, facecolor="white")
+    ax1.set_facecolor("#000000")
+    x_edges = np.arange(0.5, n_cols + 1.5, 1)
+    y_edges = np.arange(0.5, n_rows + 1.5, 1)
+    X_e, Y_e = np.meshgrid(x_edges, y_edges)
+
+    ax1.pcolormesh(X_e, Y_e, grid_disp, cmap=cmap_thermal, vmin=23.5, vmax=np.max(grid_dense),
+                   edgecolors="#111111", linewidth=0.20, shading="flat")
+    ax1.set_xlim(1.5, n_cols + 0.5)
+    ax1.set_ylim(n_rows + 0.5, 1.5)
+    ax1.set_aspect("equal")
+    ax1.tick_params(colors="black", labelsize=9)
+
+    for name, gx, gy in mapped_rois:
+        c_out = plt.Circle((gx, gy), radius_grid, edgecolor="#00e5ff", facecolor="none", lw=2.0, zorder=10)
+        c_in = plt.Circle((gx, gy), radius_grid * 0.82, edgecolor="red", facecolor="none", lw=1.3, zorder=11)
+        ax1.add_patch(c_out)
+        ax1.add_patch(c_in)
+        ax1.plot(gx, gy, "o", color="red", markeredgecolor="white", markeredgewidth=1.0, markersize=5, zorder=12)
+        ty = 7.5 if gy < 50 else -6.5
+        ax1.text(gx, gy + ty, name, color="white", fontsize=16, fontweight="bold",
+                 ha="center", va="center", zorder=15,
+                 bbox=dict(boxstyle="round,pad=0.15", facecolor="#000000", alpha=0.6, edgecolor="none"))
+
+    ax1.set_title("(A)\n\nPPP", fontsize=18, fontweight="bold", pad=12)
+
+    ax2.set_facecolor("white")
+    levels = np.linspace(np.nanmin(grid_contour), np.nanmax(grid_contour), 16)
+    ax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), grid_contour,
+                levels=levels, cmap=cmap_thermal, linewidths=1.0, alpha=0.90)
+
+    foot_outline = (foot_mask).astype(np.uint8)
+    ax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), foot_outline,
+                levels=[0.5], colors="#777799", linewidths=0.7, linestyles="--")
+
+    step = 4
+    y_q, x_q = np.mgrid[1:n_rows+1:step, 1:n_cols+1:step]
+    u = sobel_x[::step, ::step]
+    v = sobel_y[::step, ::step]
+    m = grad_mag[::step, ::step]
+    mask_q = (foot_mask[::step, ::step]) & (m > 0.04)
+
+    nrm = np.sqrt(u**2 + v**2) + 1e-6
+    u_n = u / nrm * 1.5
+    v_n = v / nrm * 1.5
+
+    ax2.quiver(x_q[mask_q], y_q[mask_q], u_n[mask_q], v_n[mask_q],
+               color="#0b4db7", angles="xy", scale_units="xy", scale=1.0,
+               width=0.0038, headwidth=3.4, headlength=4.2, zorder=8)
+
+    ax2.set_xlim(1.5, n_cols + 0.5)
+    ax2.set_ylim(n_rows + 0.5, 1.5)
+    ax2.set_aspect("equal")
+    ax2.tick_params(colors="black", labelsize=9)
+
+    metrics = []
+    for name, gx, gy in mapped_rois:
+        c_out = plt.Circle((gx, gy), radius_grid, edgecolor="red", facecolor="none", lw=2.0, zorder=10)
+        c_in = plt.Circle((gx, gy), radius_grid * 0.82, edgecolor="red", facecolor="none", lw=1.2, linestyle=":", zorder=11)
+        ax2.add_patch(c_out)
+        ax2.add_patch(c_in)
+        ax2.plot(gx, gy, "o", color="red", markersize=4.5, zorder=12)
+        ty = 7.5 if gy < 50 else -6.5
+        ax2.text(gx, gy + ty, name, color="black", fontsize=16, fontweight="bold", ha="center", va="center", zorder=15)
+
+        ix = int(round(gx)) - 1
+        iy = int(round(gy)) - 1
+        val_ppp = float(grid_dense[iy, ix])
+        gx_val = float(sobel_x[iy, ix])
+        gy_val = float(sobel_y[iy, ix])
+        val_ppg = float(np.sqrt(gx_val**2 + gy_val**2))
+        val_pga = float(np.degrees(np.arctan2(gy_val, gx_val)))
+        metrics.append({
+            "ROI": name,
+            "Grid_X": round(gx, 1),
+            "Grid_Y": round(gy, 1),
+            "PPP_Peak_Value": round(val_ppp, 2),
+            "PPG_Gradient_Mag": round(val_ppg, 3),
+            "PGA_Angle_Deg": round(val_pga, 1)
+        })
+
+    ax2.set_title("(B)\n\nPPG & PGA", fontsize=18, fontweight="bold", pad=12)
+    plt.tight_layout()
+
+    out_png = out_dir / f"{stem}_{foot_side}_whitehot.png"
+    out_csv = out_dir / f"{stem}_{foot_side}_metrics.csv"
+    fig.savefig(str(out_png), bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+    df = pd.DataFrame(metrics)
+    df.to_csv(str(out_csv), index=False)
+
+    emit({
+        "status": "ok",
+        "stem": stem,
+        "foot_side": foot_side,
+        "png_path": str(out_png),
+        "csv_path": str(out_csv)
+    })
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        fail("Usage: analyzer.py <analyze|star|crop|gradient_scene> ...")
+        fail("Usage: analyzer.py <analyze|star|crop|gradient_scene|plantar_fig1> ...")
 
     command = sys.argv[1].lower()
 
@@ -1052,6 +1248,15 @@ if __name__ == "__main__":
             out_dir_str   = sys.argv[5],
         )
 
+    elif command == "plantar_fig1":
+        if len(sys.argv) < 5:
+            fail("Usage: analyzer.py plantar_fig1 <imagePath> <roisJson> <outputDir>")
+        cmd_plantar_fig1(
+            image_path    = sys.argv[2],
+            rois_json_str = sys.argv[3],
+            out_dir_str   = sys.argv[4],
+        )
+
     else:
-        fail(f"Unknown command: {command}. Use 'analyze', 'star', 'crop', or 'gradient_scene'.")
+        fail(f"Unknown command: {command}. Use 'analyze', 'star', 'crop', 'gradient_scene', or 'plantar_fig1'.")
 

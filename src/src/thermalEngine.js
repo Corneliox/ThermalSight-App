@@ -2084,4 +2084,458 @@ export function generateThermalDirectionSvg(labelName, series, theme = 'dark') {
   return svg;
 }
 
+/**
+ * Scientific Plantar Gradient 2-Panel Replica Generator (Paper Fig 1 Standard - Lung et al. 2022)
+ * Evaluates whether labels are placed on Left or Right foot, crops anatomical footprint,
+ * builds 104x54 dense mesh, computes PPP, PPG, PGA metrics, and renders 2-panel figure:
+ * (A) PPP with FLIR White-Hot palette, and (B) PPG & PGA with quiver vector flow.
+ */
+export async function generatePlantarPaperFig1Package(results, W = 320, H = 240, rois = [], labelDefs = [], pxPerCm = 10.0, stem = 'sample') {
+  const temp = results?.raw?.tempMatrix;
+  if (!temp || !Array.isArray(temp) || temp.length === 0) return null;
+
+  // 1. Determine Foot Side based on user label locations
+  // Screen Left (x < W/2) = Patient's Right Foot in camera plantar view!
+  // Screen Right (x >= W/2) = Patient's Left Foot!
+  const validRois = (rois || []).filter(r => r && (r.cx !== undefined || (r.points && r.points.length > 0)));
+  let avgX = W / 4;
+  if (validRois.length > 0) {
+    avgX = validRois.reduce((acc, r) => {
+      const x = r.cx !== undefined ? r.cx : (r.points.reduce((s, p) => s + p.x, 0) / r.points.length);
+      return acc + x;
+    }, 0) / validRois.length;
+  }
+
+  // Inter-foot valley
+  const colAverages = [];
+  for (let c = 0; c < W; c++) {
+    let sum = 0;
+    for (let r = 0; r < H; r++) sum += temp[r][c];
+    colAverages.push(sum / H);
+  }
+  const cStart = Math.floor(W * 0.35);
+  const cEnd = Math.floor(W * 0.65);
+  let minColVal = Infinity, valleyIdx = Math.floor(W * 0.5);
+  for (let c = cStart; c < cEnd; c++) {
+    if (colAverages[c] < minColVal) {
+      minColVal = colAverages[c];
+      valleyIdx = c;
+    }
+  }
+
+  const isRightFoot = avgX < valleyIdx;
+  const footSide = isRightFoot ? 'RightFoot' : 'LeftFoot';
+  const footDisplayName = isRightFoot ? 'Kaki Kanan (Right Foot)' : 'Kaki Kiri (Left Foot)';
+
+  // Crop foot patch
+  const xStartCol = isRightFoot ? 0 : valleyIdx;
+  const xEndCol = isRightFoot ? valleyIdx : W;
+
+  let ymin = H, ymax = 0, xmin = W, xmax = 0;
+  let count = 0;
+  for (let r = 0; r < H; r++) {
+    for (let c = xStartCol; c < xEndCol; c++) {
+      if (temp[r][c] > 26.5) {
+        if (r < ymin) ymin = r;
+        if (r > ymax) ymax = r;
+        if (c < xmin) xmin = c;
+        if (c > xmax) xmax = c;
+        count++;
+      }
+    }
+  }
+
+  const pad = 4;
+  if (count > 50) {
+    ymin = Math.max(0, ymin - pad);
+    ymax = Math.min(H - 1, ymax + pad);
+    xmin = Math.max(xStartCol, xmin - pad);
+    xmax = Math.min(xEndCol - 1, xmax + pad);
+  } else {
+    ymin = 0; ymax = H - 1;
+    xmin = xStartCol; xmax = xEndCol - 1;
+  }
+
+  const cropW = Math.max(1, xmax - xmin + 1);
+  const cropH = Math.max(1, ymax - ymin + 1);
+
+  // Resample to 104 rows x 54 cols
+  const nRows = 104;
+  const nCols = 54;
+  const gridDense = [];
+  for (let r = 0; r < nRows; r++) {
+    gridDense[r] = new Float32Array(nCols);
+    const srcY = ymin + (r / (nRows - 1)) * (cropH - 1);
+    const y0 = Math.floor(srcY);
+    const y1 = Math.min(H - 1, y0 + 1);
+    const wy = srcY - y0;
+
+    for (let c = 0; c < nCols; c++) {
+      const srcX = xmin + (c / (nCols - 1)) * (cropW - 1);
+      const x0 = Math.floor(srcX);
+      const x1 = Math.min(W - 1, x0 + 1);
+      const wx = srcX - x0;
+
+      const v00 = temp[y0][x0];
+      const v01 = temp[y0][x1];
+      const v10 = temp[y1][x0];
+      const v11 = temp[y1][x1];
+      gridDense[r][c] = (v00 * (1 - wx) + v01 * wx) * (1 - wy) + (v10 * (1 - wx) + v11 * wx) * wy;
+    }
+  }
+
+  // Smooth & Sobel Gradients
+  const gridSmooth = [];
+  const sobelX = [];
+  const sobelY = [];
+  const gradMag = [];
+  for (let r = 0; r < nRows; r++) {
+    gridSmooth[r] = new Float32Array(nCols);
+    sobelX[r] = new Float32Array(nCols);
+    sobelY[r] = new Float32Array(nCols);
+    gradMag[r] = new Float32Array(nCols);
+  }
+
+  // 3x3 box smoothing
+  for (let r = 0; r < nRows; r++) {
+    for (let c = 0; c < nCols; c++) {
+      let sum = 0, n = 0;
+      for (let dr = -2; dr <= 2; dr++) {
+        for (let dc = -2; dc <= 2; dc++) {
+          const rr = r + dr, cc = c + dc;
+          if (rr >= 0 && rr < nRows && cc >= 0 && cc < nCols) {
+            sum += gridDense[rr][cc];
+            n++;
+          }
+        }
+      }
+      gridSmooth[r][c] = sum / (n || 1);
+    }
+  }
+
+  // Sobel derivatives
+  for (let r = 1; r < nRows - 1; r++) {
+    for (let c = 1; c < nCols - 1; c++) {
+      const gx = (-1 * gridSmooth[r - 1][c - 1] + 1 * gridSmooth[r - 1][c + 1] +
+                  -2 * gridSmooth[r][c - 1]     + 2 * gridSmooth[r][c + 1] +
+                  -1 * gridSmooth[r + 1][c - 1] + 1 * gridSmooth[r + 1][c + 1]) / 8.0;
+      const gy = (-1 * gridSmooth[r - 1][c - 1] - 2 * gridSmooth[r - 1][c] - 1 * gridSmooth[r - 1][c + 1] +
+                   1 * gridSmooth[r + 1][c - 1] + 2 * gridSmooth[r + 1][c] + 1 * gridSmooth[r + 1][c + 1]) / 8.0;
+      sobelX[r][c] = gx;
+      sobelY[r][c] = gy;
+      gradMag[r][c] = Math.sqrt(gx * gx + gy * gy);
+    }
+  }
+
+  // Map user ROIs onto the 104 x 54 grid
+  const mappedRois = [];
+  const radiusGrid = 3.6;
+  for (const r of validRois) {
+    const name = (r.labelName || 'ROI').toUpperCase();
+    const rcx = (r.cx !== undefined ? r.cx : (r.points[0]?.x || 0)) - xmin;
+    const rcy = (r.cy !== undefined ? r.cy : (r.points[0]?.y || 0)) - ymin;
+    let gx = (rcx / cropW) * nCols + 1;
+    let gy = (rcy / cropH) * nRows + 1;
+    gx = Math.max(4.0, Math.min(nCols - 4.0, gx));
+    gy = Math.max(4.0, Math.min(nRows - 4.0, gy));
+    mappedRois.push({ name, gx, gy });
+  }
+
+  // Default fallback ROIs if user hasn't labeled
+  if (mappedRois.length === 0) {
+    if (isRightFoot) {
+      mappedRois.push({ name: 'T1', gx: 17.0, gy: 22.0 });
+      mappedRois.push({ name: 'M1', gx: 14.0, gy: 40.0 });
+      mappedRois.push({ name: 'M3', gx: 27.0, gy: 38.0 });
+      mappedRois.push({ name: 'HL', gx: 27.0, gy: 88.0 });
+    } else {
+      mappedRois.push({ name: 'T1', gx: 37.0, gy: 19.0 });
+      mappedRois.push({ name: 'M1', gx: 39.0, gy: 41.0 });
+      mappedRois.push({ name: 'M3', gx: 26.0, gy: 39.0 });
+      mappedRois.push({ name: 'HL', gx: 28.0, gy: 87.0 });
+    }
+  } else {
+    // If Heel (HL) was not placed, add default Heel landmark
+    const hasHeel = mappedRois.some(m => m.name.includes('H') || m.name.includes('HEEL'));
+    if (!hasHeel) {
+      mappedRois.push({ name: 'HL', gx: isRightFoot ? 27.0 : 28.0, gy: 88.0 });
+    }
+  }
+
+  // Compute Metrics Table: ROI, Grid_X, Grid_Y, PPP, PPG, PGA
+  const metricsRows = [
+    'ROI,Grid_X,Grid_Y,PPP_Peak_Value,PPG_Gradient_Mag,PGA_Angle_Deg'
+  ];
+  const metricsData = [];
+
+  for (const m of mappedRois) {
+    const ix = Math.max(0, Math.min(nCols - 1, Math.round(m.gx) - 1));
+    const iy = Math.max(0, Math.min(nRows - 1, Math.round(m.gy) - 1));
+
+    // PPP: peak temperature around ROI disk
+    let ppp = gridDense[iy][ix];
+    for (let dr = -3; dr <= 3; dr++) {
+      for (let dc = -3; dc <= 3; dc++) {
+        const rr = iy + dr, cc = ix + dc;
+        if (rr >= 0 && rr < nRows && cc >= 0 && cc < nCols) {
+          if (dr*dr + dc*dc <= 9 && gridDense[rr][cc] > ppp) {
+            ppp = gridDense[rr][cc];
+          }
+        }
+      }
+    }
+
+    const gxVal = sobelX[iy][ix];
+    const gyVal = sobelY[iy][ix];
+    const ppg = Math.sqrt(gxVal * gxVal + gyVal * gyVal);
+    const pga = (Math.atan2(gyVal, gxVal) * 180.0) / Math.PI;
+
+    metricsRows.push(`${m.name},${m.gx.toFixed(1)},${m.gy.toFixed(1)},${ppp.toFixed(2)},${ppg.toFixed(3)},${pga.toFixed(1)}`);
+    metricsData.push({
+      roi: m.name,
+      gx: m.gx,
+      gy: m.gy,
+      ppp: ppp.toFixed(2),
+      ppg: ppg.toFixed(3),
+      pga: pga.toFixed(1)
+    });
+  }
+
+  const metricsCsv = metricsRows.join('\n');
+
+  // Render 2-Panel Figure Canvas (High-res 1800 x 2400)
+  const canvas = document.createElement('canvas');
+  canvas.width = 1800;
+  canvas.height = 2400;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const panelW = 760;
+  const panelH = 1900;
+  const panelTop = 260;
+  const panelA_left = 100;
+  const panelB_left = 940;
+
+  // Title Headers matching paper Figure 1
+  ctx.fillStyle = '#000000';
+  ctx.font = 'bold 44px sans-serif';
+  ctx.textAlign = 'center';
+
+  // Header (A) PPP
+  ctx.fillText('(A)', panelA_left + panelW / 2, 120);
+  ctx.fillText('PPP', panelA_left + panelW / 2, 190);
+
+  // Header (B) PPG & PGA
+  ctx.fillText('(B)', panelB_left + panelW / 2, 120);
+  ctx.fillText('PPG & PGA', panelB_left + panelW / 2, 190);
+
+  // White-Hot Color Interpolation Helper
+  const getWhiteHotRgb = (val, minV = 23.5, maxV = 37.5) => {
+    const t = Math.max(0, Math.min(1, (val - minV) / (maxV - minV || 1)));
+    let r = 0, g = 0, b = 0;
+    if (t < 0.15) {
+      const f = t / 0.15;
+      r = Math.round(24 * f); b = Math.round(54 * f);
+    } else if (t < 0.35) {
+      const f = (t - 0.15) / 0.2;
+      r = Math.round(24 + (79 - 24) * f);
+      g = Math.round(4 * f);
+      b = Math.round(54 + (110 - 54) * f);
+    } else if (t < 0.55) {
+      const f = (t - 0.35) / 0.2;
+      r = Math.round(79 + (217 - 79) * f);
+      g = Math.round(4 + (44 - 4) * f);
+      b = Math.round(110 * (1 - f));
+    } else if (t < 0.75) {
+      const f = (t - 0.55) / 0.2;
+      r = Math.round(217 + (245 - 217) * f);
+      g = Math.round(44 + (122 - 44) * f);
+      b = 0;
+    } else if (t < 0.90) {
+      const f = (t - 0.75) / 0.15;
+      r = Math.round(245 + (252 - 245) * f);
+      g = Math.round(122 + (184 - 122) * f);
+      b = Math.round(0);
+    } else {
+      const f = (t - 0.90) / 0.10;
+      r = 255;
+      g = Math.round(184 + (255 - 184) * f);
+      b = Math.round(255 * f);
+    }
+    return `rgb(${r},${g},${b})`;
+  };
+
+  // ──── PANEL A: PPP (Sensor Mesh with Cell Borders) ────
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(panelA_left, panelTop, panelW, panelH);
+
+  const cellW = panelW / nCols;
+  const cellH = panelH / nRows;
+  let maxT = 28.0;
+  for (let r = 0; r < nRows; r++) {
+    for (let c = 0; c < nCols; c++) {
+      if (gridDense[r][c] > maxT) maxT = gridDense[r][c];
+    }
+  }
+
+  for (let r = 0; r < nRows; r++) {
+    for (let c = 0; c < nCols; c++) {
+      const tempVal = gridDense[r][c];
+      if (tempVal > 27.5) {
+        ctx.fillStyle = getWhiteHotRgb(tempVal, 23.5, maxT);
+        ctx.fillRect(panelA_left + c * cellW, panelTop + r * cellH, cellW, cellH);
+      }
+      ctx.strokeStyle = '#151515';
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(panelA_left + c * cellW, panelTop + r * cellH, cellW, cellH);
+    }
+  }
+
+  // Panel A Outer Border
+  ctx.strokeStyle = '#222222';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(panelA_left, panelTop, panelW, panelH);
+
+  // Panel A ROI concentric rings
+  for (const m of mappedRois) {
+    const rx = panelA_left + (m.gx - 1) * cellW;
+    const ry = panelTop + (m.gy - 1) * cellH;
+    const radPx = radiusGrid * cellW;
+
+    ctx.strokeStyle = '#00e5ff';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(rx, ry, radPx, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#ff0000';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(rx, ry, radPx * 0.82, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(rx, ry, 6, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillRect(rx - 32, ry + (m.gy < 50 ? 30 : -55), 64, 30);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(m.name, rx, ry + (m.gy < 50 ? 53 : -33));
+  }
+
+  // ──── PANEL B: PPG & PGA (Contour lines + Quiver Arrows) ────
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(panelB_left, panelTop, panelW, panelH);
+  ctx.strokeStyle = '#222222';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(panelB_left, panelTop, panelW, panelH);
+
+  // Isotherm Contour bands
+  const numLevels = 16;
+  for (let l = 0; l < numLevels; l++) {
+    const lvlVal = 27.5 + (l / (numLevels - 1)) * (maxT - 27.5);
+    ctx.strokeStyle = getWhiteHotRgb(lvlVal, 23.5, maxT);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+
+    for (let r = 0; r < nRows - 1; r++) {
+      for (let c = 0; c < nCols - 1; c++) {
+        const v0 = gridSmooth[r][c];
+        const v1 = gridSmooth[r][c + 1];
+        if ((v0 <= lvlVal && v1 >= lvlVal) || (v0 >= lvlVal && v1 <= lvlVal)) {
+          const frac = (lvlVal - v0) / (v1 - v0 || 1);
+          const px = panelB_left + (c + frac) * cellW;
+          const py = panelTop + r * cellH;
+          ctx.lineTo(px, py);
+        }
+      }
+    }
+    ctx.stroke();
+  }
+
+  // Quiver Vector Arrows flowing towards Heat Peak
+  const qStep = 4;
+  ctx.fillStyle = '#0b4db7';
+  ctx.strokeStyle = '#0b4db7';
+  ctx.lineWidth = 2.5;
+
+  for (let r = 2; r < nRows - 2; r += qStep) {
+    for (let c = 2; c < nCols - 2; c += qStep) {
+      if (gridDense[r][c] > 28.0 && gradMag[r][c] > 0.04) {
+        const gx = sobelX[r][c];
+        const gy = sobelY[r][c];
+        const nrm = Math.sqrt(gx * gx + gy * gy) + 1e-6;
+        const uNorm = (gx / nrm) * cellW * 1.5;
+        const vNorm = (gy / nrm) * cellH * 1.5;
+
+        const x1 = panelB_left + c * cellW;
+        const y1 = panelTop + r * cellH;
+        const x2 = x1 + uNorm;
+        const y2 = y1 + vNorm;
+
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+
+        // Arrowhead
+        const headAng = Math.atan2(vNorm, uNorm);
+        const hLen = 7;
+        ctx.beginPath();
+        ctx.moveTo(x2, y2);
+        ctx.lineTo(x2 - hLen * Math.cos(headAng - Math.PI / 6), y2 - hLen * Math.sin(headAng - Math.PI / 6));
+        ctx.lineTo(x2 - hLen * Math.cos(headAng + Math.PI / 6), y2 - hLen * Math.sin(headAng + Math.PI / 6));
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  }
+
+  // Panel B ROI concentric rings
+  for (const m of mappedRois) {
+    const rx = panelB_left + (m.gx - 1) * cellW;
+    const ry = panelTop + (m.gy - 1) * cellH;
+    const radPx = radiusGrid * cellW;
+
+    ctx.strokeStyle = '#ff0000';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(rx, ry, radPx, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(rx, ry, radPx * 0.82, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = '#ff0000';
+    ctx.beginPath();
+    ctx.arc(rx, ry, 6, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#000000';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(m.name, rx, ry + (m.gy < 50 ? 55 : -35));
+  }
+
+  const fig1PngDataUrl = canvas.toDataURL('image/png');
+
+  return {
+    footSide,
+    footDisplayName,
+    fig1PngDataUrl,
+    metricsCsv,
+    metricsData
+  };
+}
+
 

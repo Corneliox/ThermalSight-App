@@ -326,6 +326,12 @@ ipcMain.handle('crop-labels', async (_event, imagePath, roiPoints, labelName, ro
   return res;
 });
 
+// ── IPC: generate-plantar-fig1 ───────────────────────────────────────────────
+ipcMain.handle('generate-plantar-fig1', async (_event, imagePath, rois, outputDir) => {
+  const roisJson = JSON.stringify(rois || []);
+  return runPython('plantar_fig1', [imagePath, roisJson, outputDir]);
+});
+
 // ── IPC: open-file-dialog ─────────────────────────────────────────────────────
 ipcMain.handle('open-file-dialog', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {

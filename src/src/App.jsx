@@ -14,7 +14,8 @@ import {
   generateFullLabeledSceneCanvas,
   generateFullGradientMagnitudeCanvas,
   generateFullGradientLabeledCanvas,
-  generateFullGradientQuiverContourCanvas
+  generateFullGradientQuiverContourCanvas,
+  generatePlantarPaperFig1Package
 } from './thermalEngine';
 
 // Access secure electronAPI exposed via contextBridge in preload.js
@@ -189,7 +190,7 @@ export default function App() {
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
-    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.6.4 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
+    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.6.5 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
   ]);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const terminalEndRef = useRef(null);
@@ -1065,6 +1066,49 @@ export default function App() {
     setEditingLabelId(null);
   };
 
+  // ── Instant Plantar Gradient Fig 1 Generator (PPP - PPG - PGA) ─────────────
+  const handleGenerateActivePlantarGradient = async () => {
+    if (!currentResults?.raw?.tempMatrix) {
+      alert('No temperature matrix available. Please load and analyze an image first.');
+      return;
+    }
+    try {
+      const [h, w] = currentResults.shape || [240, 320];
+      const item = imageList.find(img => (typeof img === 'string' ? img : img.path) === activeImagePath);
+      const stem = (typeof item === 'object' && item?.stem) ? item.stem : (activeImagePath ? activeImagePath.split(/[\\/]/).pop().replace(/\.[^/.]+$/, '') : 'image');
+      const segs = segmentations[activeImagePath] || [];
+      const imgScale = activePxPerCm || 10;
+
+      const pkg = await generatePlantarPaperFig1Package(currentResults, w, h, segs, labels, imgScale, stem);
+      if (!pkg) throw new Error('Plantar figure generator returned null');
+
+      // If Desktop Electron, save directly to results folder
+      if (window.electronAPI && currentResults.out_dir) {
+        const outDir = currentResults.out_dir;
+        const pngBase64 = pkg.fig1PngDataUrl.split(',')[1];
+        await api.saveFile(`${outDir}/${stem}_${pkg.footSide}_whitehot.png`, Buffer.from(pngBase64, 'base64'));
+        await api.saveFile(`${outDir}/${stem}_${pkg.footSide}_metrics.csv`, pkg.metricsCsv);
+        addLog('info', `✓ Generated & saved ${stem}_${pkg.footSide}_whitehot.png and metrics.csv to ${outDir}`);
+        alert(`✓ Berhasil! Hasil Gradien Kaki (${pkg.footDisplayName}) berhasil dibuat:\n\n- ${stem}_${pkg.footSide}_whitehot.png\n- ${stem}_${pkg.footSide}_metrics.csv\n\nTersimpan di:\n${outDir}`);
+      } else {
+        // In Web browser, trigger direct download
+        const aImg = document.createElement('a');
+        aImg.href = pkg.fig1PngDataUrl;
+        aImg.download = `${stem}_${pkg.footSide}_whitehot.png`;
+        aImg.click();
+
+        const blob = new Blob([pkg.metricsCsv], { type: 'text/csv;charset=utf-8;' });
+        const aCsv = document.createElement('a');
+        aCsv.href = URL.createObjectURL(blob);
+        aCsv.download = `${stem}_${pkg.footSide}_metrics.csv`;
+        aCsv.click();
+        addLog('info', `✓ Downloaded Plantar Gradient Figure & CSV for ${pkg.footDisplayName}`);
+      }
+    } catch (err) {
+      alert(`Gagal membuat Plantar Gradient:\n${err.message || err}`);
+    }
+  };
+
   // ── Save Label & Master Export Action (Calibration Gated) ───────────────────
   const handleSaveLabels = async () => {
     const totalSegs = Object.values(segmentations).flat().length;
@@ -1254,6 +1298,20 @@ export default function App() {
         if (quiverContour) {
           exportFilesMap[`Gradient/gradient_quiver_contour_${stem}.png`] = quiverContour.split(',')[1];
         }
+
+        // 5. Plantar Gradient Scientific Figure (Panel A: PPP, Panel B: PPG & PGA) for Labeled Foot
+        try {
+          const plantarPkg = await generatePlantarPaperFig1Package(res, w, h, segs, labels, imgScale, stem);
+          if (plantarPkg) {
+            const pngBase64 = plantarPkg.fig1PngDataUrl.split(',')[1];
+            exportFilesMap[`${stem}_${plantarPkg.footSide}_whitehot.png`] = pngBase64;
+            exportFilesMap[`${stem}_${plantarPkg.footSide}_metrics.csv`] = plantarPkg.metricsCsv;
+            exportFilesMap[`Gradient/${stem}_${plantarPkg.footSide}_whitehot.png`] = pngBase64;
+            exportFilesMap[`Sheet/${stem}_${plantarPkg.footSide}_metrics.csv`] = plantarPkg.metricsCsv;
+          }
+        } catch (errPlantar) {
+          console.warn('Plantar Fig 1 export failed for ' + stem, errPlantar);
+        }
       }
 
       // Generate Overall Sequence Comparison Montage PNG (All Labels Together)
@@ -1335,8 +1393,9 @@ export default function App() {
         });
 
         for (const [fname, content] of Object.entries(exportFilesMap)) {
-          if (fname.startsWith('Sheet/')) continue; // already added to sheetFolder
-          if (fname.startsWith('Gradient/')) {
+          if (fname.startsWith('Sheet/')) {
+            sheetFolder.file(fname.replace('Sheet/', ''), content);
+          } else if (fname.startsWith('Gradient/')) {
             gradientFolder.file(fname.replace('Gradient/', ''), content, { base64: true });
           } else if (fname.endsWith('.png')) {
             rootFolder.file(fname, content, { base64: true });
@@ -1700,7 +1759,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.6.4 (Web & Desktop)</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.6.5 (Web & Desktop)</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -1850,7 +1909,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.6.4' : 'v1.6.4'}</span>
+          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.6.5' : 'v1.6.5'}</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (
@@ -2452,6 +2511,25 @@ export default function App() {
                       </div>
                     );
                   })}
+                </div>
+              )}
+
+              {currentResults?.raw?.tempMatrix && (
+                <div style={{ marginTop: '10px' }}>
+                  <button
+                    className="btn-secondary btn-tiny w-full"
+                    style={{
+                      background: 'rgba(0, 229, 255, 0.12)',
+                      borderColor: 'var(--cyan)',
+                      color: 'var(--cyan)',
+                      fontWeight: '700',
+                      padding: '8px'
+                    }}
+                    onClick={handleGenerateActivePlantarGradient}
+                    title="Generate Paper Fig 1 (Panel A: PPP, Panel B: PPG & PGA) for this image"
+                  >
+                    🦶 Generate Plantar Gradient (PPP - PPG - PGA)
+                  </button>
                 </div>
               )}
             </div>
