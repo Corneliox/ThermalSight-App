@@ -28,6 +28,7 @@ import cv2
 import matplotlib
 matplotlib.use("Agg")          # NO GUI — headless only
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 from pathlib import Path
 
 try:
@@ -1182,8 +1183,10 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str):
     fig.savefig(str(out_png), bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
-    df = pd.DataFrame(metrics)
-    df.to_csv(str(out_csv), index=False)
+    with open(str(out_csv), "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["ROI", "Grid_X", "Grid_Y", "PPP_Peak_Value", "PPG_Gradient_Mag", "PGA_Angle_Deg"])
+        writer.writeheader()
+        writer.writerows(metrics)
 
     emit({
         "status": "ok",
