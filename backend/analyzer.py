@@ -1082,14 +1082,9 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str):
 
     if not mapped_rois:
         if foot_side == "RightFoot":
-            mapped_rois = [("T1", 17.0, 22.0), ("M1", 14.0, 40.0), ("M3", 27.0, 38.0), ("HL", 27.0, 88.0)]
+            mapped_rois = [("T1", 17.0, 22.0), ("M1", 14.0, 40.0), ("M3", 27.0, 38.0)]
         else:
-            mapped_rois = [("T1", 37.0, 19.0), ("M1", 39.0, 41.0), ("M3", 26.0, 39.0), ("HL", 28.0, 87.0)]
-    else:
-        has_heel = any("H" in m[0] or "HEEL" in m[0] for m in mapped_rois)
-        if not has_heel:
-            hl_gx = 27.0 if foot_side == "RightFoot" else 28.0
-            mapped_rois.append(("HL", hl_gx, 88.0))
+            mapped_rois = [("T1", 37.0, 19.0), ("M1", 39.0, 41.0), ("M3", 26.0, 39.0)]
 
     # White-Hot Colormap
     cmap_thermal = LinearSegmentedColormap.from_list("flir_whitehot", [

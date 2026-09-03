@@ -241,7 +241,6 @@ def process_subject(source_path: Path, out_dir: Path = None):
         ('T1', 17.0, 22.0, (0.0, -6.5)),
         ('M1', 14.0, 40.0, (-0.5, 7.5)),
         ('M3', 27.0, 38.0, (4.0, 7.5)),
-        ('HL', 27.0, 88.0, (5.0, 5.5)),
     ]
     p_right = out_dir / f"{stem}_RightFoot_whitehot.png"
     df_right = render_paper_figure(crop_right_cam, p_right, rois_right)
@@ -252,7 +251,6 @@ def process_subject(source_path: Path, out_dir: Path = None):
         ('T1', 37.0, 19.0, (0.0, -6.5)),
         ('M1', 39.0, 41.0, (0.5, 7.5)),
         ('M3', 26.0, 39.0, (-4.0, 7.5)),
-        ('HL', 28.0, 87.0, (-5.0, 5.5)),
     ]
     p_left = out_dir / f"{stem}_LeftFoot_whitehot.png"
     df_left = render_paper_figure(crop_left_cam, p_left, rois_left)

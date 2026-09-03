@@ -2241,24 +2241,16 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     mappedRois.push({ name, gx, gy });
   }
 
-  // Default fallback ROIs if user hasn't labeled
+  // Strictly follow user labels. Fallback to T1, M1, M3 only if 0 labels placed.
   if (mappedRois.length === 0) {
     if (isRightFoot) {
       mappedRois.push({ name: 'T1', gx: 17.0, gy: 22.0 });
       mappedRois.push({ name: 'M1', gx: 14.0, gy: 40.0 });
       mappedRois.push({ name: 'M3', gx: 27.0, gy: 38.0 });
-      mappedRois.push({ name: 'HL', gx: 27.0, gy: 88.0 });
     } else {
       mappedRois.push({ name: 'T1', gx: 37.0, gy: 19.0 });
       mappedRois.push({ name: 'M1', gx: 39.0, gy: 41.0 });
       mappedRois.push({ name: 'M3', gx: 26.0, gy: 39.0 });
-      mappedRois.push({ name: 'HL', gx: 28.0, gy: 87.0 });
-    }
-  } else {
-    // If Heel (HL) was not placed, add default Heel landmark
-    const hasHeel = mappedRois.some(m => m.name.includes('H') || m.name.includes('HEEL'));
-    if (!hasHeel) {
-      mappedRois.push({ name: 'HL', gx: isRightFoot ? 27.0 : 28.0, gy: 88.0 });
     }
   }
 
