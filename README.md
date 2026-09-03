@@ -1,6 +1,6 @@
 # 🌡 ThermalSight
 
-[![Version](https://img.shields.io/badge/version-1.6.5-blue.svg)](https://github.com/Corneliox/ThermalSight-App/releases/tag/v1.6.5)
+[![Version](https://img.shields.io/badge/version-1.6.6-blue.svg)](https://github.com/Corneliox/ThermalSight-App/releases/tag/v1.6.6)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Web-brightgreen.svg)]()
 [![Web App](https://img.shields.io/badge/Live%20Demo-Firebase%20Hosting-orange.svg)](https://thermalsight-web-2026.web.app)
 [![License](https://img.shields.io/badge/license-MIT-purple.svg)]()

@@ -190,7 +190,7 @@ export default function App() {
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
-    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.6.5 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
+    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.6.6 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
   ]);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const terminalEndRef = useRef(null);
@@ -1825,7 +1825,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.6.5 (Web & Desktop)</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.6.6 (Web & Desktop)</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -1975,7 +1975,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.6.5' : 'v1.6.5'}</span>
+          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.6.6' : 'v1.6.6'}</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (
