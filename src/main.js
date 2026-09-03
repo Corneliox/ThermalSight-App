@@ -274,7 +274,18 @@ function runPython(command, extraArgs) {
 
 // ── IPC: run-analysis ─────────────────────────────────────────────────────────
 ipcMain.handle('run-analysis', async (_event, imagePath, outputDir) => {
-  return runPython('analyze', [imagePath, outputDir]);
+  const res = await runPython('analyze', [imagePath, outputDir]);
+  if (res && res.status === 'ok' && res.csvs && res.csvs.temp && fs.existsSync(res.csvs.temp)) {
+    try {
+      const csvStr = fs.readFileSync(res.csvs.temp, 'utf8');
+      const lines = csvStr.trim().split(/\r?\n/);
+      const matrix = lines.map(line => line.split(',').map(v => parseFloat(v)));
+      res.raw = { tempMatrix: matrix };
+    } catch (err) {
+      sendLogToRenderer('warning', `Failed to parse tempMatrix CSV: ${err.message}`);
+    }
+  }
+  return res;
 });
 
 // ── IPC: measure-star ─────────────────────────────────────────────────────────
@@ -326,10 +337,50 @@ ipcMain.handle('crop-labels', async (_event, imagePath, roiPoints, labelName, ro
   return res;
 });
 
+// ── IPC: gradient-scene ──────────────────────────────────────────────────────
+ipcMain.handle('gradient-scene', async (_event, imagePath, rois, pxPerCm, outputDir) => {
+  const roisJson = JSON.stringify(rois || []);
+  const res = await runPython('gradient_scene', [
+    imagePath,
+    roisJson,
+    String(pxPerCm || 10.0),
+    outputDir,
+  ]);
+  if (res && res.status === 'ok') {
+    try {
+      if (res.full_gradient_path && fs.existsSync(res.full_gradient_path)) {
+        res.fullGradientDataUrl = `data:image/png;base64,${fs.readFileSync(res.full_gradient_path).toString('base64')}`;
+      }
+      if (res.labeled_gradient_path && fs.existsSync(res.labeled_gradient_path)) {
+        res.labeledGradientDataUrl = `data:image/png;base64,${fs.readFileSync(res.labeled_gradient_path).toString('base64')}`;
+      }
+      if (res.quiver_contour_path && fs.existsSync(res.quiver_contour_path)) {
+        res.quiverContourDataUrl = `data:image/png;base64,${fs.readFileSync(res.quiver_contour_path).toString('base64')}`;
+      }
+    } catch (err) {
+      sendLogToRenderer('warning', `Failed to encode gradient PNGs: ${err.message}`);
+    }
+  }
+  return res;
+});
+
 // ── IPC: generate-plantar-fig1 ───────────────────────────────────────────────
 ipcMain.handle('generate-plantar-fig1', async (_event, imagePath, rois, outputDir) => {
   const roisJson = JSON.stringify(rois || []);
-  return runPython('plantar_fig1', [imagePath, roisJson, outputDir]);
+  const res = await runPython('plantar_fig1', [imagePath, roisJson, outputDir]);
+  if (res && res.status === 'ok') {
+    try {
+      if (res.png_path && fs.existsSync(res.png_path)) {
+        res.fig1PngDataUrl = `data:image/png;base64,${fs.readFileSync(res.png_path).toString('base64')}`;
+      }
+      if (res.csv_path && fs.existsSync(res.csv_path)) {
+        res.metricsCsv = fs.readFileSync(res.csv_path, 'utf8');
+      }
+    } catch (err) {
+      sendLogToRenderer('warning', `Failed to read plantar fig1 output: ${err.message}`);
+    }
+  }
+  return res;
 });
 
 // ── IPC: open-file-dialog ─────────────────────────────────────────────────────

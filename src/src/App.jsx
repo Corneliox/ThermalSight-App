@@ -1265,11 +1265,12 @@ export default function App() {
       exportFilesMap[`master_summary_all_labels.csv`] = masterCsv;
       exportFilesMap[`Sheet/master_summary_all_labels.csv`] = masterCsv;
 
-      // Generate Full Labeled Scene Image PNG and Whole-Scene Gradient Suite for each Step
+      // Generate Full Labeled Scene Image PNG, Whole-Scene Gradient Suite, and Plantar White-Hot Figures for each Step
       for (let idx = 0; idx < targetPaths.length; idx++) {
         const imgPath = targetPaths[idx];
-        const item = imageList.find(img => (typeof img === 'string' ? img : img.path) === imgPath);
-        const stem = (typeof item === 'object' && item?.stem) ? item.stem : `step_${idx + 1}`;
+        const rawFileName = imgPath.split(/[\\/]/).pop() || `image_${idx + 1}`;
+        const fileStem = rawFileName.replace(/\.[^/.]+$/, '');
+        const stepStem = `step_${idx + 1}`;
         const segs = segmentations[imgPath] || [];
         const res = resultsMap[imgPath];
         const [h, w] = res?.shape || [240, 320];
@@ -1278,39 +1279,104 @@ export default function App() {
         // 1. Full Labeled Scene Image
         const labeledCanvas = await generateFullLabeledSceneCanvas(res, w, h, segs, labels);
         if (labeledCanvas) {
-          exportFilesMap[`labeled_scene_${stem}.png`] = labeledCanvas.split(',')[1];
+          const b64 = labeledCanvas.split(',')[1];
+          exportFilesMap[`labeled_scene_${stepStem}.png`] = b64;
+          exportFilesMap[`labeled_scene_${fileStem}.png`] = b64;
         }
 
-        // 2. Full-Scene Continuous Gradient Magnitude
-        const fullGrad = await generateFullGradientMagnitudeCanvas(res, w, h, imgScale);
-        if (fullGrad) {
-          exportFilesMap[`Gradient/gradient_full_scene_${stem}.png`] = fullGrad.split(',')[1];
-        }
+        // On Desktop Electron: invoke Python backend directly for 100% genuine, non-empty calculations
+        if (window.electronAPI && api.gradientScene) {
+          try {
+            const gradRes = await api.gradientScene(imgPath, segs, imgScale, `${resultDir}/Gradient`);
+            if (gradRes && gradRes.status === 'ok') {
+              if (gradRes.fullGradientDataUrl) {
+                const b64 = gradRes.fullGradientDataUrl.split(',')[1];
+                exportFilesMap[`Gradient/gradient_full_scene_${stepStem}.png`] = b64;
+                exportFilesMap[`Gradient/gradient_full_scene_${fileStem}.png`] = b64;
+              }
+              if (gradRes.labeledGradientDataUrl) {
+                const b64 = gradRes.labeledGradientDataUrl.split(',')[1];
+                exportFilesMap[`Gradient/gradient_labeled_scene_${stepStem}.png`] = b64;
+                exportFilesMap[`Gradient/gradient_labeled_scene_${fileStem}.png`] = b64;
+              }
+              if (gradRes.quiverContourDataUrl) {
+                const b64 = gradRes.quiverContourDataUrl.split(',')[1];
+                exportFilesMap[`Gradient/gradient_quiver_contour_${stepStem}.png`] = b64;
+                exportFilesMap[`Gradient/gradient_quiver_contour_${fileStem}.png`] = b64;
+              }
+            }
+          } catch (e) {
+            console.warn(`[Desktop] gradientScene call failed for ${imgPath}:`, e);
+          }
+        } else {
+          // Pure Web client-side Canvas fallback
+          // 2. Full-Scene Continuous Gradient Magnitude
+          const fullGrad = await generateFullGradientMagnitudeCanvas(res, w, h, imgScale);
+          if (fullGrad) {
+            const b64 = fullGrad.split(',')[1];
+            exportFilesMap[`Gradient/gradient_full_scene_${stepStem}.png`] = b64;
+            exportFilesMap[`Gradient/gradient_full_scene_${fileStem}.png`] = b64;
+          }
 
-        // 3. Full-Scene Gradient with Labels Overlaid
-        const labeledGrad = await generateFullGradientLabeledCanvas(res, w, h, segs, labels, imgScale);
-        if (labeledGrad) {
-          exportFilesMap[`Gradient/gradient_labeled_scene_${stem}.png`] = labeledGrad.split(',')[1];
-        }
+          // 3. Full-Scene Gradient with Labels Overlaid
+          const labeledGrad = await generateFullGradientLabeledCanvas(res, w, h, segs, labels, imgScale);
+          if (labeledGrad) {
+            const b64 = labeledGrad.split(',')[1];
+            exportFilesMap[`Gradient/gradient_labeled_scene_${stepStem}.png`] = b64;
+            exportFilesMap[`Gradient/gradient_labeled_scene_${fileStem}.png`] = b64;
+          }
 
-        // 4. Full-Scene Quiver Vector Field & Isotherm Contours (Panel B Style)
-        const quiverContour = await generateFullGradientQuiverContourCanvas(res, w, h, segs, labels, imgScale);
-        if (quiverContour) {
-          exportFilesMap[`Gradient/gradient_quiver_contour_${stem}.png`] = quiverContour.split(',')[1];
+          // 4. Full-Scene Quiver Vector Field & Isotherm Contours (Panel B Style)
+          const quiverContour = await generateFullGradientQuiverContourCanvas(res, w, h, segs, labels, imgScale);
+          if (quiverContour) {
+            const b64 = quiverContour.split(',')[1];
+            exportFilesMap[`Gradient/gradient_quiver_contour_${stepStem}.png`] = b64;
+            exportFilesMap[`Gradient/gradient_quiver_contour_${fileStem}.png`] = b64;
+          }
         }
 
         // 5. Plantar Gradient Scientific Figure (Panel A: PPP, Panel B: PPG & PGA) for Labeled Foot
-        try {
-          const plantarPkg = await generatePlantarPaperFig1Package(res, w, h, segs, labels, imgScale, stem);
-          if (plantarPkg) {
-            const pngBase64 = plantarPkg.fig1PngDataUrl.split(',')[1];
-            exportFilesMap[`${stem}_${plantarPkg.footSide}_whitehot.png`] = pngBase64;
-            exportFilesMap[`${stem}_${plantarPkg.footSide}_metrics.csv`] = plantarPkg.metricsCsv;
-            exportFilesMap[`Gradient/${stem}_${plantarPkg.footSide}_whitehot.png`] = pngBase64;
-            exportFilesMap[`Sheet/${stem}_${plantarPkg.footSide}_metrics.csv`] = plantarPkg.metricsCsv;
+        if (window.electronAPI && api.generatePlantarFig1) {
+          try {
+            const pRes = await api.generatePlantarFig1(imgPath, segs, resultDir);
+            if (pRes && pRes.status === 'ok') {
+              const footSide = pRes.foot_side || 'RightFoot';
+              if (pRes.fig1PngDataUrl) {
+                const b64 = pRes.fig1PngDataUrl.split(',')[1];
+                exportFilesMap[`${fileStem}_${footSide}_whitehot.png`] = b64;
+                exportFilesMap[`${stepStem}_${footSide}_whitehot.png`] = b64;
+                exportFilesMap[`Gradient/${fileStem}_${footSide}_whitehot.png`] = b64;
+                exportFilesMap[`Gradient/${stepStem}_${footSide}_whitehot.png`] = b64;
+              }
+              if (pRes.metricsCsv) {
+                exportFilesMap[`${fileStem}_${footSide}_metrics.csv`] = pRes.metricsCsv;
+                exportFilesMap[`${stepStem}_${footSide}_metrics.csv`] = pRes.metricsCsv;
+                exportFilesMap[`Sheet/${fileStem}_${footSide}_metrics.csv`] = pRes.metricsCsv;
+                exportFilesMap[`Sheet/${stepStem}_${footSide}_metrics.csv`] = pRes.metricsCsv;
+              }
+            }
+          } catch (e) {
+            console.warn(`[Desktop] generatePlantarFig1 call failed for ${imgPath}:`, e);
           }
-        } catch (errPlantar) {
-          console.warn('Plantar Fig 1 export failed for ' + stem, errPlantar);
+        } else {
+          // Web client-side Canvas fallback
+          try {
+            const plantarPkg = await generatePlantarPaperFig1Package(res, w, h, segs, labels, imgScale, fileStem);
+            if (plantarPkg) {
+              const pngBase64 = plantarPkg.fig1PngDataUrl.split(',')[1];
+              exportFilesMap[`${fileStem}_${plantarPkg.footSide}_whitehot.png`] = pngBase64;
+              exportFilesMap[`${stepStem}_${plantarPkg.footSide}_whitehot.png`] = pngBase64;
+              exportFilesMap[`Gradient/${fileStem}_${plantarPkg.footSide}_whitehot.png`] = pngBase64;
+              exportFilesMap[`Gradient/${stepStem}_${plantarPkg.footSide}_whitehot.png`] = pngBase64;
+
+              exportFilesMap[`${fileStem}_${plantarPkg.footSide}_metrics.csv`] = plantarPkg.metricsCsv;
+              exportFilesMap[`${stepStem}_${plantarPkg.footSide}_metrics.csv`] = plantarPkg.metricsCsv;
+              exportFilesMap[`Sheet/${fileStem}_${plantarPkg.footSide}_metrics.csv`] = plantarPkg.metricsCsv;
+              exportFilesMap[`Sheet/${stepStem}_${plantarPkg.footSide}_metrics.csv`] = plantarPkg.metricsCsv;
+            }
+          } catch (errPlantar) {
+            console.warn('Plantar Fig 1 export failed for ' + fileStem, errPlantar);
+          }
         }
       }
 

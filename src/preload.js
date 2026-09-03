@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   cropLabels: (imagePath, roiPoints, labelName, roiIndex, outputDir) =>
     ipcRenderer.invoke('crop-labels', imagePath, roiPoints, labelName, roiIndex, outputDir),
 
+  gradientScene: (imagePath, rois, pxPerCm, outputDir) =>
+    ipcRenderer.invoke('gradient-scene', imagePath, rois, pxPerCm, outputDir),
+
   generatePlantarFig1: (imagePath, rois, outputDir) =>
     ipcRenderer.invoke('generate-plantar-fig1', imagePath, rois, outputDir),
 
