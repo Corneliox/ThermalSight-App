@@ -1,6 +1,6 @@
 # 🌡 ThermalSight
 
-[![Version](https://img.shields.io/badge/version-1.6.2-blue.svg)](https://github.com/Corneliox/ThermalSight-App/releases/tag/v1.6.2)
+[![Version](https://img.shields.io/badge/version-1.6.3-blue.svg)](https://github.com/Corneliox/ThermalSight-App/releases/tag/v1.6.3)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Web-brightgreen.svg)]()
 [![Web App](https://img.shields.io/badge/Live%20Demo-Firebase%20Hosting-orange.svg)](https://thermalsight-web-2026.web.app)
 [![License](https://img.shields.io/badge/license-MIT-purple.svg)]()
@@ -46,7 +46,12 @@ Available as both an offline desktop application (**Electron + Python backend**)
 - Samples sub-pixel temperatures along 8 cardinal and intercardinal axes ($\text{N, NE, E, SE, S, SW, W, NW}$).
 - Computes directional thermal gradient magnitude ($G_k$ in $^\circ\text{C}/\text{cm}$), maximum gradient ($G_{\max}$), and dominant gradient direction (**Modus**).
 
-### 4. Multi-Mode Relative Sequence Progression
+### 4. Whole-Scene Gradient & Quiver Vector Field Suite (Panel B Style)
+- **Whole-Scene Gradient Magnitude**: Continuous 2D spatial gradient magnitude map $\|\vec{\nabla} T\|$ in $^\circ\text{C}/\text{cm}$.
+- **Whole-Scene Gradient with ROI Labels**: Spatial gradient map with polygon/circle boundaries, centroids, and label badges overlaid.
+- **Biomechanical Quiver & Isotherm Contour Map (TPG & TGA)**: Publication-grade vector map on clean white background with multi-level isotherm contours, gradient quiver arrows pointing along $\vec{\nabla} T$, and anatomical circular ROI markers (T1, M1, M2, HL).
+
+### 5. Multi-Mode Relative Sequence Progression
 - Side-by-side time-series comparison across protocol steps (Step 1 to Step $N$, e.g., Treadmill Rest $\to$ 80 mmHg $\to$ 160 mmHg $\to$ Heat).
 - High-resolution montage generator:
   - `comparison_overall_all_labels.png`: Full thermal view displaying all ROIs simultaneously.
@@ -54,7 +59,7 @@ Available as both an offline desktop application (**Electron + Python backend**)
 - Computes temporal differential deltas relative to Step 1 baseline:
   $$\Delta T_{\text{center}}(t) = T_{\text{center}}(t) - T_{\text{center}}(1), \quad \Delta T_{\text{mean}}(t) = T_{\text{mean}}(t) - T_{\text{mean}}(1)$$
 
-### 5. 8-Axis Polar Radar Gradient Profiles
+### 6. 8-Axis Polar Radar Gradient Profiles
 - Polar radar diagrams overlaying directional gradient vectors across all sequence steps.
 - Visualizes heat dissipation trajectories and directional vascular response over time.
 - Direct export to scalable vector graphics (`radar_gradient_{label}_dark.svg` and `white.svg`).
@@ -121,7 +126,8 @@ $$\text{Modus} = \arg\max_{k \in \text{COMPASS}} |T(x_k, y_k) - T(x_c, y_c)|$$
  ┌──────────────┐            ┌──────────────┐                             ┌──────────────┐            ┌──────────────┐
  │  Electron    │            │ Python Core  │                             │  React +     │            │ thermalEngine│
  │  Main / IPC  │ ◄────────► │ (OpenCV,     │                             │  Vite UI     │ ◄────────► │ (HTML5 Canvas│
- │  Controller  │            │  NumPy)      │                             │  App         │            │  JS Client)  │
+ │  Controller  │            │  NumPy,      │                             │  App         │            │  JS Client)  │
+ │              │            │  Matplotlib) │                             │              │            │  LUT / Sobel)│
  └──────────────┘            └──────────────┘                             └──────────────┘            └──────────────┘
 ```
 
@@ -129,12 +135,12 @@ $$\text{Modus} = \arg\max_{k \in \text{COMPASS}} |T(x_k, y_k) - T(x_c, y_c)|$$
 
 ## 📦 Output Package Structure
 
-When saving labels and exporting, ThermalSight generates a standardized package (`{FolderName}_Result/` or `{FolderName}_Result.zip`):
+When saving labels and exporting, ThermalSight generates a comprehensive analysis suite (`{FolderName}_Result/` or `{FolderName}_Result.zip`):
 
 ```
 📂 {FolderName}_Result/
 ├── 📄 annotations_session.json               # Full session metadata & polygon vertices
-├── 📄 master_summary_all_labels.csv          # Combined metrics & 8-directional gradients
+├── 📄 master_summary_all_labels.csv          # Combined metrics & 8-directional gradients (UTF-8 BOM)
 ├── 📄 m1_summary.csv                         # Step-by-step summary for ROI m1
 ├── 📄 m2_summary.csv                         # Step-by-step summary for ROI m2
 ├── 📊 graph_m1_dark.svg / white.svg          # Min-Max range band & mean curve

@@ -1132,35 +1132,9 @@ export async function generateFullLabeledSceneCanvas(resOrMatrix, W = 320, H = 2
 
   let renderedBg = false;
 
-  // 1. If we have an image path or dataURL from Python backend or client
-  const imgUrl = resOrMatrix?.images?.inferno || resOrMatrix?.images?.original || (typeof resOrMatrix === 'string' && (resOrMatrix.startsWith('data:') || resOrMatrix.startsWith('file:') || resOrMatrix.includes('/')) ? resOrMatrix : null);
-  if (imgUrl) {
-    try {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      const fileUrl = imgUrl.startsWith('data:') || imgUrl.startsWith('blob:') || imgUrl.startsWith('http')
-        ? imgUrl
-        : (imgUrl.startsWith('file://') ? imgUrl : `file://${imgUrl.replace(/\\/g, '/')}`);
-      
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
-        img.src = fileUrl;
-      });
-      canvas.width = img.naturalWidth || W || 320;
-      canvas.height = img.naturalHeight || H || 240;
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      renderedBg = true;
-    } catch (e) {
-      console.warn('generateFullLabeledSceneCanvas: image load error, falling back to matrix/color', e);
-    }
-  }
-
-  // 2. If no image drawn, render from tempMatrix
-  const tempMatrix = resOrMatrix?.raw?.tempMatrix || (resOrMatrix instanceof Float32Array || Array.isArray(resOrMatrix) ? resOrMatrix : null);
-  if (!renderedBg && tempMatrix) {
-    canvas.width = W || 320;
-    canvas.height = H || 240;
+  // 1. Prioritize rendering directly from raw temperature matrix for 100% 1:1 pixel perfection
+  const tempMatrix = resOrMatrix?.raw?.tempMatrix || resOrMatrix?.tempMatrix || (resOrMatrix instanceof Float32Array || Array.isArray(resOrMatrix) ? resOrMatrix : null);
+  if (tempMatrix) {
     const is2D = Array.isArray(tempMatrix) && Array.isArray(tempMatrix[0]);
     const imgData = ctx.createImageData(canvas.width, canvas.height);
     let minT = Infinity, maxT = -Infinity;
@@ -1187,6 +1161,30 @@ export async function generateFullLabeledSceneCanvas(resOrMatrix, W = 320, H = 2
     }
     ctx.putImageData(imgData, 0, 0);
     renderedBg = true;
+  }
+
+  // 2. Fallback: Load image path if matrix is not directly available
+  if (!renderedBg) {
+    const imgUrl = resOrMatrix?.images?.inferno || resOrMatrix?.images?.original || (typeof resOrMatrix === 'string' && (resOrMatrix.startsWith('data:') || resOrMatrix.startsWith('file:') || resOrMatrix.includes('/')) ? resOrMatrix : null);
+    if (imgUrl) {
+      try {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        const fileUrl = imgUrl.startsWith('data:') || imgUrl.startsWith('blob:') || imgUrl.startsWith('http')
+          ? imgUrl
+          : (imgUrl.startsWith('file://') ? imgUrl : `file://${imgUrl.replace(/\\/g, '/')}`);
+        
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+          img.src = fileUrl;
+        });
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        renderedBg = true;
+      } catch (e) {
+        console.warn('generateFullLabeledSceneCanvas: image load error', e);
+      }
+    }
   }
 
   if (!renderedBg) {
@@ -1251,7 +1249,7 @@ export async function generateFullLabeledSceneCanvas(resOrMatrix, W = 320, H = 2
       ctx.fillStyle = '#ffffff';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(name, cx, by + bh / 2);
+      ctx.fillText(name.toUpperCase(), cx, by + bh / 2);
       ctx.textAlign = 'left';
     } else if (roi.points && roi.points.length >= 3) {
       const scaledPts = roi.points.map(p => ({ x: p.x * scaleX, y: p.y * scaleY }));
@@ -1311,9 +1309,361 @@ export async function generateFullLabeledSceneCanvas(resOrMatrix, W = 320, H = 2
       ctx.fillStyle = '#ffffff';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(name, cx, by + bh / 2);
+      ctx.fillText(name.toUpperCase(), cx, by + bh / 2);
       ctx.textAlign = 'left';
     }
+  });
+
+  return canvas.toDataURL('image/png');
+}
+
+// ── Spatial Gradient Matrix Computation (Client-Side) ───────────────────────
+export function computeSpatialGradientMatrix(tempMatrix, W = 320, H = 240, pxPerCm = 10.0) {
+  const is2D = Array.isArray(tempMatrix) && Array.isArray(tempMatrix[0]);
+  const getT = (x, y) => {
+    const cx = Math.max(0, Math.min(W - 1, x));
+    const cy = Math.max(0, Math.min(H - 1, y));
+    return is2D ? (tempMatrix[cy]?.[cx] ?? 0) : (tempMatrix[cy * W + cx] ?? 0);
+  };
+
+  const dxCm = 1.0 / Math.max(0.1, pxPerCm);
+  const dyCm = 1.0 / Math.max(0.1, pxPerCm);
+  const gradMag = new Float32Array(W * H);
+  const gxArr = new Float32Array(W * H);
+  const gyArr = new Float32Array(W * H);
+
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const t00 = getT(x - 1, y - 1), t10 = getT(x, y - 1), t20 = getT(x + 1, y - 1);
+      const t01 = getT(x - 1, y),                            t21 = getT(x + 1, y);
+      const t02 = getT(x - 1, y + 1), t12 = getT(x, y + 1), t22 = getT(x + 1, y + 1);
+
+      const sobelX = (t20 + 2 * t21 + t22) - (t00 + 2 * t01 + t02);
+      const sobelY = (t02 + 2 * t12 + t22) - (t00 + 2 * t10 + t20);
+
+      const gx = (sobelX / 8.0) / dxCm;
+      const gy = (sobelY / 8.0) / dyCm;
+      const mag = Math.sqrt(gx * gx + gy * gy);
+
+      const idx = y * W + x;
+      gxArr[idx] = gx;
+      gyArr[idx] = gy;
+      gradMag[idx] = mag;
+    }
+  }
+  return { gradMag, gxArr, gyArr, dxCm, dyCm };
+}
+
+// ── 1. Full-Scene Gradient Magnitude Canvas ─────────────────────────────────
+export async function generateFullGradientMagnitudeCanvas(resOrMatrix, W = 320, H = 240, pxPerCm = 10.0) {
+  const tempMatrix = resOrMatrix?.raw?.tempMatrix || resOrMatrix?.tempMatrix || (resOrMatrix instanceof Float32Array || Array.isArray(resOrMatrix) ? resOrMatrix : null);
+  const canvas = document.createElement('canvas');
+  canvas.width = W || 320;
+  canvas.height = H || 240;
+  const ctx = canvas.getContext('2d');
+
+  if (!tempMatrix) {
+    ctx.fillStyle = '#0e0e14';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/png');
+  }
+
+  const { gradMag } = computeSpatialGradientMatrix(tempMatrix, canvas.width, canvas.height, pxPerCm);
+  let minG = Infinity, maxG = -Infinity;
+  for (let i = 0; i < gradMag.length; i++) {
+    const v = gradMag[i];
+    if (v < minG) minG = v;
+    if (v > maxG) maxG = v;
+  }
+  const span = Math.max(0.1, maxG - minG);
+  const imgData = ctx.createImageData(canvas.width, canvas.height);
+
+  for (let i = 0; i < gradMag.length; i++) {
+    const norm = Math.min(255, Math.max(0, Math.floor(((gradMag[i] - minG) / span) * 255)));
+    const idx = i * 4;
+    imgData.data[idx + 0] = INFERNO_LUT[norm * 3 + 0];
+    imgData.data[idx + 1] = INFERNO_LUT[norm * 3 + 1];
+    imgData.data[idx + 2] = INFERNO_LUT[norm * 3 + 2];
+    imgData.data[idx + 3] = 255;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
+// ── 2. Full-Scene Gradient with Labels Canvas ───────────────────────────────
+export async function generateFullGradientLabeledCanvas(resOrMatrix, W = 320, H = 240, rois = [], labelDefs = [], pxPerCm = 10.0) {
+  const baseDataUrl = await generateFullGradientMagnitudeCanvas(resOrMatrix, W, H, pxPerCm);
+  const canvas = document.createElement('canvas');
+  canvas.width = W || 320;
+  canvas.height = H || 240;
+  const ctx = canvas.getContext('2d');
+
+  const img = new Image();
+  await new Promise((resolve) => {
+    img.onload = resolve;
+    img.src = baseDataUrl;
+  });
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  const scaleX = canvas.width / (W || 320);
+  const scaleY = canvas.height / (H || 240);
+
+  (rois || []).forEach(roi => {
+    const def = (labelDefs || []).find(l => l.id === roi.labelId || l.name === roi.labelName) || { name: roi.labelName || 'ROI', color: roi.color || '#00e5ff' };
+    const color = roi.color || def.color || '#00e5ff';
+    const name = roi.labelName || def.name || 'ROI';
+
+    if (roi.type === 'circle' && roi.cx !== undefined) {
+      const cx = roi.cx * scaleX;
+      const cy = roi.cy * scaleY;
+      const r = (roi.radius || 15) * Math.min(scaleX, scaleY);
+
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.25;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.globalAlpha = 1.0;
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 3.5, 0, 2 * Math.PI);
+      ctx.fill();
+
+      // Badge
+      ctx.font = 'bold 12px sans-serif';
+      const tw = ctx.measureText(name).width;
+      const bw = tw + 14;
+      const bh = 18;
+      const bx = cx - bw / 2;
+      const by = cy - r - bh - 4;
+
+      ctx.fillStyle = 'rgba(0,0,0,0.85)';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, 4);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(name.toUpperCase(), cx, by + bh / 2);
+    } else if (roi.points && roi.points.length >= 3) {
+      const scaledPts = roi.points.map(p => ({ x: p.x * scaleX, y: p.y * scaleY }));
+
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.25;
+      ctx.beginPath();
+      scaledPts.forEach((p, idx) => {
+        if (idx === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      });
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1.0;
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+
+      const cx = scaledPts.reduce((a, b) => a + b.x, 0) / scaledPts.length;
+      const cy = scaledPts.reduce((a, b) => a + b.y, 0) / scaledPts.length;
+
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 3.5, 0, 2 * Math.PI);
+      ctx.fill();
+
+      ctx.font = 'bold 12px sans-serif';
+      const tw = ctx.measureText(name).width;
+      const bw = tw + 14;
+      const bh = 18;
+      const bx = cx - bw / 2;
+      const by = cy - bh - 8;
+
+      ctx.fillStyle = 'rgba(0,0,0,0.85)';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, 4);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(name.toUpperCase(), cx, by + bh / 2);
+    }
+  });
+
+  return canvas.toDataURL('image/png');
+}
+
+// ── 3. Full-Scene Quiver Vector Field & Isotherm Contours (Panel B Style) ──
+export async function generateFullGradientQuiverContourCanvas(resOrMatrix, W = 320, H = 240, rois = [], labelDefs = [], pxPerCm = 10.0) {
+  const tempMatrix = resOrMatrix?.raw?.tempMatrix || resOrMatrix?.tempMatrix || (resOrMatrix instanceof Float32Array || Array.isArray(resOrMatrix) ? resOrMatrix : null);
+  const canvas = document.createElement('canvas');
+  canvas.width = W || 320;
+  canvas.height = H || 240;
+  const ctx = canvas.getContext('2d');
+
+  // Clean White Background (matching Panel B)
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (!tempMatrix) return canvas.toDataURL('image/png');
+
+  const { gradMag, gxArr, gyArr } = computeSpatialGradientMatrix(tempMatrix, canvas.width, canvas.height, pxPerCm);
+
+  // 1. Draw Multi-level Isotherm Contours
+  const is2D = Array.isArray(tempMatrix) && Array.isArray(tempMatrix[0]);
+  let minT = Infinity, maxT = -Infinity;
+  for (let y = 0; y < canvas.height; y++) {
+    for (let x = 0; x < canvas.width; x++) {
+      const t = is2D ? (tempMatrix[y]?.[x] ?? 0) : (tempMatrix[y * canvas.width + x] ?? 0);
+      if (t < minT) minT = t;
+      if (t > maxT) maxT = t;
+    }
+  }
+  const spanT = Math.max(0.5, maxT - minT);
+
+  // Render 10 contour lines
+  const numLevels = 10;
+  ctx.lineWidth = 1.0;
+  for (let l = 1; l < numLevels; l++) {
+    const threshold = minT + (spanT * l) / numLevels;
+    const norm = l / numLevels;
+    const [cr, cg, cb] = interpolateColor([30, 80, 200], [220, 50, 50], norm);
+    ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, 0.75)`;
+
+    for (let y = 0; y < canvas.height - 2; y += 2) {
+      for (let x = 0; x < canvas.width - 2; x += 2) {
+        const v0 = (is2D ? tempMatrix[y]?.[x] : tempMatrix[y * canvas.width + x]) >= threshold ? 1 : 0;
+        const v1 = (is2D ? tempMatrix[y]?.[x + 2] : tempMatrix[y * canvas.width + (x + 2)]) >= threshold ? 1 : 0;
+        const v2 = (is2D ? tempMatrix[y + 2]?.[x + 2] : tempMatrix[(y + 2) * canvas.width + (x + 2)]) >= threshold ? 1 : 0;
+        const v3 = (is2D ? tempMatrix[y + 2]?.[x] : tempMatrix[(y + 2) * canvas.width + x]) >= threshold ? 1 : 0;
+        const cell = (v0 << 3) | (v1 << 2) | (v2 << 1) | v3;
+        if (cell === 0 || cell === 15) continue;
+
+        ctx.beginPath();
+        if (cell === 1 || cell === 14) {
+          ctx.moveTo(x, y + 1); ctx.lineTo(x + 1, y + 2);
+        } else if (cell === 2 || cell === 13) {
+          ctx.moveTo(x + 1, y + 2); ctx.lineTo(x + 2, y + 1);
+        } else if (cell === 3 || cell === 12) {
+          ctx.moveTo(x, y + 1); ctx.lineTo(x + 2, y + 1);
+        } else if (cell === 4 || cell === 11) {
+          ctx.moveTo(x + 1, y); ctx.lineTo(x + 2, y + 1);
+        } else if (cell === 6 || cell === 9) {
+          ctx.moveTo(x + 1, y); ctx.lineTo(x + 1, y + 2);
+        } else if (cell === 7 || cell === 8) {
+          ctx.moveTo(x, y + 1); ctx.lineTo(x + 1, y);
+        } else {
+          ctx.moveTo(x, y + 1); ctx.lineTo(x + 2, y + 1);
+        }
+        ctx.stroke();
+      }
+    }
+  }
+
+  // 2. Subsampled Quiver Arrows
+  const step = 12;
+  let maxMag = 0;
+  for (let i = 0; i < gradMag.length; i++) {
+    if (gradMag[i] > maxMag) maxMag = gradMag[i];
+  }
+  const noiseGate = Math.max(0.2, maxMag * 0.15);
+
+  ctx.strokeStyle = '#1a5fb4';
+  ctx.fillStyle = '#1a5fb4';
+  ctx.lineWidth = 1.0;
+
+  for (let y = step / 2; y < canvas.height; y += step) {
+    for (let x = step / 2; x < canvas.width; x += step) {
+      const idx = Math.floor(y) * canvas.width + Math.floor(x);
+      const mag = gradMag[idx];
+      if (mag < noiseGate) continue;
+
+      const gx = gxArr[idx];
+      const gy = gyArr[idx];
+      const len = Math.min(step * 0.9, (mag / (maxMag || 1)) * step * 1.5 + 2);
+      const angle = Math.atan2(gy, gx);
+
+      const x2 = x + Math.cos(angle) * len;
+      const y2 = y + Math.sin(angle) * len;
+
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+
+      const headLen = 3.5;
+      const a1 = angle + Math.PI * 0.82;
+      const a2 = angle - Math.PI * 0.82;
+      ctx.beginPath();
+      ctx.moveTo(x2, y2);
+      ctx.lineTo(x2 + Math.cos(a1) * headLen, y2 + Math.sin(a1) * headLen);
+      ctx.lineTo(x2 + Math.cos(a2) * headLen, y2 + Math.sin(a2) * headLen);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  const scaleX = canvas.width / (W || 320);
+  const scaleY = canvas.height / (H || 240);
+
+  // 3. Circular ROI badges matching Panel B (Double red concentric ring, center dot, bold black label)
+  (rois || []).forEach(roi => {
+    const def = (labelDefs || []).find(l => l.id === roi.labelId || l.name === roi.labelName) || { name: roi.labelName || 'ROI' };
+    const name = roi.labelName || def.name || 'ROI';
+
+    let cx = 0, cy = 0, r = 14;
+    if (roi.type === 'circle' && roi.cx !== undefined) {
+      cx = roi.cx * scaleX;
+      cy = roi.cy * scaleY;
+      r = (roi.radius || 14) * Math.min(scaleX, scaleY);
+    } else if (roi.points && roi.points.length >= 3) {
+      const scaledPts = roi.points.map(p => ({ x: p.x * scaleX, y: p.y * scaleY }));
+      cx = scaledPts.reduce((a, b) => a + b.x, 0) / scaledPts.length;
+      cy = scaledPts.reduce((a, b) => a + b.y, 0) / scaledPts.length;
+    } else {
+      return;
+    }
+
+    // Double red concentric rings (Panel B style)
+    ctx.strokeStyle = '#e60000';
+    ctx.lineWidth = 2.0;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+    ctx.stroke();
+
+    ctx.lineWidth = 1.0;
+    ctx.setLineDash([2, 2]);
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.85, 0, 2 * Math.PI);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Center red dot
+    ctx.fillStyle = '#e60000';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 3.5, 0, 2 * Math.PI);
+    ctx.fill();
+
+    // Bold black label above ROI (T1, M1, M2, HL)
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillStyle = '#000000';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(name.toUpperCase(), cx, cy - r - 4);
   });
 
   return canvas.toDataURL('image/png');

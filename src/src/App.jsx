@@ -11,7 +11,10 @@ import {
   computeLabelStarGradient,
   generateFullSequenceComparisonCanvas,
   generateThermalDirectionSvg,
-  generateFullLabeledSceneCanvas
+  generateFullLabeledSceneCanvas,
+  generateFullGradientMagnitudeCanvas,
+  generateFullGradientLabeledCanvas,
+  generateFullGradientQuiverContourCanvas
 } from './thermalEngine';
 
 // Access secure electronAPI exposed via contextBridge in preload.js
@@ -178,7 +181,7 @@ export default function App() {
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
-    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.6.2 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
+    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.6.3 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
   ]);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const terminalEndRef = useRef(null);
@@ -1055,6 +1058,8 @@ export default function App() {
     const parentFolderName = basePath.split(/[\\/]/).pop().replace(/\.[^/.]+$/, '');
     const resultDir = basePath + '_Result';
     const isolatedDir = `${resultDir}/${parentFolderName}_isolated_labels`;
+    const exportFilesMap = {};
+    const csvEsc = (val) => { const s = String(val ?? '').replace(/"/g, '""'); return /[,"\n\r=+\-@\t]/.test(s) ? `"${s}"` : s; };
 
     try {
       for (let imgIdx = 0; imgIdx < targetPaths.length; imgIdx++) {
@@ -1103,16 +1108,31 @@ export default function App() {
             csv_path: res.csv_path || `${pictureName}_roi_${i+1}_${roi.labelName}.csv`,
             protocol: proto,
             croppedPngDataUrl: res.croppedPngDataUrl,
+            png2dQuiverDataUrl: res.png2dQuiverDataUrl,
+            png3dSurfaceDataUrl: res.png3dSurfaceDataUrl,
+            png2x2dDataUrl: res.png2x2dDataUrl,
+            png2x3dDataUrl: res.png2x3dDataUrl,
             csvContent: res.csvContent,
             starCsvContent: res.starCsvContent,
           });
+
+          // Mirror isolated gradient plots to Gradient/ folder map
+          if (res.png2dQuiverDataUrl) {
+            exportFilesMap[`Gradient/isolated_${pictureName}_${roi.labelName}_${i + 1}_2d_quiver.png`] = res.png2dQuiverDataUrl.split(',')[1];
+          }
+          if (res.png3dSurfaceDataUrl) {
+            exportFilesMap[`Gradient/isolated_${pictureName}_${roi.labelName}_${i + 1}_3d_surface.png`] = res.png3dSurfaceDataUrl.split(',')[1];
+          }
+          if (res.png2x2dDataUrl) {
+            exportFilesMap[`Gradient/isolated_${pictureName}_${roi.labelName}_${i + 1}_2x_context_2d.png`] = res.png2x2dDataUrl.split(',')[1];
+          }
+          if (res.png2x3dDataUrl) {
+            exportFilesMap[`Gradient/isolated_${pictureName}_${roi.labelName}_${i + 1}_2x_context_3d.png`] = res.png2x3dDataUrl.split(',')[1];
+          }
         }
       }
 
       // Assemble Summary CSVs and SVG Graphs for {Parentfoldername}_Result
-      const exportFilesMap = {};
-      // Security: CSV escape to prevent formula injection in Excel
-      const csvEsc = (val) => { const s = String(val ?? '').replace(/"/g, '""'); return /[,"\n\r=+\-@\t]/.test(s) ? `"${s}"` : s; };
       const compassHeaders = COMPASS.map(c => `grad_${c}_c_per_cm`).join(',');
 
       let masterCsv = '\uFEFF' + `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,gradient_min_c_per_cm,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm,${compassHeaders}\n`;
@@ -1162,7 +1182,7 @@ export default function App() {
       exportFilesMap[`master_summary_all_labels.csv`] = masterCsv;
       exportFilesMap[`Sheet/master_summary_all_labels.csv`] = masterCsv;
 
-      // Generate Full Labeled Scene Image PNG for each Step (All ROIs drawn on each step's actual image)
+      // Generate Full Labeled Scene Image PNG and Whole-Scene Gradient Suite for each Step
       for (let idx = 0; idx < targetPaths.length; idx++) {
         const imgPath = targetPaths[idx];
         const item = imageList.find(img => (typeof img === 'string' ? img : img.path) === imgPath);
@@ -1170,10 +1190,30 @@ export default function App() {
         const segs = segmentations[imgPath] || [];
         const res = resultsMap[imgPath];
         const [h, w] = res?.shape || [240, 320];
+        const imgScale = calibrationsMap[imgPath]?.pxPerCm || 10;
 
+        // 1. Full Labeled Scene Image
         const labeledCanvas = await generateFullLabeledSceneCanvas(res, w, h, segs, labels);
         if (labeledCanvas) {
           exportFilesMap[`labeled_scene_${stem}.png`] = labeledCanvas.split(',')[1];
+        }
+
+        // 2. Full-Scene Continuous Gradient Magnitude
+        const fullGrad = await generateFullGradientMagnitudeCanvas(res, w, h, imgScale);
+        if (fullGrad) {
+          exportFilesMap[`Gradient/gradient_full_scene_${stem}.png`] = fullGrad.split(',')[1];
+        }
+
+        // 3. Full-Scene Gradient with Labels Overlaid
+        const labeledGrad = await generateFullGradientLabeledCanvas(res, w, h, segs, labels, imgScale);
+        if (labeledGrad) {
+          exportFilesMap[`Gradient/gradient_labeled_scene_${stem}.png`] = labeledGrad.split(',')[1];
+        }
+
+        // 4. Full-Scene Quiver Vector Field & Isotherm Contours (Panel B Style)
+        const quiverContour = await generateFullGradientQuiverContourCanvas(res, w, h, segs, labels, imgScale);
+        if (quiverContour) {
+          exportFilesMap[`Gradient/gradient_quiver_contour_${stem}.png`] = quiverContour.split(',')[1];
         }
       }
 
@@ -1209,6 +1249,7 @@ export default function App() {
         const rootFolder = zip.folder(`${parentFolderName}_Result`);
         const isolatedFolder = rootFolder.folder(`${parentFolderName}_isolated_labels`);
         const sheetFolder = rootFolder.folder('Sheet');
+        const gradientFolder = rootFolder.folder('Gradient');
 
         sheetFolder.file('master_summary_all_labels.csv', masterCsv);
 
@@ -1226,18 +1267,22 @@ export default function App() {
             if (s.png2dQuiverDataUrl) {
               const base64Data2d = s.png2dQuiverDataUrl.split(',')[1];
               isolatedFolder.file(`${s.pictureName}_roi_${s.roiIndex}_${labelName}_2d_quiver.png`, base64Data2d, { base64: true });
+              gradientFolder.file(`isolated_${s.pictureName}_${labelName}_${s.roiIndex}_2d_quiver.png`, base64Data2d, { base64: true });
             }
             if (s.png3dSurfaceDataUrl) {
               const base64Data3d = s.png3dSurfaceDataUrl.split(',')[1];
               isolatedFolder.file(`${s.pictureName}_roi_${s.roiIndex}_${labelName}_3d_surface.png`, base64Data3d, { base64: true });
+              gradientFolder.file(`isolated_${s.pictureName}_${labelName}_${s.roiIndex}_3d_surface.png`, base64Data3d, { base64: true });
             }
             if (s.png2x2dDataUrl) {
               const base64Data2x2d = s.png2x2dDataUrl.split(',')[1];
               isolatedFolder.file(`${s.pictureName}_roi_${s.roiIndex}_${labelName}_2x_context_2d.png`, base64Data2x2d, { base64: true });
+              gradientFolder.file(`isolated_${s.pictureName}_${labelName}_${s.roiIndex}_2x_context_2d.png`, base64Data2x2d, { base64: true });
             }
             if (s.png2x3dDataUrl) {
               const base64Data2x3d = s.png2x3dDataUrl.split(',')[1];
               isolatedFolder.file(`${s.pictureName}_roi_${s.roiIndex}_${labelName}_2x_context_3d.png`, base64Data2x3d, { base64: true });
+              gradientFolder.file(`isolated_${s.pictureName}_${labelName}_${s.roiIndex}_2x_context_3d.png`, base64Data2x3d, { base64: true });
             }
             if (s.csvContent) {
               isolatedFolder.file(`${s.pictureName}_roi_${s.roiIndex}_${labelName}.csv`, s.csvContent);
@@ -1252,7 +1297,9 @@ export default function App() {
 
         for (const [fname, content] of Object.entries(exportFilesMap)) {
           if (fname.startsWith('Sheet/')) continue; // already added to sheetFolder
-          if (fname.endsWith('.png')) {
+          if (fname.startsWith('Gradient/')) {
+            gradientFolder.file(fname.replace('Gradient/', ''), content, { base64: true });
+          } else if (fname.endsWith('.png')) {
             rootFolder.file(fname, content, { base64: true });
           } else {
             rootFolder.file(fname, content);
@@ -1274,7 +1321,7 @@ export default function App() {
 
       setAnalyticsData(aggregatedStats);
       setShowAnalytics(true);
-      alert(`Success! Complete Time-Series Result Package (${parentFolderName}_Result.zip) generated successfully!\n\nIncludes:\n- ${parentFolderName}_isolated_labels/\n  * Cropped PNGs with 8-Point Star Gradients\n  * Thermal Pixel CSVs\n  * Detailed 8-Point Gradient CSVs\n- Summary CSVs with all 8 directional gradients (m1, m2, m3...)\n- Dark & White SVG Analytics Graphs\n- annotations_session.json`);
+      alert(`Success! Complete Time-Series Result Package (${parentFolderName}_Result.zip) generated successfully!\n\nIncludes:\n- Gradient/\n  * Full-Scene Gradient Magnitudes\n  * Full-Scene Gradient with ROI Labels\n  * Full-Scene Quiver Vector Field & Isotherms (Panel B style)\n  * Isolated 2D Quiver & 3D Surface Meshes\n- ${parentFolderName}_isolated_labels/\n  * Cropped PNGs with 8-Point Star Gradients\n  * Thermal Pixel CSVs\n- Sheet/\n  * Summary & Detailed CSVs\n- Dark & White SVG Analytics Graphs\n- annotations_session.json`);
     } catch (err) {
       alert(`Export failed:\n${err.message || err}`);
     }
@@ -1610,7 +1657,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.6.2 (Web & Desktop)</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.6.3 (Web & Desktop)</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -1760,7 +1807,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.6.2' : 'v1.6.2'}</span>
+          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.6.3' : 'v1.6.3'}</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (

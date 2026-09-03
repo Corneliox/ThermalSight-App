@@ -133,14 +133,25 @@ def save_panel_png(arr, cmap, path, title):
 
 
 def save_all_pngs(data: dict, out_dir: Path, stem: str) -> dict:
+    paths = {}
+
+    # 1. Save unpadded pure 1:1 image rasters for pixel-perfect GUI and canvas overlay
+    p_orig = out_dir / f"{stem}_original.png"
+    p_inferno = out_dir / f"{stem}_inferno.png"
+    temp_u8 = normalize_u8(data["temp"])
+    orig_inferno_bgr = cv2.applyColorMap(temp_u8, cv2.COLORMAP_INFERNO)
+    cv2.imwrite(str(p_orig), orig_inferno_bgr)
+    cv2.imwrite(str(p_inferno), orig_inferno_bgr)
+    paths["original"] = str(p_orig)
+    paths["inferno"] = str(p_inferno)
+    log(f"  saved 1:1 {p_orig.name}")
+
     panels = {
-        "original"        : (data["temp"],        "inferno", "Temperature (°C)"),
         "magnitude"       : (data["magnitude"],   "hot",     "Gradient Magnitude"),
         "mag_thresh"      : (data["mag_thresh"],  "hot",     "Magnitude Thresholded"),
         "angle"           : (data["angle"],       "hsv",     "Gradient Angle"),
         "overlay"         : (data["overlay_rgb"], None,      "Overlay"),
     }
-    paths = {}
     for key, (arr, cmap, title) in panels.items():
         p = out_dir / f"{stem}_{key}.png"
         save_panel_png(arr, cmap, str(p), title)
@@ -367,6 +378,179 @@ def save_gradient_3d_surface(temp_patch: np.ndarray, out_path: Path, title: str,
     fig.savefig(str(out_path), bbox_inches="tight")
     plt.close(fig)
     log(f"  saved 3D Surface Mesh: {out_path.name}")
+    return str(out_path)
+
+
+def save_full_gradient_magnitude(temp: np.ndarray, out_path: Path, title: str, px_cm: float = 10.0) -> str:
+    H, W = temp.shape
+    dx_cm = 1.0 / max(0.1, px_cm)
+    dy_cm = 1.0 / max(0.1, px_cm)
+    Lx = W * dx_cm
+    Ly = H * dy_cm
+
+    sobel_x = cv2.Sobel(temp, cv2.CV_64F, 1, 0, ksize=3)
+    sobel_y = cv2.Sobel(temp, cv2.CV_64F, 0, 1, ksize=3)
+    gx = (sobel_x / 8.0) / dx_cm
+    gy = (sobel_y / 8.0) / dy_cm
+    grad_mag = np.sqrt(gx**2 + gy**2)
+
+    fig, ax = plt.subplots(figsize=(6.5, 7.5), dpi=150, facecolor="white")
+    im = ax.imshow(grad_mag, extent=[0, Lx, Ly, 0], cmap="inferno", aspect="equal")
+    ax.set_title(f"{title}\nThermal Gradient Magnitude", fontsize=12, fontweight="bold", pad=10)
+    ax.set_xlabel("X (cm)", fontsize=10)
+    ax.set_ylabel("Y (cm)", fontsize=10)
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label("Gradient Magnitude (°C/cm)", fontsize=10)
+    plt.tight_layout()
+    fig.savefig(str(out_path), bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    log(f"  saved full gradient magnitude: {out_path.name}")
+    return str(out_path)
+
+
+def save_full_gradient_labeled(temp: np.ndarray, rois: list, out_path: Path, title: str, px_cm: float = 10.0) -> str:
+    H, W = temp.shape
+    dx_cm = 1.0 / max(0.1, px_cm)
+    dy_cm = 1.0 / max(0.1, px_cm)
+    Lx = W * dx_cm
+    Ly = H * dy_cm
+
+    sobel_x = cv2.Sobel(temp, cv2.CV_64F, 1, 0, ksize=3)
+    sobel_y = cv2.Sobel(temp, cv2.CV_64F, 0, 1, ksize=3)
+    gx = (sobel_x / 8.0) / dx_cm
+    gy = (sobel_y / 8.0) / dy_cm
+    grad_mag = np.sqrt(gx**2 + gy**2)
+
+    fig, ax = plt.subplots(figsize=(6.5, 7.5), dpi=150, facecolor="white")
+    im = ax.imshow(grad_mag, extent=[0, Lx, Ly, 0], cmap="inferno", aspect="equal")
+    
+    # Overlay ROIs
+    for roi in (rois or []):
+        name = roi.get("labelName", "ROI")
+        col = roi.get("color", "#00e5ff")
+        if roi.get("type") == "circle" and "cx" in roi:
+            cx_cm = float(roi["cx"]) * dx_cm
+            cy_cm = float(roi["cy"]) * dy_cm
+            r_cm = float(roi.get("radius", 15)) * dx_cm
+            c_circ = plt.Circle((cx_cm, cy_cm), r_cm, color=col, fill=False, linewidth=2)
+            ax.add_patch(c_circ)
+            ax.plot(cx_cm, cy_cm, "o", color="white", markersize=4, markeredgecolor=col)
+            ax.text(cx_cm, cy_cm - r_cm - 0.25, name.upper(), color="white", fontsize=10, fontweight="bold",
+                    ha="center", va="bottom", bbox=dict(boxstyle="round,pad=0.2", facecolor="black", alpha=0.7, edgecolor=col))
+        elif roi.get("points") and len(roi["points"]) >= 3:
+            pts = roi["points"]
+            xs = [float(p["x"]) * dx_cm for p in pts] + [float(pts[0]["x"]) * dx_cm]
+            ys = [float(p["y"]) * dy_cm for p in pts] + [float(pts[0]["y"]) * dy_cm]
+            ax.plot(xs, ys, color=col, linewidth=2)
+            cx_cm = float(np.mean([float(p["x"]) * dx_cm for p in pts]))
+            cy_cm = float(np.mean([float(p["y"]) * dy_cm for p in pts]))
+            ax.plot(cx_cm, cy_cm, "o", color="white", markersize=4, markeredgecolor=col)
+            ax.text(cx_cm, cy_cm - 0.35, name.upper(), color="white", fontsize=10, fontweight="bold",
+                    ha="center", va="bottom", bbox=dict(boxstyle="round,pad=0.2", facecolor="black", alpha=0.7, edgecolor=col))
+
+    ax.set_title(f"{title}\nThermal Gradient with ROI Labels", fontsize=12, fontweight="bold", pad=10)
+    ax.set_xlabel("X (cm)", fontsize=10)
+    ax.set_ylabel("Y (cm)", fontsize=10)
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label("Gradient Magnitude (°C/cm)", fontsize=10)
+    plt.tight_layout()
+    fig.savefig(str(out_path), bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    log(f"  saved labeled gradient map: {out_path.name}")
+    return str(out_path)
+
+
+def save_full_gradient_quiver_contours(temp: np.ndarray, rois: list, out_path: Path, title: str, px_cm: float = 10.0) -> str:
+    H, W = temp.shape
+    dx_cm = 1.0 / max(0.1, px_cm)
+    dy_cm = 1.0 / max(0.1, px_cm)
+    Lx = W * dx_cm
+    Ly = H * dy_cm
+
+    x_arr = np.linspace(0, Lx, W)
+    y_arr = np.linspace(0, Ly, H)
+    X, Y = np.meshgrid(x_arr, y_arr)
+
+    # Smooth slightly to remove high-frequency thermal sensor noise
+    temp_smooth = cv2.GaussianBlur(temp, (5, 5), 1.2)
+
+    sobel_x = cv2.Sobel(temp_smooth, cv2.CV_64F, 1, 0, ksize=3)
+    sobel_y = cv2.Sobel(temp_smooth, cv2.CV_64F, 0, 1, ksize=3)
+    gx = (sobel_x / 8.0) / dx_cm
+    gy = (sobel_y / 8.0) / dy_cm
+    grad_mag = np.sqrt(gx**2 + gy**2)
+
+    fig, ax = plt.subplots(figsize=(6.5, 9.5), dpi=150, facecolor="white")
+    ax.set_facecolor("white")
+
+    # Multi-level Isotherm Contours
+    t_p5 = float(np.percentile(temp_smooth, 10))
+    t_p98 = float(np.percentile(temp_smooth, 98))
+    if t_p98 - t_p5 > 0.5:
+        levels = np.linspace(t_p5, t_p98, 14)
+        ax.contour(X, Y, temp_smooth, levels=levels, cmap="turbo", linewidths=1.0, alpha=0.85)
+
+    # Subsampled Quiver Vector Field
+    step = max(3, int(round(min(W, H) / 24.0)))
+    y_idxs, x_idxs = np.mgrid[step//2:H:step, step//2:W:step]
+    x_q = x_idxs * dx_cm
+    y_q = y_idxs * dy_cm
+    u_q = gx[y_idxs, x_idxs]
+    v_q = gy[y_idxs, x_idxs]
+    mag_q = grad_mag[y_idxs, x_idxs]
+
+    # Filter out low-gradient noise
+    noise_gate = max(0.2, float(np.percentile(grad_mag, 45)))
+    active_mask = mag_q > noise_gate
+
+    max_mag = np.max(mag_q[active_mask]) if np.any(active_mask) else 1.0
+    scale_factor = max_mag * 1.5
+
+    ax.quiver(
+        x_q[active_mask], y_q[active_mask],
+        u_q[active_mask], v_q[active_mask],
+        color="#1a5fb4", angles="xy", scale_units="xy",
+        scale=scale_factor, width=0.004, headwidth=3.5, headlength=4.5, alpha=0.9
+    )
+
+    # Circular ROI badges matching Panel B (T1, M1, M2, HL)
+    for roi in (rois or []):
+        name = roi.get("labelName", "ROI")
+        if roi.get("type") == "circle" and "cx" in roi:
+            cx_cm = float(roi["cx"]) * dx_cm
+            cy_cm = float(roi["cy"]) * dy_cm
+            r_cm = float(roi.get("radius", 15)) * dx_cm
+        elif roi.get("points") and len(roi["points"]) >= 3:
+            pts = roi["points"]
+            cx_cm = float(np.mean([float(p["x"]) * dx_cm for p in pts]))
+            cy_cm = float(np.mean([float(p["y"]) * dy_cm for p in pts]))
+            r_cm = 1.4
+        else:
+            continue
+
+        # Double red concentric rings (exactly like Panel B)
+        c_outer = plt.Circle((cx_cm, cy_cm), r_cm, color="red", fill=False, linewidth=2.0)
+        c_inner = plt.Circle((cx_cm, cy_cm), r_cm * 0.85, color="red", fill=False, linewidth=1.0, linestyle=":")
+        ax.add_patch(c_outer)
+        ax.add_patch(c_inner)
+        # Center red dot
+        ax.plot(cx_cm, cy_cm, "o", color="red", markersize=4)
+
+        # Bold black anatomical text label (T1, M1, M2, HL)
+        ax.text(cx_cm, cy_cm - r_cm - 0.4, name.upper(), color="black", fontsize=14, fontweight="bold",
+                ha="center", va="bottom")
+
+    ax.set_xlim(0, Lx)
+    ax.set_ylim(Ly, 0) # match top-down image orientation
+    ax.set_title(f"{title}\nTPG & TGA (Thermal Peak Gradient & Angle)", fontsize=13, fontweight="bold", pad=12)
+    ax.set_xlabel("X (cm)", fontsize=11, fontweight="bold")
+    ax.set_ylabel("Y (cm)", fontsize=11, fontweight="bold")
+    ax.grid(True, linestyle=":", alpha=0.35, color="#888")
+
+    plt.tight_layout()
+    fig.savefig(str(out_path), bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    log(f"  saved gradient quiver & contours (Panel B style): {out_path.name}")
     return str(out_path)
 
 
@@ -782,13 +966,44 @@ def cmd_crop(image_path: str, points_json_str: str, label_name: str,
     })
 
 
+def cmd_gradient_scene(image_path: str, rois_json_str: str, px_cm: float, out_dir_str: str):
+    out_dir = Path(out_dir_str)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = Path(image_path).stem
+
+    log(f"GRADIENT_SCENE: loading {image_path}")
+    temp = load_temperature(image_path)
+
+    try:
+        rois = json.loads(rois_json_str) if rois_json_str else []
+    except Exception as e:
+        log(f"  warning: failed to parse rois json: {e}")
+        rois = []
+
+    p1 = out_dir / f"gradient_full_scene_{stem}.png"
+    p2 = out_dir / f"gradient_labeled_scene_{stem}.png"
+    p3 = out_dir / f"gradient_quiver_contour_{stem}.png"
+
+    path1 = save_full_gradient_magnitude(temp, p1, stem, px_cm)
+    path2 = save_full_gradient_labeled(temp, rois, p2, stem, px_cm)
+    path3 = save_full_gradient_quiver_contours(temp, rois, p3, stem, px_cm)
+
+    emit({
+        "status": "ok",
+        "stem": stem,
+        "full_gradient_path": str(path1),
+        "labeled_gradient_path": str(path2),
+        "quiver_contour_path": str(path3)
+    })
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        fail("Usage: analyzer.py <analyze|star|crop> ...")
+        fail("Usage: analyzer.py <analyze|star|crop|gradient_scene> ...")
 
     command = sys.argv[1].lower()
 
@@ -821,5 +1036,16 @@ if __name__ == "__main__":
             out_dir_str     = sys.argv[6],
         )
 
+    elif command == "gradient_scene":
+        if len(sys.argv) < 6:
+            fail("Usage: analyzer.py gradient_scene <imagePath> <roisJson> <pxPerCm> <outputDir>")
+        cmd_gradient_scene(
+            image_path    = sys.argv[2],
+            rois_json_str = sys.argv[3],
+            px_cm         = float(sys.argv[4]),
+            out_dir_str   = sys.argv[5],
+        )
+
     else:
-        fail(f"Unknown command: {command}. Use 'analyze', 'star', or 'crop'.")
+        fail(f"Unknown command: {command}. Use 'analyze', 'star', 'crop', or 'gradient_scene'.")
+
