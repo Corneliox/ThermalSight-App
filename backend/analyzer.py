@@ -480,17 +480,22 @@ def save_full_gradient_quiver_contours(temp: np.ndarray, rois: list, out_path: P
     gy = (sobel_y / 8.0) / dy_cm
     grad_mag = np.sqrt(gx**2 + gy**2)
 
-    fig, ax = plt.subplots(figsize=(6.5, 9.5), dpi=150, facecolor="white")
+    fig, ax = plt.subplots(figsize=(7.5, 9.5), dpi=150, facecolor="white")
     ax.set_facecolor("white")
 
-    # Multi-level Isotherm Contours
+    # 1. Clean Radiometric Thermal Footprint Background (Inferno)
+    im = ax.imshow(temp_smooth, cmap="inferno", extent=[0, Lx, Ly, 0], aspect="auto", alpha=0.92)
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label("Temperature (°C)", fontsize=10, fontweight="bold")
+
+    # 2. Multi-level Isotherm Contours (Crisp subtle lines)
     t_p5 = float(np.percentile(temp_smooth, 10))
     t_p98 = float(np.percentile(temp_smooth, 98))
     if t_p98 - t_p5 > 0.5:
-        levels = np.linspace(t_p5, t_p98, 14)
-        ax.contour(X, Y, temp_smooth, levels=levels, cmap="turbo", linewidths=1.0, alpha=0.85)
+        levels = np.linspace(t_p5, t_p98, 12)
+        ax.contour(X, Y, temp_smooth, levels=levels, colors="white", linewidths=0.75, alpha=0.55)
 
-    # Subsampled Quiver Vector Field
+    # 3. Subsampled Quiver Vector Field
     step = max(3, int(round(min(W, H) / 24.0)))
     y_idxs, x_idxs = np.mgrid[step//2:H:step, step//2:W:step]
     x_q = x_idxs * dx_cm
@@ -506,11 +511,12 @@ def save_full_gradient_quiver_contours(temp: np.ndarray, rois: list, out_path: P
     max_mag = np.max(mag_q[active_mask]) if np.any(active_mask) else 1.0
     scale_factor = max_mag * 1.5
 
+    # Quiver vectors: Vivid Cyan for outstanding contrast against Inferno thermal heatmap
     ax.quiver(
         x_q[active_mask], y_q[active_mask],
         u_q[active_mask], v_q[active_mask],
-        color="#1a5fb4", angles="xy", scale_units="xy",
-        scale=scale_factor, width=0.004, headwidth=3.5, headlength=4.5, alpha=0.9
+        color="#00ffff", angles="xy", scale_units="xy",
+        scale=scale_factor, width=0.005, headwidth=3.8, headlength=4.8, alpha=0.95
     )
 
     # Circular ROI badges matching Panel B (T1, M1, M2, HL)
@@ -528,24 +534,24 @@ def save_full_gradient_quiver_contours(temp: np.ndarray, rois: list, out_path: P
         else:
             continue
 
-        # Double red concentric rings (exactly like Panel B)
-        c_outer = plt.Circle((cx_cm, cy_cm), r_cm, color="red", fill=False, linewidth=2.0)
-        c_inner = plt.Circle((cx_cm, cy_cm), r_cm * 0.85, color="red", fill=False, linewidth=1.0, linestyle=":")
+        # Concentric rings with high contrast (Yellow & Red)
+        c_outer = plt.Circle((cx_cm, cy_cm), r_cm, color="#ffff00", fill=False, linewidth=2.2)
+        c_inner = plt.Circle((cx_cm, cy_cm), r_cm * 0.85, color="#ff3333", fill=False, linewidth=1.2, linestyle=":")
         ax.add_patch(c_outer)
         ax.add_patch(c_inner)
-        # Center red dot
-        ax.plot(cx_cm, cy_cm, "o", color="red", markersize=4)
+        # Center marker
+        ax.plot(cx_cm, cy_cm, "o", color="#ffff00", markersize=4.5)
 
-        # Bold black anatomical text label (T1, M1, M2, HL)
-        ax.text(cx_cm, cy_cm - r_cm - 0.4, name.upper(), color="black", fontsize=14, fontweight="bold",
-                ha="center", va="bottom")
+        # Anatomical text label with high-visibility badge
+        ax.text(cx_cm, cy_cm - r_cm - 0.4, name.upper(), color="#ffffff", fontsize=12, fontweight="bold",
+                ha="center", va="bottom", bbox=dict(boxstyle="round,pad=0.2", facecolor="#111111", edgecolor="#ffff00", alpha=0.85))
 
     ax.set_xlim(0, Lx)
     ax.set_ylim(Ly, 0) # match top-down image orientation
-    ax.set_title(f"{title}\nTPG & TGA (Thermal Peak Gradient & Angle)", fontsize=13, fontweight="bold", pad=12)
+    ax.set_title(f"{title}\nPPG & PGA (Plantar Peak Gradient & Angle)", fontsize=13, fontweight="bold", pad=12)
     ax.set_xlabel("X (cm)", fontsize=11, fontweight="bold")
     ax.set_ylabel("Y (cm)", fontsize=11, fontweight="bold")
-    ax.grid(True, linestyle=":", alpha=0.35, color="#888")
+    ax.grid(True, linestyle=":", alpha=0.35, color="#ffffff")
 
     plt.tight_layout()
     fig.savefig(str(out_path), bbox_inches="tight", facecolor="white")

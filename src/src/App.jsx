@@ -105,6 +105,12 @@ export default function App() {
   const [calibDist,       setCalibDist]       = useState('10');
   const [showDistInput,   setShowDistInput]   = useState(false);
 
+  // Interactive Canvas Zoom State (0.5x to 4.0x)
+  const [zoomScale, setZoomScale] = useState(1.0);
+  useEffect(() => {
+    setZoomScale(1.0);
+  }, [activeImagePath]);
+
   // Active image pixel-to-cm scale
   const activePxPerCm = (activeImagePath && calibrationsMap[activeImagePath]?.pxPerCm) || null;
 
@@ -146,8 +152,9 @@ export default function App() {
 
   // Segmentation Labeling System (Defaults to 1:1 Strict Circle Mode)
   const [labels, setLabels] = useState([
-    { id: 'l1', name: 'm1', key: 'm', color: '#ff4444' },
-    { id: 'l2', name: 'm2', key: 'n', color: '#00e5ff' }
+    { id: 'l1', name: 't1', key: 't', color: '#ff4444' },
+    { id: 'l2', name: 'm1', key: 'm', color: '#00e5ff' },
+    { id: 'l3', name: 'm3', key: '3', color: '#ffbb00' }
   ]);
   const [activeLabelId,  setActiveLabelId]  = useState('l1');
   const [newLabelName,   setNewLabelName]   = useState('');
@@ -161,6 +168,7 @@ export default function App() {
   const [drawMode,       setDrawMode]       = useState('circle');
   const [circleCenter,   setCircleCenter]   = useState(null); // { px, py, pct }
   const [circleRadius,   setCircleRadius]   = useState(null); // radius in px
+  const [hoverCoords,    setHoverCoords]    = useState(null); // live hover preview for inherited radius
   const [drawingPts,     setDrawingPts]     = useState([]);   // for polygon mode
 
   // RAM state storing annotations per image: { [imagePath]: [ { id, type, cx, cy, radius, labelName, color, points: [{x, y}], star } ] }
@@ -181,7 +189,7 @@ export default function App() {
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
-    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.6.3 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
+    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.6.4 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
   ]);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const terminalEndRef = useRef(null);
@@ -842,48 +850,70 @@ export default function App() {
 
     // 1:1 Strict Circle Segmentation Mode (Default)
     if (drawMode === 'circle' && !starStep) {
-      if (!circleCenter) {
-        // Step 1: Place Center
-        setCircleCenter(c);
-        setCircleRadius(15);
+      const existingCircles = (segmentations[activeImagePath] || []).filter(r => r.type === 'circle');
+      const refCircle = existingCircles.length > 0 ? existingCircles[0] : null;
+      const refRadius = refCircle ? refCircle.radius : null;
+
+      let centerPt = null;
+      let dist_px = null;
+
+      if (refRadius != null) {
+        // Subsequent labels automatically inherit the reference circle's radius! 1-click placement!
+        centerPt = c;
+        dist_px = refRadius;
       } else {
-        // Step 2: Confirm Circle Radius
-        const dist_px = Math.max(4, Math.hypot(c.px - circleCenter.px, c.py - circleCenter.py));
-        
-        // Generate 36 circular polygon vertices for universal rasterizer/masking compatibility
-        const polyPoints = [];
-        for (let i = 0; i < 36; i++) {
-          const a = (i * 10 * Math.PI) / 180.0;
-          polyPoints.push({
-            x: circleCenter.px + dist_px * Math.cos(a),
-            y: circleCenter.py + dist_px * Math.sin(a),
-          });
+        // First circle on this image: 2-step placement (Center, then Radius)
+        if (!circleCenter) {
+          setCircleCenter(c);
+          setCircleRadius(15);
+          return;
+        } else {
+          centerPt = circleCenter;
+          dist_px = Math.max(4, Math.hypot(c.px - circleCenter.px, c.py - circleCenter.py));
         }
+      }
 
-        const newRoi = {
-          id: 'roi_' + Date.now(),
-          type: 'circle',
-          cx: circleCenter.px,
-          cy: circleCenter.py,
-          radius: dist_px,
-          labelName: activeLabelObj.name,
-          color: activeLabelObj.color,
-          points: polyPoints,
-        };
+      // Generate 36 circular polygon vertices for universal rasterizer/masking compatibility
+      const polyPoints = [];
+      for (let i = 0; i < 36; i++) {
+        const a = (i * 10 * Math.PI) / 180.0;
+        polyPoints.push({
+          x: centerPt.px + dist_px * Math.cos(a),
+          y: centerPt.py + dist_px * Math.sin(a),
+        });
+      }
 
-        // Compute the 8-Point Star Gradient inside this label
-        if (currentResults?.raw?.tempMatrix && currentResults?.shape) {
-          const [H, W] = currentResults.shape;
-          newRoi.star = computeLabelStarGradient(currentResults.raw.tempMatrix, W, H, newRoi, activePxPerCm);
+      const newRoi = {
+        id: 'roi_' + Date.now(),
+        type: 'circle',
+        cx: centerPt.px,
+        cy: centerPt.py,
+        radius: dist_px,
+        labelName: activeLabelObj.name,
+        color: activeLabelObj.color,
+        points: polyPoints,
+      };
+
+      // Compute the 8-Point Star Gradient inside this label
+      if (currentResults?.raw?.tempMatrix && currentResults?.shape) {
+        const [H, W] = currentResults.shape;
+        newRoi.star = computeLabelStarGradient(currentResults.raw.tempMatrix, W, H, newRoi, activePxPerCm);
+      }
+
+      setSegmentations(prev => ({
+        ...prev,
+        [activeImagePath]: [...(prev[activeImagePath] || []), newRoi]
+      }));
+
+      setCircleCenter(null);
+      setCircleRadius(null);
+
+      // Auto-advance active label to next label (e.g. t1 -> m1 -> m3)
+      if (labels && labels.length > 0) {
+        const currentIdx = labels.findIndex(l => l.id === activeLabelId);
+        if (currentIdx >= 0 && currentIdx < labels.length - 1) {
+          setActiveLabelId(labels[currentIdx + 1].id);
         }
-
-        setSegmentations(prev => ({
-          ...prev,
-          [activeImagePath]: [...(prev[activeImagePath] || []), newRoi]
-        }));
-
-        setCircleCenter(null);
-        setCircleRadius(null);
       }
       return;
     }
@@ -903,9 +933,18 @@ export default function App() {
       setCalibPreviewPt(effective);
     }
 
-    if (drawMode === 'circle' && circleCenter) {
-      const r = Math.max(4, Math.hypot(c.px - circleCenter.px, c.py - circleCenter.py));
-      setCircleRadius(r);
+    if (drawMode === 'circle') {
+      if (circleCenter) {
+        const r = Math.max(4, Math.hypot(c.px - circleCenter.px, c.py - circleCenter.py));
+        setCircleRadius(r);
+      } else {
+        const existingCircles = (segmentations[activeImagePath] || []).filter(r => r.type === 'circle');
+        if (existingCircles.length > 0) {
+          setHoverCoords(c);
+        } else if (hoverCoords) {
+          setHoverCoords(null);
+        }
+      }
     }
   };
 
@@ -1505,6 +1544,10 @@ export default function App() {
     ? toFileUrl(currentResults.images[activePanel]) : null;
 
   const currentRois = segmentations[activeImagePath] || [];
+  const firstCircleRoi = currentRois.find(r => r.type === 'circle');
+  const activeRefRadius = firstCircleRoi ? firstCircleRoi.radius : null;
+  const hasCircleRois = currentRois.some(r => r.type === 'circle');
+  const hasPolygonRois = currentRois.some(r => r.type === 'polygon');
 
   return (
     <div className="app">
@@ -1657,7 +1700,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.6.3 (Web & Desktop)</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.6.4 (Web & Desktop)</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -1807,7 +1850,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.6.3' : 'v1.6.3'}</span>
+          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.6.4' : 'v1.6.4'}</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (
@@ -1979,7 +2022,54 @@ export default function App() {
           </aside>
 
           {/* CENTRE AREA: THERMAL IMAGE CANVAS & OVERLAYS */}
-          <div className="image-area">
+          <div className="image-area" style={{ position: 'relative', overflow: 'auto' }}
+               onWheel={(e) => {
+                 if (e.ctrlKey || e.metaKey) {
+                   e.preventDefault();
+                   const delta = e.deltaY < 0 ? 0.2 : -0.2;
+                   setZoomScale(z => Math.max(0.5, Math.min(4.0, Math.round((z + delta) * 10) / 10)));
+                 }
+               }}>
+            {/* FLOATING ZOOM TOOLBAR */}
+            {currentResults && (
+              <div className="zoom-toolbar" style={{
+                position: 'absolute',
+                top: '14px',
+                right: '18px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+                background: 'rgba(15, 23, 42, 0.85)',
+                backdropFilter: 'blur(8px)',
+                border: '1px solid rgba(255, 255, 255, 0.15)',
+                borderRadius: '8px',
+                padding: '4px 8px',
+                zIndex: 80,
+                boxShadow: '0 4px 12px rgba(0,0,0,0.35)'
+              }}>
+                <button className="btn-secondary btn-tiny" title="Zoom Out (Ctrl + Scroll Down)"
+                  style={{ padding: '2px 7px', fontSize: '12px' }}
+                  onClick={() => setZoomScale(z => Math.max(0.5, Math.round((z - 0.25) * 100) / 100))}>
+                  🔍−
+                </button>
+                <span style={{ fontSize: '11px', fontWeight: 'bold', minWidth: '40px', textAlign: 'center', color: '#e2e8f0', userSelect: 'none' }}>
+                  {Math.round(zoomScale * 100)}%
+                </span>
+                <button className="btn-secondary btn-tiny" title="Zoom In (Ctrl + Scroll Up)"
+                  style={{ padding: '2px 7px', fontSize: '12px' }}
+                  onClick={() => setZoomScale(z => Math.min(4.0, Math.round((z + 0.25) * 100) / 100))}>
+                  🔍+
+                </button>
+                {zoomScale !== 1.0 && (
+                  <button className="btn-secondary btn-tiny" title="Reset to 100%"
+                    style={{ padding: '2px 6px', fontSize: '10px', marginLeft: '2px', color: '#38bdf8' }}
+                    onClick={() => setZoomScale(1.0)}>
+                    ↺ 100%
+                  </button>
+                )}
+              </div>
+            )}
+
             {!currentResults && activeImagePath && (
               <div style={{
                 display: 'flex',
@@ -2013,7 +2103,11 @@ export default function App() {
             )}
 
             {currentResults && (
-              <div className="image-wrapper">
+              <div className="image-wrapper" style={{
+                transform: `scale(${zoomScale})`,
+                transformOrigin: 'center center',
+                transition: 'transform 0.12s ease-out'
+              }}>
                 {imgSrc && (
                   <img ref={imgRef} src={imgSrc} alt={activePanel}
                        className="thermal-img" style={{cursor}} draggable={false}
@@ -2113,6 +2207,18 @@ export default function App() {
                             x2={circleCenter.pct.x + (circleRadius / currentResults.shape[1]) * 100}
                             y2={circleCenter.pct.y}
                             stroke={activeLabelObj.color} strokeWidth="0.4" strokeDasharray="0.5 0.5"/>
+                    </g>
+                  )}
+
+                  {/* Live Hover Preview for Inherited Radius */}
+                  {currentResults?.shape && drawMode === 'circle' && activeRefRadius && !circleCenter && hoverCoords?.pct && (
+                    <g pointerEvents="none">
+                      <ellipse cx={hoverCoords.pct.x} cy={hoverCoords.pct.y}
+                               rx={(activeRefRadius / currentResults.shape[1]) * 100}
+                               ry={(activeRefRadius / currentResults.shape[0]) * 100}
+                               fill={activeLabelObj.color} fillOpacity="0.18"
+                               stroke={activeLabelObj.color} strokeWidth="0.6" strokeDasharray="1.2 0.8"/>
+                      <circle cx={hoverCoords.pct.x} cy={hoverCoords.pct.y} r="0.6" fill={activeLabelObj.color}/>
                     </g>
                   )}
 
@@ -2219,32 +2325,52 @@ export default function App() {
               <h4 className="card-title">🏷 Segmentation Labels</h4>
               
               {/* SEGMENTED TOOL SWITCHER: 1:1 CIRCLE (DEFAULT) VS PEN */}
-              <div style={{ display: 'flex', background: 'var(--bg1)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border)', marginBottom: '10px' }}>
+              <div style={{ display: 'flex', background: 'var(--bg1)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border)', marginBottom: '6px' }}>
                 <button
                   className={`btn-ghost btn-tiny ${drawMode === 'circle' ? 'active' : ''}`}
+                  disabled={hasPolygonRois}
+                  title={hasPolygonRois ? 'Terkunci: Gambar ini sudah menggunakan Polygon' : 'Mode Lingkaran 1:1'}
                   style={{
                     flex: 1,
                     background: drawMode === 'circle' ? 'var(--bg3)' : 'transparent',
-                    color: drawMode === 'circle' ? 'var(--cyan)' : 'var(--text2)',
-                    fontWeight: drawMode === 'circle' ? '700' : 'normal'
+                    color: hasPolygonRois ? 'var(--text3)' : (drawMode === 'circle' ? 'var(--cyan)' : 'var(--text2)'),
+                    fontWeight: drawMode === 'circle' ? '700' : 'normal',
+                    opacity: hasPolygonRois ? 0.35 : 1.0,
+                    cursor: hasPolygonRois ? 'not-allowed' : 'pointer',
                   }}
-                  onClick={() => { setDrawMode('circle'); setDrawingPts([]); }}
+                  onClick={() => { if (!hasPolygonRois) { setDrawMode('circle'); setDrawingPts([]); } }}
                 >
-                  ⭕ 1:1 Circle (Default)
+                  ⭕ 1:1 Circle {hasCircleRois ? '🔒' : ''}
                 </button>
                 <button
                   className={`btn-ghost btn-tiny ${drawMode === 'polygon' ? 'active' : ''}`}
+                  disabled={hasCircleRois}
+                  title={hasCircleRois ? 'Terkunci: Gambar ini sudah menggunakan Lingkaran' : 'Mode Polygon Pen'}
                   style={{
                     flex: 1,
                     background: drawMode === 'polygon' ? 'var(--bg3)' : 'transparent',
-                    color: drawMode === 'polygon' ? 'var(--accent2)' : 'var(--text2)',
-                    fontWeight: drawMode === 'polygon' ? '700' : 'normal'
+                    color: hasCircleRois ? 'var(--text3)' : (drawMode === 'polygon' ? 'var(--accent2)' : 'var(--text2)'),
+                    fontWeight: drawMode === 'polygon' ? '700' : 'normal',
+                    opacity: hasCircleRois ? 0.35 : 1.0,
+                    cursor: hasCircleRois ? 'not-allowed' : 'pointer',
                   }}
-                  onClick={() => { setDrawMode('polygon'); setCircleCenter(null); setCircleRadius(null); }}
+                  onClick={() => { if (!hasCircleRois) { setDrawMode('polygon'); setCircleCenter(null); setCircleRadius(null); } }}
                 >
-                  ✏️ Pen Polygon
+                  ✏️ Pen Polygon {hasPolygonRois ? '🔒' : ''}
                 </button>
               </div>
+
+              {/* DYNAMIC RADIUS INHERITANCE / MODE STATUS HINT */}
+              {activeRefRadius != null && drawMode === 'circle' ? (
+                <div style={{ fontSize: '11px', color: 'var(--cyan)', background: 'rgba(0, 229, 255, 0.08)', padding: '4px 8px', borderRadius: '4px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <span>🔒</span>
+                  <span>Ukuran radius terkunci: <b>{Math.round(activeRefRadius)}px</b> (sesuai label pertama). Klik 1x untuk menaruh <b>{activeLabelObj.name.toUpperCase()}</b>.</span>
+                </div>
+              ) : hasPolygonRois ? (
+                <div style={{ fontSize: '11px', color: 'var(--accent2)', background: 'rgba(255, 140, 0, 0.08)', padding: '4px 8px', borderRadius: '4px', marginBottom: '8px' }}>
+                  🔒 Mode Polygon aktif (Lingkaran terkunci). Hapus polygon untuk ganti mode.
+                </div>
+              ) : null}
 
               <div className="label-list">
                 {labels.map(l => (

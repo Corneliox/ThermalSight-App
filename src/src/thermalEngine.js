@@ -1515,106 +1515,119 @@ export async function generateFullGradientQuiverContourCanvas(resOrMatrix, W = 3
   canvas.height = H || 240;
   const ctx = canvas.getContext('2d');
 
-  // Clean White Background (matching Panel B)
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  if (!tempMatrix) return canvas.toDataURL('image/png');
-
-  const { gradMag, gxArr, gyArr } = computeSpatialGradientMatrix(tempMatrix, canvas.width, canvas.height, pxPerCm);
-
-  // 1. Draw Multi-level Isotherm Contours
-  const is2D = Array.isArray(tempMatrix) && Array.isArray(tempMatrix[0]);
-  let minT = Infinity, maxT = -Infinity;
-  for (let y = 0; y < canvas.height; y++) {
-    for (let x = 0; x < canvas.width; x++) {
-      const t = is2D ? (tempMatrix[y]?.[x] ?? 0) : (tempMatrix[y * canvas.width + x] ?? 0);
-      if (t < minT) minT = t;
-      if (t > maxT) maxT = t;
-    }
-  }
-  const spanT = Math.max(0.5, maxT - minT);
-
-  // Render 10 contour lines
-  const numLevels = 10;
-  ctx.lineWidth = 1.0;
-  for (let l = 1; l < numLevels; l++) {
-    const threshold = minT + (spanT * l) / numLevels;
-    const norm = l / numLevels;
-    const [cr, cg, cb] = interpolateColor([30, 80, 200], [220, 50, 50], norm);
-    ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, 0.75)`;
-
-    for (let y = 0; y < canvas.height - 2; y += 2) {
-      for (let x = 0; x < canvas.width - 2; x += 2) {
-        const v0 = (is2D ? tempMatrix[y]?.[x] : tempMatrix[y * canvas.width + x]) >= threshold ? 1 : 0;
-        const v1 = (is2D ? tempMatrix[y]?.[x + 2] : tempMatrix[y * canvas.width + (x + 2)]) >= threshold ? 1 : 0;
-        const v2 = (is2D ? tempMatrix[y + 2]?.[x + 2] : tempMatrix[(y + 2) * canvas.width + (x + 2)]) >= threshold ? 1 : 0;
-        const v3 = (is2D ? tempMatrix[y + 2]?.[x] : tempMatrix[(y + 2) * canvas.width + x]) >= threshold ? 1 : 0;
-        const cell = (v0 << 3) | (v1 << 2) | (v2 << 1) | v3;
-        if (cell === 0 || cell === 15) continue;
-
-        ctx.beginPath();
-        if (cell === 1 || cell === 14) {
-          ctx.moveTo(x, y + 1); ctx.lineTo(x + 1, y + 2);
-        } else if (cell === 2 || cell === 13) {
-          ctx.moveTo(x + 1, y + 2); ctx.lineTo(x + 2, y + 1);
-        } else if (cell === 3 || cell === 12) {
-          ctx.moveTo(x, y + 1); ctx.lineTo(x + 2, y + 1);
-        } else if (cell === 4 || cell === 11) {
-          ctx.moveTo(x + 1, y); ctx.lineTo(x + 2, y + 1);
-        } else if (cell === 6 || cell === 9) {
-          ctx.moveTo(x + 1, y); ctx.lineTo(x + 1, y + 2);
-        } else if (cell === 7 || cell === 8) {
-          ctx.moveTo(x, y + 1); ctx.lineTo(x + 1, y);
-        } else {
-          ctx.moveTo(x, y + 1); ctx.lineTo(x + 2, y + 1);
-        }
-        ctx.stroke();
+  // Render Clean FLIR Inferno Thermal Footprint Background
+  if (tempMatrix) {
+    const is2D = Array.isArray(tempMatrix) && Array.isArray(tempMatrix[0]);
+    let minT = Infinity, maxT = -Infinity;
+    for (let y = 0; y < canvas.height; y++) {
+      for (let x = 0; x < canvas.width; x++) {
+        const t = is2D ? (tempMatrix[y]?.[x] ?? 0) : (tempMatrix[y * canvas.width + x] ?? 0);
+        if (t < minT) minT = t;
+        if (t > maxT) maxT = t;
       }
     }
-  }
+    const spanT = Math.max(0.5, maxT - minT);
 
-  // 2. Subsampled Quiver Arrows
-  const step = 12;
-  let maxMag = 0;
-  for (let i = 0; i < gradMag.length; i++) {
-    if (gradMag[i] > maxMag) maxMag = gradMag[i];
-  }
-  const noiseGate = Math.max(0.2, maxMag * 0.15);
-
-  ctx.strokeStyle = '#1a5fb4';
-  ctx.fillStyle = '#1a5fb4';
-  ctx.lineWidth = 1.0;
-
-  for (let y = step / 2; y < canvas.height; y += step) {
-    for (let x = step / 2; x < canvas.width; x += step) {
-      const idx = Math.floor(y) * canvas.width + Math.floor(x);
-      const mag = gradMag[idx];
-      if (mag < noiseGate) continue;
-
-      const gx = gxArr[idx];
-      const gy = gyArr[idx];
-      const len = Math.min(step * 0.9, (mag / (maxMag || 1)) * step * 1.5 + 2);
-      const angle = Math.atan2(gy, gx);
-
-      const x2 = x + Math.cos(angle) * len;
-      const y2 = y + Math.sin(angle) * len;
-
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(x2, y2);
-      ctx.stroke();
-
-      const headLen = 3.5;
-      const a1 = angle + Math.PI * 0.82;
-      const a2 = angle - Math.PI * 0.82;
-      ctx.beginPath();
-      ctx.moveTo(x2, y2);
-      ctx.lineTo(x2 + Math.cos(a1) * headLen, y2 + Math.sin(a1) * headLen);
-      ctx.lineTo(x2 + Math.cos(a2) * headLen, y2 + Math.sin(a2) * headLen);
-      ctx.closePath();
-      ctx.fill();
+    const imgData = ctx.createImageData(canvas.width, canvas.height);
+    const d = imgData.data;
+    for (let y = 0; y < canvas.height; y++) {
+      for (let x = 0; x < canvas.width; x++) {
+        const idx = y * canvas.width + x;
+        const t = is2D ? (tempMatrix[y]?.[x] ?? 0) : (tempMatrix[idx] ?? 0);
+        const normVal = Math.max(0, Math.min(255, Math.round(((t - minT) / spanT) * 255)));
+        d[idx * 4 + 0] = INFERNO_LUT[normVal * 3 + 0];
+        d[idx * 4 + 1] = INFERNO_LUT[normVal * 3 + 1];
+        d[idx * 4 + 2] = INFERNO_LUT[normVal * 3 + 2];
+        d[idx * 4 + 3] = 240; // High opacity clean thermal image
+      }
     }
+    ctx.putImageData(imgData, 0, 0);
+
+    const { gradMag, gxArr, gyArr } = computeSpatialGradientMatrix(tempMatrix, canvas.width, canvas.height, pxPerCm);
+
+    // 1. Draw Multi-level Isotherm Contours (Subtle white lines)
+    const numLevels = 10;
+    ctx.lineWidth = 0.8;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+    for (let l = 1; l < numLevels; l++) {
+      const threshold = minT + (spanT * l) / numLevels;
+
+      for (let y = 0; y < canvas.height - 2; y += 2) {
+        for (let x = 0; x < canvas.width - 2; x += 2) {
+          const v0 = (is2D ? tempMatrix[y]?.[x] : tempMatrix[y * canvas.width + x]) >= threshold ? 1 : 0;
+          const v1 = (is2D ? tempMatrix[y]?.[x + 2] : tempMatrix[y * canvas.width + (x + 2)]) >= threshold ? 1 : 0;
+          const v2 = (is2D ? tempMatrix[y + 2]?.[x + 2] : tempMatrix[(y + 2) * canvas.width + (x + 2)]) >= threshold ? 1 : 0;
+          const v3 = (is2D ? tempMatrix[y + 2]?.[x] : tempMatrix[(y + 2) * canvas.width + x]) >= threshold ? 1 : 0;
+          const cell = (v0 << 3) | (v1 << 2) | (v2 << 1) | v3;
+          if (cell === 0 || cell === 15) continue;
+
+          ctx.beginPath();
+          if (cell === 1 || cell === 14) {
+            ctx.moveTo(x, y + 1); ctx.lineTo(x + 1, y + 2);
+          } else if (cell === 2 || cell === 13) {
+            ctx.moveTo(x + 1, y + 2); ctx.lineTo(x + 2, y + 1);
+          } else if (cell === 3 || cell === 12) {
+            ctx.moveTo(x, y + 1); ctx.lineTo(x + 2, y + 1);
+          } else if (cell === 4 || cell === 11) {
+            ctx.moveTo(x + 1, y); ctx.lineTo(x + 2, y + 1);
+          } else if (cell === 6 || cell === 9) {
+            ctx.moveTo(x + 1, y); ctx.lineTo(x + 1, y + 2);
+          } else if (cell === 7 || cell === 8) {
+            ctx.moveTo(x, y + 1); ctx.lineTo(x + 1, y);
+          } else {
+            ctx.moveTo(x, y + 1); ctx.lineTo(x + 2, y + 1);
+          }
+          ctx.stroke();
+        }
+      }
+    }
+
+    // 2. Subsampled Quiver Arrows (Bright Cyan for maximum contrast)
+    const step = 12;
+    let maxMag = 0;
+    for (let i = 0; i < gradMag.length; i++) {
+      if (gradMag[i] > maxMag) maxMag = gradMag[i];
+    }
+    const noiseGate = Math.max(0.2, maxMag * 0.15);
+
+    ctx.strokeStyle = '#00ffff';
+    ctx.fillStyle = '#00ffff';
+    ctx.lineWidth = 1.1;
+
+    for (let y = step / 2; y < canvas.height; y += step) {
+      for (let x = step / 2; x < canvas.width; x += step) {
+        const idx = Math.floor(y) * canvas.width + Math.floor(x);
+        const mag = gradMag[idx];
+        if (mag < noiseGate) continue;
+
+        const gx = gxArr[idx];
+        const gy = gyArr[idx];
+        const len = Math.min(step * 0.9, (mag / (maxMag || 1)) * step * 1.5 + 2);
+        const angle = Math.atan2(gy, gx);
+
+        const x2 = x + Math.cos(angle) * len;
+        const y2 = y + Math.sin(angle) * len;
+
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+
+        const headLen = 3.5;
+        const a1 = angle + Math.PI * 0.82;
+        const a2 = angle - Math.PI * 0.82;
+        ctx.beginPath();
+        ctx.moveTo(x2, y2);
+        ctx.lineTo(x2 + Math.cos(a1) * headLen, y2 + Math.sin(a1) * headLen);
+        ctx.lineTo(x2 + Math.cos(a2) * headLen, y2 + Math.sin(a2) * headLen);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  } else {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/png');
   }
 
   const scaleX = canvas.width / (W || 320);
