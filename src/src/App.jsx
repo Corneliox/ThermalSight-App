@@ -1066,6 +1066,36 @@ export default function App() {
     setEditingLabelId(null);
   };
 
+  // ── Helper to resolve {parentfolder}_result consistently ────────────────────
+  const getResultFolderInfo = () => {
+    if (folderPath) {
+      const cleanPath = folderPath.replace(/[\\/]+$/, '');
+      const parentName = cleanPath.split(/[\\/]/).pop() || 'thermal';
+      return {
+        parentFolderName: parentName,
+        resultDir: `${cleanPath}_result`,
+      };
+    }
+    const imgPath = activeImagePath || filePath;
+    if (imgPath) {
+      const clean = imgPath.replace(/\\/g, '/');
+      const lastSlash = clean.lastIndexOf('/');
+      if (lastSlash !== -1) {
+        const parentDirPath = clean.substring(0, lastSlash);
+        const grandParentSlash = parentDirPath.lastIndexOf('/');
+        const parentName = grandParentSlash !== -1 ? parentDirPath.substring(grandParentSlash + 1) : parentDirPath;
+        return {
+          parentFolderName: parentName,
+          resultDir: `${parentDirPath}_result`,
+        };
+      }
+    }
+    return {
+      parentFolderName: 'thermal',
+      resultDir: 'thermal_result',
+    };
+  };
+
   // ── Instant Plantar Gradient Fig 1 Generator (PPP - PPG - PGA) ─────────────
   const handleGenerateActivePlantarGradient = async () => {
     if (!currentResults?.raw?.tempMatrix) {
@@ -1082,14 +1112,16 @@ export default function App() {
       const pkg = await generatePlantarPaperFig1Package(currentResults, w, h, segs, labels, imgScale, stem);
       if (!pkg) throw new Error('Plantar figure generator returned null');
 
-      // If Desktop Electron, save directly to results folder
-      if (window.electronAPI && currentResults.out_dir) {
-        const outDir = currentResults.out_dir;
+      // If Desktop Electron, save directly to {parentfolder}_result
+      if (window.electronAPI) {
+        const { resultDir, parentFolderName } = getResultFolderInfo();
         const pngBase64 = pkg.fig1PngDataUrl.split(',')[1];
-        await api.saveFile(`${outDir}/${stem}_${pkg.footSide}_whitehot.png`, Buffer.from(pngBase64, 'base64'));
-        await api.saveFile(`${outDir}/${stem}_${pkg.footSide}_metrics.csv`, pkg.metricsCsv);
-        addLog('info', `✓ Generated & saved ${stem}_${pkg.footSide}_whitehot.png and metrics.csv to ${outDir}`);
-        alert(`✓ Berhasil! Hasil Gradien Kaki (${pkg.footDisplayName}) berhasil dibuat:\n\n- ${stem}_${pkg.footSide}_whitehot.png\n- ${stem}_${pkg.footSide}_metrics.csv\n\nTersimpan di:\n${outDir}`);
+        await api.saveFile(`${resultDir}/${stem}_${pkg.footSide}_whitehot.png`, Buffer.from(pngBase64, 'base64'));
+        await api.saveFile(`${resultDir}/${stem}_${pkg.footSide}_metrics.csv`, pkg.metricsCsv);
+        await api.saveFile(`${resultDir}/Gradient/${stem}_${pkg.footSide}_whitehot.png`, Buffer.from(pngBase64, 'base64'));
+        await api.saveFile(`${resultDir}/Sheet/${stem}_${pkg.footSide}_metrics.csv`, pkg.metricsCsv);
+        addLog('info', `✓ Generated & saved ${stem}_${pkg.footSide}_whitehot.png and metrics.csv to ${resultDir}`);
+        alert(`✓ Berhasil! Hasil Gradien Kaki (${pkg.footDisplayName}) berhasil dibuat:\n\n- ${stem}_${pkg.footSide}_whitehot.png\n- ${stem}_${pkg.footSide}_metrics.csv\n\nTersimpan di folder:\n${resultDir}`);
       } else {
         // In Web browser, trigger direct download
         const aImg = document.createElement('a');
@@ -1136,10 +1168,8 @@ export default function App() {
     setIsProcessing('saving');
     const aggregatedStats = {};
 
-    // Build {Parentfoldername}_Result master folder
-    const basePath = folderPath || activeImagePath;
-    const parentFolderName = basePath.split(/[\\/]/).pop().replace(/\.[^/.]+$/, '');
-    const resultDir = basePath + '_Result';
+    // Build {parentfolder}_result master folder
+    const { parentFolderName, resultDir } = getResultFolderInfo();
     const isolatedDir = `${resultDir}/${parentFolderName}_isolated_labels`;
     const exportFilesMap = {};
     const csvEsc = (val) => { const s = String(val ?? '').replace(/"/g, '""'); return /[,"\n\r=+\-@\t]/.test(s) ? `"${s}"` : s; };
@@ -1409,7 +1439,7 @@ export default function App() {
       } else {
         // Pure Client-Side ZIP Generation for Web
         const zip = new JSZip();
-        const rootFolder = zip.folder(`${parentFolderName}_Result`);
+        const rootFolder = zip.folder(`${parentFolderName}_result`);
         const isolatedFolder = rootFolder.folder(`${parentFolderName}_isolated_labels`);
         const sheetFolder = rootFolder.folder('Sheet');
         const gradientFolder = rootFolder.folder('Gradient');
@@ -1475,7 +1505,7 @@ export default function App() {
         const downloadUrl = URL.createObjectURL(zipBlob);
         const a = document.createElement('a');
         a.href = downloadUrl;
-        a.download = `${parentFolderName}_Result.zip`;
+        a.download = `${parentFolderName}_result.zip`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -1485,7 +1515,7 @@ export default function App() {
 
       setAnalyticsData(aggregatedStats);
       setShowAnalytics(true);
-      alert(`Success! Complete Time-Series Result Package (${parentFolderName}_Result.zip) generated successfully!\n\nIncludes:\n- Gradient/\n  * Full-Scene Gradient Magnitudes\n  * Full-Scene Gradient with ROI Labels\n  * Full-Scene Quiver Vector Field & Isotherms (Panel B style)\n  * Isolated 2D Quiver & 3D Surface Meshes\n- ${parentFolderName}_isolated_labels/\n  * Cropped PNGs with 8-Point Star Gradients\n  * Thermal Pixel CSVs\n- Sheet/\n  * Summary & Detailed CSVs\n- Dark & White SVG Analytics Graphs\n- annotations_session.json`);
+      alert(`Success! Complete Time-Series Result Package (${parentFolderName}_result) generated successfully!\n\nIncludes:\n- Gradient/\n  * Full-Scene Gradient Magnitudes\n  * Full-Scene Gradient with ROI Labels\n  * Full-Scene Quiver Vector Field & Isotherms (Panel B style)\n  * Isolated 2D Quiver & 3D Surface Meshes\n- ${parentFolderName}_isolated_labels/\n  * Cropped PNGs with 8-Point Star Gradients\n  * Thermal Pixel CSVs\n- Sheet/\n  * Summary & Detailed CSVs\n- Dark & White SVG Analytics Graphs\n- annotations_session.json`);
     } catch (err) {
       alert(`Export failed:\n${err.message || err}`);
     }

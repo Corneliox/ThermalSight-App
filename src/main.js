@@ -446,6 +446,7 @@ ipcMain.handle('check-existing-annotation', async (_event, folderPath) => {
   if (!folderPath || !fs.existsSync(folderPath)) return null;
   
   const candidates = [
+    path.join(folderPath + '_result', 'annotations_session.json'),
     path.join(folderPath + '_Result', 'annotations_session.json'),
     path.join(folderPath + '_isolated_labels', 'annotations_session.json'),
     path.join(folderPath, 'annotations_session.json'),

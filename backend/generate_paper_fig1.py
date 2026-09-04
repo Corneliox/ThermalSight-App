@@ -230,7 +230,7 @@ def process_subject(source_path: Path, out_dir: Path = None):
     temp, stem = load_matrix(source_path)
     
     if out_dir is None:
-        out_dir = source_path.parent / f"{stem}.jpg_Result"
+        out_dir = source_path.parent.parent / f"{source_path.parent.name}_result"
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     
