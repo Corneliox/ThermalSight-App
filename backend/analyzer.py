@@ -1075,16 +1075,33 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         foot_patch_raw = temp_work[:, valley_idx:].copy()
         offset_x = valley_idx
 
-    # Crop clean foot bounding box (isolated from background)
-    bg_thresh = max(25.5, float(np.percentile(foot_patch_raw, 35)))
-    binary_cand = (foot_patch_raw > bg_thresh).astype(np.uint8)
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_cand)
-
-    if num_labels > 1:
-        largest_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-        clean_foot_mask = (labels == largest_idx)
+    # Crop clean foot bounding box (isolated from background & bedsheet)
+    if np.max(foot_patch_raw) < 100:
+        # Radiometric Celsius mode: spatially-aware threshold to separate blanket/bedsheet from heel
+        bg_map = np.full_like(foot_patch_raw, max(26.2, float(np.percentile(foot_patch_raw, 25))))
+        bg_map[int(H * 0.72):, :] = max(27.6, float(np.percentile(foot_patch_raw[int(H * 0.72):, :], 40)))
+        binary_cand = (foot_patch_raw > bg_map).astype(np.uint8)
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_cand)
+        if num_labels > 1:
+            largest_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+            clean_foot_mask = (labels == largest_idx)
+        else:
+            clean_foot_mask = (foot_patch_raw > bg_map)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        clean_foot_mask = cv2.morphologyEx(clean_foot_mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
+        clean_foot_mask = cv2.morphologyEx(clean_foot_mask, cv2.MORPH_OPEN, kernel).astype(bool)
     else:
-        clean_foot_mask = (foot_patch_raw > bg_thresh)
+        # Grayscale fallback mode
+        bg_thresh = max(25.5, float(np.percentile(foot_patch_raw, 35)))
+        binary_cand = (foot_patch_raw > bg_thresh).astype(np.uint8)
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_cand)
+        if num_labels > 1:
+            largest_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+            clean_foot_mask = (labels == largest_idx)
+        else:
+            clean_foot_mask = (foot_patch_raw > bg_thresh)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        clean_foot_mask = cv2.morphologyEx(clean_foot_mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel).astype(bool)
 
     ys, xs_mask = np.where(clean_foot_mask)
     pad = 4
