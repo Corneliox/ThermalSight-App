@@ -2125,7 +2125,7 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
   const footSide = isRightFoot ? 'RightFoot' : 'LeftFoot';
   const footDisplayName = isRightFoot ? 'Kaki Kanan (Right Foot)' : 'Kaki Kiri (Left Foot)';
 
-  // Crop foot patch
+  // Crop foot patch with FLIR OSD exclusion
   const xStartCol = isRightFoot ? 0 : valleyIdx;
   const xEndCol = isRightFoot ? valleyIdx : W;
 
@@ -2133,7 +2133,14 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
   let count = 0;
   for (let r = 0; r < H; r++) {
     for (let c = xStartCol; c < xEndCol; c++) {
-      if (temp[r][c] > 26.5) {
+      // Exclude standard FLIR OSD border banners:
+      // Top-left: r < 28, c < 85 (e.g. "35.0 °C")
+      // Bottom-left: r > 212, c < 65 ("FLIR" logo)
+      // Top-right: r < 28, c > 270 (upper scale limit)
+      // Bottom-right: r > 212, c > 270 (lower scale limit)
+      // Right edge: c >= 310 (colorbar strip)
+      const isOsd = (r < 28 && c < 85) || (r > 212 && c < 65) || (r < 28 && c > 270) || (r > 212 && c > 270) || (c >= 310);
+      if (!isOsd && temp[r][c] > 26.5) {
         if (r < ymin) ymin = r;
         if (r > ymax) ymax = r;
         if (c < xmin) xmin = c;
@@ -2160,7 +2167,7 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
 
   let nRows = 104;
   let nCols = Math.max(20, Math.round(nRows * (cropW / cropH)));
-  let qStep = 2;
+  let qStep = 3;
   let defaultRadius = 4.5; // Max 9x9 grid cells bounding window
   let panelW = 760;
   let panelH = Math.round(panelW * (nRows / nCols));
@@ -2296,13 +2303,15 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
       }
     } else {
       if (isRightFoot) {
-        mappedRois.push({ name: 'T1', gx: 0.54 * nCols, gy: 0.17 * nRows, rFinal: 4.5 });
+        // Medial side is right side of right foot patch, lateral is left side
+        mappedRois.push({ name: 'T1', gx: 0.61 * nCols, gy: 0.16 * nRows, rFinal: 4.5 });
         mappedRois.push({ name: 'M1', gx: 0.61 * nCols, gy: 0.33 * nRows, rFinal: 4.5 });
-        mappedRois.push({ name: 'M2', gx: 0.39 * nCols, gy: 0.34 * nRows, rFinal: 4.5 });
+        mappedRois.push({ name: 'M2', gx: 0.44 * nCols, gy: 0.33 * nRows, rFinal: 4.5 });
       } else {
-        mappedRois.push({ name: 'T1', gx: 0.46 * nCols, gy: 0.17 * nRows, rFinal: 4.5 });
+        // Medial side is left side of left foot patch, lateral is right side
+        mappedRois.push({ name: 'T1', gx: 0.39 * nCols, gy: 0.16 * nRows, rFinal: 4.5 });
         mappedRois.push({ name: 'M1', gx: 0.39 * nCols, gy: 0.33 * nRows, rFinal: 4.5 });
-        mappedRois.push({ name: 'M2', gx: 0.61 * nCols, gy: 0.34 * nRows, rFinal: 4.5 });
+        mappedRois.push({ name: 'M2', gx: 0.56 * nCols, gy: 0.33 * nRows, rFinal: 4.5 });
       }
     }
   }
@@ -2532,18 +2541,33 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     }
   }
 
-  // Quiver Vector Arrows flowing towards Heat Peak
+  // Compute gradient statistics across active foot mask for dynamic thresholding
+  const footGrads = [];
+  for (let r = 0; r < nRows; r++) {
+    for (let c = 0; c < nCols; c++) {
+      if (gridDense[r][c] > 27.5) footGrads.push(gradMag[r][c]);
+    }
+  }
+  footGrads.sort((a, b) => a - b);
+  const p40Idx = Math.floor(footGrads.length * 0.40);
+  const p95Idx = Math.floor(footGrads.length * 0.95);
+  const magThresh = footGrads.length > 0 ? footGrads[p40Idx] : 0.04;
+  const p95Mag = footGrads.length > 0 ? footGrads[p95Idx] : 0.20;
+
+  // Quiver Vector Arrows flowing along Thermal Gradient
   ctx.fillStyle = '#0b4db7';
   ctx.strokeStyle = '#0b4db7';
   ctx.lineWidth = isCoarse ? 2.0 : 2.5;
 
   for (let r = (isCoarse ? 0 : 2); r < nRows - (isCoarse ? 0 : 2); r += qStep) {
     for (let c = (isCoarse ? 0 : 2); c < nCols - (isCoarse ? 0 : 2); c += qStep) {
-      if (gridDense[r][c] > (isCoarse ? 27.0 : 28.0) && gradMag[r][c] > (isCoarse ? 0.02 : 0.04)) {
+      const magVal = gradMag[r][c];
+      if (gridDense[r][c] > (isCoarse ? 27.0 : 28.0) && magVal >= (isCoarse ? 0.02 : magThresh)) {
         const gx = sobelX[r][c];
         const gy = sobelY[r][c];
         const nrm = Math.sqrt(gx * gx + gy * gy) + 1e-6;
-        const arrowLen = isCoarse ? cellW * 0.45 : cellW * 1.5;
+        const normScale = Math.max(0.25, Math.min(1.0, magVal / (p95Mag + 1e-6)));
+        const arrowLen = (isCoarse ? cellW * 0.45 : cellW * 1.6) * normScale;
         const uNorm = (gx / nrm) * arrowLen;
         const vNorm = (gy / nrm) * arrowLen;
 

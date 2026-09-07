@@ -1019,36 +1019,70 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         log(f"  warning: failed to parse rois json: {e}")
         rois = []
 
-    # 1. Determine Foot Side: Screen Left (avg_x < W/2) -> Right Foot in camera plantar view
+    # 1. FLIR OSD Mask & Reticle Cleaning
+    osd_mask = np.zeros((H, W), dtype=bool)
+    osd_mask[0:28, 0:85] = True        # Top-left temperature text (e.g. "35.0 °C")
+    osd_mask[212:240, 0:65] = True     # Bottom-left FLIR logo
+    osd_mask[0:28, 270:320] = True     # Top-right scale limit
+    osd_mask[212:240, 270:320] = True   # Bottom-right scale limit
+    osd_mask[:, 310:320] = True        # Right colorbar strip
+
+    # Inpaint central reticle/crosshair if present on raw image
+    temp_work = temp.copy()
+    reticle_box = np.zeros((H, W), dtype=bool)
+    reticle_box[int(H * 0.25):int(H * 0.75), int(W * 0.15):int(W * 0.85)] = True
+    crosshair_mask = ((temp_work < 15) | (temp_work > 250)) & reticle_box
+    if np.any(crosshair_mask):
+        crosshair_mask_d = cv2.dilate(crosshair_mask.astype(np.uint8), np.ones((3, 3), np.uint8))
+        temp_work_u8 = np.clip(temp_work, 0, 255).astype(np.uint8)
+        inpainted_u8 = cv2.inpaint(temp_work_u8, crosshair_mask_d, 5, cv2.INPAINT_TELEA)
+        temp_work = inpainted_u8.astype(np.float32)
+
+    # 2. Determine Foot Side: Screen Left (avg_x < valley_idx) -> Right Foot in camera plantar view
     xs = [r.get("cx", r.get("points", [{}])[0].get("x", W / 2)) for r in rois if isinstance(r, dict)]
     avg_x = float(np.mean(xs)) if xs else (W / 4)
 
-    col_prof = np.mean(temp, axis=0)
+    col_prof = np.mean(temp_work, axis=0)
     c_start, c_end = int(W * 0.35), int(W * 0.65)
     valley_idx = int(np.argmin(col_prof[c_start:c_end])) + c_start
 
     if avg_x < valley_idx:
         foot_side = "RightFoot"
-        foot_patch_raw = temp[:, :valley_idx]
+        foot_patch_raw = temp_work[:, :valley_idx].copy()
+        foot_osd = osd_mask[:, :valley_idx]
         offset_x = 0
     else:
         foot_side = "LeftFoot"
-        foot_patch_raw = temp[:, valley_idx:]
+        foot_patch_raw = temp_work[:, valley_idx:].copy()
+        foot_osd = osd_mask[:, valley_idx:]
         offset_x = valley_idx
 
-    # Crop foot bounding box
-    mask = foot_patch_raw > max(26.0, float(np.percentile(foot_patch_raw, 35)))
-    ys, xs_mask = np.where(mask)
+    # Crop clean foot bounding box (isolated from OSD text and background)
+    bg_thresh = max(25.5, float(np.percentile(foot_patch_raw[~foot_osd], 35)))
+    binary_cand = ((foot_patch_raw > bg_thresh) & (~foot_osd)).astype(np.uint8)
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_cand)
+
+    if num_labels > 1:
+        largest_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+        clean_foot_mask = (labels == largest_idx)
+    else:
+        clean_foot_mask = (foot_patch_raw > bg_thresh) & (~foot_osd)
+
+    ys, xs_mask = np.where(clean_foot_mask)
     pad = 4
     if len(ys) > 50:
         ymin = max(0, int(np.min(ys)) - pad)
         ymax = min(H - 1, int(np.max(ys)) + pad)
         xmin = max(0, int(np.min(xs_mask)) - pad)
         xmax = min(foot_patch_raw.shape[1] - 1, int(np.max(xs_mask)) + pad)
-        foot_crop = foot_patch_raw[ymin:ymax+1, xmin:xmax+1]
+        foot_crop = foot_patch_raw[ymin:ymax+1, xmin:xmax+1].copy()
+        mask_crop = clean_foot_mask[ymin:ymax+1, xmin:xmax+1]
+        # Clean ambient replacement outside biological foot contour
+        foot_crop[~mask_crop] = 23.5
     else:
         ymin, ymax, xmin, xmax = 0, H - 1, 0, foot_patch_raw.shape[1] - 1
-        foot_crop = foot_patch_raw
+        foot_crop = foot_patch_raw.copy()
+        mask_crop = np.ones_like(foot_crop, dtype=bool)
 
     ch, cw = foot_crop.shape
     aspect = max(0.1, float(cw) / max(1, ch))
@@ -1056,9 +1090,9 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
     # Configure Grid Geometry & Aspect Ratio Locking (Full-scale dense rigid grid with 9x9 bounded annotations)
     mode = str(grid_mode_str).lower().strip()
     if mode in ["coarse_9x9", "9x9_coarse"]:
-        # Coarse 9x9 Foot Mesh
         n_rows, n_cols = 9, 9
         grid_dense = cv2.resize(foot_crop, (n_cols, n_rows), interpolation=cv2.INTER_AREA)
+        mask_dense = cv2.resize(mask_crop.astype(np.uint8), (n_cols, n_rows), interpolation=cv2.INTER_NEAREST).astype(bool)
         step = 1
         default_radius = 0.45
         label_fontsize = 12
@@ -1069,30 +1103,31 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         arrow_width = 0.0075
         blur_kernel = (3, 3)
         blur_sigma = 0.8
-        arrow_thresh = 0.02
+        arrow_thresh_pct = 25
         is_roi_bounded = False
     elif mode in ["legacy", "paper_fixed", "fixed_104x54"]:
-        # Legacy Fixed 104x54 mode
         n_rows, n_cols = 104, 54
         grid_dense = cv2.resize(foot_crop, (n_cols, n_rows), interpolation=cv2.INTER_AREA)
-        step = 4
+        mask_dense = cv2.resize(mask_crop.astype(np.uint8), (n_cols, n_rows), interpolation=cv2.INTER_NEAREST).astype(bool)
+        step = 3
         default_radius = 3.6
         label_fontsize = 16
         fig_size = (8.5, 11)
         title_a = "(A)\n\nPPP (Fixed 104x54)"
         title_b = "(B)\n\nPPG & PGA"
-        arrow_scale = 1.5
-        arrow_width = 0.0038
+        arrow_scale = 1.6
+        arrow_width = 0.0042
         blur_kernel = (7, 7)
         blur_sigma = 1.8
-        arrow_thresh = 0.04
+        arrow_thresh_pct = 40
         is_roi_bounded = False
     else:
         # DEFAULT: Full Scale Dense Rigid Grid (Aspect-Ratio Locked, Zero Stretch, Annotations bounded to max 9x9 cells)
         n_rows = 104
         n_cols = max(20, int(round(n_rows * aspect)))
         grid_dense = cv2.resize(foot_crop, (n_cols, n_rows), interpolation=cv2.INTER_AREA)
-        step = 2  # High density quiver arrows at grid intersections
+        mask_dense = cv2.resize(mask_crop.astype(np.uint8), (n_cols, n_rows), interpolation=cv2.INTER_NEAREST).astype(bool)
+        step = 3  # Well-spaced quiver arrows revealing true thermal flow lines
         default_radius = 4.5  # Exactly 9x9 cells bounding window (radius 4.5 -> diameter 9.0)
         label_fontsize = 15
         fig_w = max(7.0, min(14.0, 10.5 * (n_cols / n_rows) * 2.1))
@@ -1100,24 +1135,23 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         fig_size = (fig_w, fig_h)
         title_a = "(A)\n\nPPP"
         title_b = "(B)\n\nPPG & PGA"
-        arrow_scale = 0.90
-        arrow_width = 0.0040
+        arrow_scale = 1.6
+        arrow_width = 0.0042
         blur_kernel = (7, 7)
         blur_sigma = 1.8
-        arrow_thresh = 0.03
+        arrow_thresh_pct = 40
         is_roi_bounded = True
 
-    foot_mask = grid_dense > (27.5 if n_rows <= 16 else 28.5)
     grid_disp = grid_dense.copy()
-    grid_disp[~foot_mask] = 23.5
+    grid_disp[~mask_dense] = 23.5
 
     grid_smooth = cv2.GaussianBlur(grid_dense, blur_kernel, blur_sigma)
     sobel_x = cv2.Sobel(grid_smooth, cv2.CV_64F, 1, 0, ksize=3) / 8.0
     sobel_y = cv2.Sobel(grid_smooth, cv2.CV_64F, 0, 1, ksize=3) / 8.0
     grad_mag = np.sqrt(sobel_x**2 + sobel_y**2)
 
-    grid_contour = grid_smooth.copy()
-    grid_contour[~foot_mask] = np.nan
+    grid_contour = grid_smooth.astype(np.float64)
+    grid_contour[~mask_dense] = np.nan
 
     mapped_rois = []
     for r in rois:
@@ -1150,13 +1184,15 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
             mapped_rois = [("T1", 5.2, 2.1, 0.45), ("M1", 6.0, 3.8, 0.45), ("M2", 4.9, 3.8, 0.45)] if foot_side == "RightFoot" else [("T1", 4.8, 2.1, 0.45), ("M1", 4.0, 3.8, 0.45), ("M2", 5.1, 3.8, 0.45)]
         else:
             if foot_side == "RightFoot":
-                t1_x, t1_y = 0.54 * n_cols, 0.17 * n_rows
+                # Medial side is right side of right foot patch, lateral is left side
+                t1_x, t1_y = 0.61 * n_cols, 0.16 * n_rows
                 m1_x, m1_y = 0.61 * n_cols, 0.33 * n_rows
-                m2_x, m2_y = 0.39 * n_cols, 0.34 * n_rows
+                m2_x, m2_y = 0.44 * n_cols, 0.33 * n_rows
             else:
-                t1_x, t1_y = 0.46 * n_cols, 0.17 * n_rows
+                # Medial side is left side of left foot patch, lateral is right side
+                t1_x, t1_y = 0.39 * n_cols, 0.16 * n_rows
                 m1_x, m1_y = 0.39 * n_cols, 0.33 * n_rows
-                m2_x, m2_y = 0.61 * n_cols, 0.34 * n_rows
+                m2_x, m2_y = 0.56 * n_cols, 0.33 * n_rows
             mapped_rois = [
                 ("T1", t1_x, t1_y, 4.5),
                 ("M1", m1_x, m1_y, 4.5),
@@ -1198,9 +1234,9 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
     ax1.set_title(title_a, fontsize=15, fontweight="bold", pad=12)
 
     ax2.set_facecolor("white")
-    valid_contour = grid_contour[~np.isnan(grid_contour)]
-    cmin = np.min(valid_contour) if len(valid_contour) > 0 else 24.0
-    cmax = np.max(valid_contour) if len(valid_contour) > 0 else 36.0
+    valid_contour = grid_contour[np.isfinite(grid_contour)]
+    cmin = float(np.min(valid_contour)) if len(valid_contour) > 0 else 24.0
+    cmax = float(np.max(valid_contour)) if len(valid_contour) > 0 else 36.0
     levels = np.linspace(cmin, cmax, 12 if n_rows <= 16 else 16)
     ax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), grid_contour,
                 levels=levels, cmap=cmap_thermal, linewidths=1.0, alpha=0.90)
@@ -1209,24 +1245,28 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         for x in x_edges: ax2.axvline(x, color='#f0f0f0', lw=0.6, zorder=1)
         for y in y_edges: ax2.axhline(y, color='#f0f0f0', lw=0.6, zorder=1)
     else:
-        foot_outline = (foot_mask).astype(np.uint8)
+        foot_outline = (mask_dense).astype(np.uint8)
         ax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), foot_outline,
                     levels=[0.5], colors="#777799", linewidths=0.7, linestyles="--")
 
-    # Quiver Vector Field (Arrows at grid intersections)
+    # Magnitude-Weighted Quiver Vector Field (Clear Directional Flow)
     y_q, x_q = np.mgrid[1:n_rows+1:step, 1:n_cols+1:step]
     u = sobel_x[::step, ::step]
     v = sobel_y[::step, ::step]
     m = grad_mag[::step, ::step]
-    mask_q = (foot_mask[::step, ::step]) & (m > arrow_thresh)
 
-    nrm = np.sqrt(u**2 + v**2) + 1e-6
-    u_n = u / nrm * arrow_scale
-    v_n = v / nrm * arrow_scale
+    foot_mags = grad_mag[mask_dense]
+    mag_thresh = float(np.percentile(foot_mags, arrow_thresh_pct)) if len(foot_mags) > 0 else 0.5
+    mask_q = (mask_dense[::step, ::step]) & (m >= mag_thresh)
 
-    ax2.quiver(x_q[mask_q], y_q[mask_q], u_n[mask_q], v_n[mask_q],
+    p95_mag = float(np.percentile(foot_mags, 95)) if len(foot_mags) > 0 else (mag_thresh + 1e-3)
+    arrow_len = np.clip(m / (p95_mag + 1e-6), 0.25, 1.0) * arrow_scale
+    u_plot = (u / (m + 1e-6)) * arrow_len
+    v_plot = (v / (m + 1e-6)) * arrow_len
+
+    ax2.quiver(x_q[mask_q], y_q[mask_q], u_plot[mask_q], v_plot[mask_q],
                color="#0b4db7", angles="xy", scale_units="xy", scale=1.0,
-               width=arrow_width, headwidth=3.8, headlength=4.5, zorder=8)
+               width=arrow_width, headwidth=3.6, headlength=4.2, zorder=8)
 
     ax2.set_xlim(0.5, n_cols + 0.5)
     ax2.set_ylim(n_rows + 0.5, 0.5)
