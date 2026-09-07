@@ -1019,24 +1019,44 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         log(f"  warning: failed to parse rois json: {e}")
         rois = []
 
-    # 1. FLIR OSD Mask & Reticle Cleaning
-    osd_mask = np.zeros((H, W), dtype=bool)
-    osd_mask[0:28, 0:85] = True        # Top-left temperature text (e.g. "35.0 °C")
-    osd_mask[212:240, 0:65] = True     # Bottom-left FLIR logo
-    osd_mask[0:28, 270:320] = True     # Top-right scale limit
-    osd_mask[212:240, 270:320] = True   # Bottom-right scale limit
-    osd_mask[:, 310:320] = True        # Right colorbar strip
-
-    # Inpaint central reticle/crosshair if present on raw image
+    # 1. Stroke-Level FLIR OSD & Reticle Inpainting (Zero Foot Heel Notch)
     temp_work = temp.copy()
-    reticle_box = np.zeros((H, W), dtype=bool)
-    reticle_box[int(H * 0.25):int(H * 0.75), int(W * 0.15):int(W * 0.85)] = True
-    crosshair_mask = ((temp_work < 15) | (temp_work > 250)) & reticle_box
-    if np.any(crosshair_mask):
-        crosshair_mask_d = cv2.dilate(crosshair_mask.astype(np.uint8), np.ones((3, 3), np.uint8))
-        temp_work_u8 = np.clip(temp_work, 0, 255).astype(np.uint8)
-        inpainted_u8 = cv2.inpaint(temp_work_u8, crosshair_mask_d, 5, cv2.INPAINT_TELEA)
+    temp_u8 = np.clip(temp_work, 0, 255).astype(np.uint8)
+
+    osd_stroke_mask = np.zeros((H, W), dtype=bool)
+    # Top-left temperature text (e.g. "35.0 °C")
+    tl_box = np.zeros((H, W), dtype=bool)
+    tl_box[4:28, 4:80] = True
+    osd_stroke_mask |= tl_box & ((temp_work > 160) | (temp_work < 15))
+
+    # Bottom-left FLIR logo
+    bl_box = np.zeros((H, W), dtype=bool)
+    bl_box[195:239, 0:72] = True
+    osd_stroke_mask |= bl_box & ((temp_work > 160) | (temp_work < 15))
+
+    # Top-right scale limit text
+    tr_box = np.zeros((H, W), dtype=bool)
+    tr_box[4:28, 270:320] = True
+    osd_stroke_mask |= tr_box & ((temp_work > 160) | (temp_work < 15))
+
+    # Bottom-right scale limit text
+    br_box = np.zeros((H, W), dtype=bool)
+    br_box[195:239, 270:320] = True
+    osd_stroke_mask |= br_box & ((temp_work > 160) | (temp_work < 15))
+
+    # Center reticle/crosshair if present
+    c_box = np.zeros((H, W), dtype=bool)
+    c_box[int(H * 0.25):int(H * 0.75), int(W * 0.15):int(W * 0.85)] = True
+    osd_stroke_mask |= c_box & ((temp_work < 15) | (temp_work > 245))
+
+    # Inpaint detected strokes seamlessly
+    if np.any(osd_stroke_mask):
+        mask_d = cv2.dilate(osd_stroke_mask.astype(np.uint8), np.ones((5, 5), np.uint8))
+        inpainted_u8 = cv2.inpaint(temp_u8, mask_d, 7, cv2.INPAINT_TELEA)
         temp_work = inpainted_u8.astype(np.float32)
+
+    # Blank out the extreme right edge colorbar strip outside the scene
+    temp_work[:, 310:320] = 23.5
 
     # 2. Determine Foot Side: Screen Left (avg_x < valley_idx) -> Right Foot in camera plantar view
     xs = [r.get("cx", r.get("points", [{}])[0].get("x", W / 2)) for r in rois if isinstance(r, dict)]
@@ -1049,24 +1069,22 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
     if avg_x < valley_idx:
         foot_side = "RightFoot"
         foot_patch_raw = temp_work[:, :valley_idx].copy()
-        foot_osd = osd_mask[:, :valley_idx]
         offset_x = 0
     else:
         foot_side = "LeftFoot"
         foot_patch_raw = temp_work[:, valley_idx:].copy()
-        foot_osd = osd_mask[:, valley_idx:]
         offset_x = valley_idx
 
-    # Crop clean foot bounding box (isolated from OSD text and background)
-    bg_thresh = max(25.5, float(np.percentile(foot_patch_raw[~foot_osd], 35)))
-    binary_cand = ((foot_patch_raw > bg_thresh) & (~foot_osd)).astype(np.uint8)
+    # Crop clean foot bounding box (isolated from background)
+    bg_thresh = max(25.5, float(np.percentile(foot_patch_raw, 35)))
+    binary_cand = (foot_patch_raw > bg_thresh).astype(np.uint8)
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_cand)
 
     if num_labels > 1:
         largest_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
         clean_foot_mask = (labels == largest_idx)
     else:
-        clean_foot_mask = (foot_patch_raw > bg_thresh) & (~foot_osd)
+        clean_foot_mask = (foot_patch_raw > bg_thresh)
 
     ys, xs_mask = np.where(clean_foot_mask)
     pad = 4
@@ -1256,11 +1274,13 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
     m = grad_mag[::step, ::step]
 
     foot_mags = grad_mag[mask_dense]
-    mag_thresh = float(np.percentile(foot_mags, arrow_thresh_pct)) if len(foot_mags) > 0 else 0.5
+    # Physical noise-floor threshold so internal plantar flow is not erased
+    mag_thresh = max(0.18, float(np.percentile(foot_mags, 15))) if len(foot_mags) > 0 else 0.15
     mask_q = (mask_dense[::step, ::step]) & (m >= mag_thresh)
 
-    p95_mag = float(np.percentile(foot_mags, 95)) if len(foot_mags) > 0 else (mag_thresh + 1e-3)
-    arrow_len = np.clip(m / (p95_mag + 1e-6), 0.25, 1.0) * arrow_scale
+    # Sub-linear power-law scaling: reveals interior gradient flow without blowing up outer edge vectors
+    p75_mag = float(np.percentile(foot_mags, 75)) if len(foot_mags) > 0 else 1.0
+    arrow_len = np.clip((m / (p75_mag + 1e-6)) ** 0.45 * 1.25, 0.35, 1.6)
     u_plot = (u / (m + 1e-6)) * arrow_len
     v_plot = (v / (m + 1e-6)) * arrow_len
 

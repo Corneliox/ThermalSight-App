@@ -2091,8 +2091,10 @@ export function generateThermalDirectionSvg(labelName, series, theme = 'dark') {
  * (A) PPP with FLIR White-Hot palette, and (B) PPG & PGA with quiver vector flow.
  */
 export async function generatePlantarPaperFig1Package(results, W = 320, H = 240, rois = [], labelDefs = [], pxPerCm = 10.0, stem = 'sample', gridMode = '9x9') {
-  const temp = results?.raw?.tempMatrix;
-  if (!temp || !Array.isArray(temp) || temp.length === 0) return null;
+  const rawMatrix = results?.raw?.tempMatrix || results?.tempMatrix;
+  if (!rawMatrix) return null;
+  const is2D = Array.isArray(rawMatrix) && Array.isArray(rawMatrix[0]);
+  const getVal = (r, c) => is2D ? (rawMatrix[r]?.[c] ?? 23.5) : (rawMatrix[r * W + c] ?? 23.5);
 
   // 1. Determine Foot Side based on user label locations
   const validRois = (rois || []).filter(r => r && (r.cx !== undefined || (r.points && r.points.length > 0)));
@@ -2108,7 +2110,7 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
   const colAverages = [];
   for (let c = 0; c < W; c++) {
     let sum = 0;
-    for (let r = 0; r < H; r++) sum += temp[r][c];
+    for (let r = 0; r < H; r++) sum += getVal(r, c);
     colAverages.push(sum / H);
   }
   const cStart = Math.floor(W * 0.35);
@@ -2125,7 +2127,7 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
   const footSide = isRightFoot ? 'RightFoot' : 'LeftFoot';
   const footDisplayName = isRightFoot ? 'Kaki Kanan (Right Foot)' : 'Kaki Kiri (Left Foot)';
 
-  // Crop foot patch with FLIR OSD exclusion
+  // Crop foot patch with stroke-level FLIR OSD exclusion (preserves anatomical heel)
   const xStartCol = isRightFoot ? 0 : valleyIdx;
   const xEndCol = isRightFoot ? valleyIdx : W;
 
@@ -2133,14 +2135,11 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
   let count = 0;
   for (let r = 0; r < H; r++) {
     for (let c = xStartCol; c < xEndCol; c++) {
-      // Exclude standard FLIR OSD border banners:
-      // Top-left: r < 28, c < 85 (e.g. "35.0 °C")
-      // Bottom-left: r > 212, c < 65 ("FLIR" logo)
-      // Top-right: r < 28, c > 270 (upper scale limit)
-      // Bottom-right: r > 212, c > 270 (lower scale limit)
-      // Right edge: c >= 310 (colorbar strip)
-      const isOsd = (r < 28 && c < 85) || (r > 212 && c < 65) || (r < 28 && c > 270) || (r > 212 && c > 270) || (c >= 310);
-      if (!isOsd && temp[r][c] > 26.5) {
+      const val = getVal(r, c);
+      // Only treat pixels as OSD if in border banners AND have non-physiological / extreme values (white/black text strokes):
+      const inOsdBox = (r < 28 && c < 85) || (r > 200 && c < 72) || (r < 28 && c > 270) || (r > 200 && c > 270) || (c >= 310);
+      const isOsdStroke = inOsdBox && (val > 35.5 || val < 24.0);
+      if (!isOsdStroke && val > 25.5) {
         if (r < ymin) ymin = r;
         if (r > ymax) ymax = r;
         if (c < xmin) xmin = c;
@@ -2222,10 +2221,10 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
       const y1 = Math.min(H - 1, y0 + 1);
       const wy = srcY - y0;
 
-      const v00 = temp[y0][x0];
-      const v01 = temp[y0][x1];
-      const v10 = temp[y1][x0];
-      const v11 = temp[y1][x1];
+      const v00 = getVal(y0, x0);
+      const v01 = getVal(y0, x1);
+      const v10 = getVal(y1, x0);
+      const v11 = getVal(y1, x1);
       gridDense[r][c] = (v00 * (1 - wx) + v01 * wx) * (1 - wy) + (v10 * (1 - wx) + v11 * wx) * wy;
     }
   }
@@ -2545,29 +2544,30 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
   const footGrads = [];
   for (let r = 0; r < nRows; r++) {
     for (let c = 0; c < nCols; c++) {
-      if (gridDense[r][c] > 27.5) footGrads.push(gradMag[r][c]);
+      if (gridDense[r][c] > 26.5) footGrads.push(gradMag[r][c]);
     }
   }
   footGrads.sort((a, b) => a - b);
-  const p40Idx = Math.floor(footGrads.length * 0.40);
-  const p95Idx = Math.floor(footGrads.length * 0.95);
-  const magThresh = footGrads.length > 0 ? footGrads[p40Idx] : 0.04;
-  const p95Mag = footGrads.length > 0 ? footGrads[p95Idx] : 0.20;
+  const p15Idx = Math.floor(footGrads.length * 0.15);
+  const p75Idx = Math.floor(footGrads.length * 0.75);
+  const magThresh = footGrads.length > 0 ? Math.max(0.015, footGrads[p15Idx]) : 0.015;
+  const p75Mag = footGrads.length > 0 ? footGrads[p75Idx] : 0.08;
 
   // Quiver Vector Arrows flowing along Thermal Gradient
   ctx.fillStyle = '#0b4db7';
   ctx.strokeStyle = '#0b4db7';
-  ctx.lineWidth = isCoarse ? 2.0 : 2.5;
+  ctx.lineWidth = isCoarse ? 2.0 : 2.2;
 
   for (let r = (isCoarse ? 0 : 2); r < nRows - (isCoarse ? 0 : 2); r += qStep) {
     for (let c = (isCoarse ? 0 : 2); c < nCols - (isCoarse ? 0 : 2); c += qStep) {
       const magVal = gradMag[r][c];
-      if (gridDense[r][c] > (isCoarse ? 27.0 : 28.0) && magVal >= (isCoarse ? 0.02 : magThresh)) {
+      if (gridDense[r][c] > (isCoarse ? 26.5 : 26.8) && magVal >= magThresh) {
         const gx = sobelX[r][c];
         const gy = sobelY[r][c];
         const nrm = Math.sqrt(gx * gx + gy * gy) + 1e-6;
-        const normScale = Math.max(0.25, Math.min(1.0, magVal / (p95Mag + 1e-6)));
-        const arrowLen = (isCoarse ? cellW * 0.45 : cellW * 1.6) * normScale;
+        // Sub-linear power-law scaling
+        const normScale = Math.max(0.35, Math.min(1.6, Math.pow(magVal / (p75Mag + 1e-6), 0.45) * 1.25));
+        const arrowLen = (isCoarse ? cellW * 0.45 : cellW * 1.0) * normScale;
         const uNorm = (gx / nrm) * arrowLen;
         const vNorm = (gy / nrm) * arrowLen;
 
