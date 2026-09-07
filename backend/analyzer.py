@@ -1053,101 +1053,59 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
     ch, cw = foot_crop.shape
     aspect = max(0.1, float(cw) / max(1, ch))
 
-    # Configure Grid Geometry & Aspect Ratio Locking
+    # Configure Grid Geometry & Aspect Ratio Locking (Full-scale dense rigid grid with 9x9 bounded annotations)
     mode = str(grid_mode_str).lower().strip()
-    if mode in ["9", "9x9", "default"]:
-        # Strict 9x9 Square Grid with Symmetric Padding (Zero stretching)
-        max_dim = max(ch, cw)
-        pad_top = (max_dim - ch) // 2
-        pad_bottom = max_dim - ch - pad_top
-        pad_left = (max_dim - cw) // 2
-        pad_right = max_dim - cw - pad_left
-        foot_proc = np.pad(foot_crop, ((pad_top, pad_bottom), (pad_left, pad_right)), mode='constant', constant_values=23.5)
+    if mode in ["coarse_9x9", "9x9_coarse"]:
+        # Coarse 9x9 Foot Mesh
         n_rows, n_cols = 9, 9
-        grid_dense = cv2.resize(foot_proc, (n_cols, n_rows), interpolation=cv2.INTER_AREA)
-        step = 1  # Per-pixel arrow at EVERY intersection
-        radius_grid = 0.45
-        label_fontsize = 12
-        fig_size = (9.5, 5.5)
-        title_a = "(A)\n\nPPP (9x9 Default)"
-        title_b = "(B)\n\nPPG & PGA (Per-Pixel Arrows)"
-        coord_scale_x = max_dim
-        coord_scale_y = max_dim
-        coord_offset_x = pad_left
-        coord_offset_y = pad_top
-        x_min_bound, x_max_bound = 0.5, n_cols + 0.5
-        y_min_bound, y_max_bound = n_rows + 0.5, 0.5
-        arrow_scale = 0.45
-        arrow_width = 0.0075
-        blur_kernel = (3, 3)
-        blur_sigma = 0.8
-        arrow_thresh = 0.02
-    elif mode in ["9col", "prop", "proportional"]:
-        # 9 Columns with Proportional Rows (Aspect-preserved rectangular grid)
-        n_cols = 9
-        n_rows = max(5, int(round(n_cols / aspect)))
         grid_dense = cv2.resize(foot_crop, (n_cols, n_rows), interpolation=cv2.INTER_AREA)
         step = 1
-        radius_grid = 0.45
+        default_radius = 0.45
         label_fontsize = 12
-        fig_h = max(5.5, min(12.0, 9.5 * (n_rows / n_cols) * 0.6))
-        fig_size = (9.5, fig_h)
-        title_a = f"(A)\n\nPPP (9x{n_rows} Proportional)"
+        fig_size = (9.5, 5.5)
+        title_a = "(A)\n\nPPP (9x9 Coarse)"
         title_b = "(B)\n\nPPG & PGA (Per-Pixel Arrows)"
-        coord_scale_x = cw
-        coord_scale_y = ch
-        coord_offset_x = 0
-        coord_offset_y = 0
-        x_min_bound, x_max_bound = 0.5, n_cols + 0.5
-        y_min_bound, y_max_bound = n_rows + 0.5, 0.5
         arrow_scale = 0.45
         arrow_width = 0.0075
         blur_kernel = (3, 3)
         blur_sigma = 0.8
         arrow_thresh = 0.02
-    elif mode in ["paper_aspect", "paper_locked"]:
-        # High-res Paper Mode with Aspect Ratio Locked
-        n_rows = 104
-        n_cols = max(20, int(round(n_rows * aspect)))
-        grid_dense = cv2.resize(foot_crop, (n_cols, n_rows), interpolation=cv2.INTER_AREA)
-        step = 4
-        radius_grid = 3.6
-        label_fontsize = 16
-        fig_size = (8.5, 11)
-        title_a = "(A)\n\nPPP (Aspect-Locked)"
-        title_b = "(B)\n\nPPG & PGA"
-        coord_scale_x = cw
-        coord_scale_y = ch
-        coord_offset_x = 0
-        coord_offset_y = 0
-        x_min_bound, x_max_bound = 0.5, n_cols + 0.5
-        y_min_bound, y_max_bound = n_rows + 0.5, 0.5
-        arrow_scale = 1.5
-        arrow_width = 0.0038
-        blur_kernel = (7, 7)
-        blur_sigma = 1.8
-        arrow_thresh = 0.04
-    else:
-        # Legacy Paper 104x54 mode
+        is_roi_bounded = False
+    elif mode in ["legacy", "paper_fixed", "fixed_104x54"]:
+        # Legacy Fixed 104x54 mode
         n_rows, n_cols = 104, 54
         grid_dense = cv2.resize(foot_crop, (n_cols, n_rows), interpolation=cv2.INTER_AREA)
         step = 4
-        radius_grid = 3.6
+        default_radius = 3.6
         label_fontsize = 16
         fig_size = (8.5, 11)
-        title_a = "(A)\n\nPPP"
+        title_a = "(A)\n\nPPP (Fixed 104x54)"
         title_b = "(B)\n\nPPG & PGA"
-        coord_scale_x = cw
-        coord_scale_y = ch
-        coord_offset_x = 0
-        coord_offset_y = 0
-        x_min_bound, x_max_bound = 1.5, n_cols + 0.5
-        y_min_bound, y_max_bound = n_rows + 0.5, 1.5
         arrow_scale = 1.5
         arrow_width = 0.0038
         blur_kernel = (7, 7)
         blur_sigma = 1.8
         arrow_thresh = 0.04
+        is_roi_bounded = False
+    else:
+        # DEFAULT: Full Scale Dense Rigid Grid (Aspect-Ratio Locked, Zero Stretch, Annotations bounded to max 9x9 cells)
+        n_rows = 104
+        n_cols = max(20, int(round(n_rows * aspect)))
+        grid_dense = cv2.resize(foot_crop, (n_cols, n_rows), interpolation=cv2.INTER_AREA)
+        step = 2  # High density quiver arrows at grid intersections
+        default_radius = 4.5  # Exactly 9x9 cells bounding window (radius 4.5 -> diameter 9.0)
+        label_fontsize = 15
+        fig_w = max(7.0, min(14.0, 10.5 * (n_cols / n_rows) * 2.1))
+        fig_h = 10.5
+        fig_size = (fig_w, fig_h)
+        title_a = "(A)\n\nPPP"
+        title_b = "(B)\n\nPPG & PGA"
+        arrow_scale = 0.90
+        arrow_width = 0.0040
+        blur_kernel = (7, 7)
+        blur_sigma = 1.8
+        arrow_thresh = 0.03
+        is_roi_bounded = True
 
     foot_mask = grid_dense > (27.5 if n_rows <= 16 else 28.5)
     grid_disp = grid_dense.copy()
@@ -1166,19 +1124,44 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         if not isinstance(r, dict):
             continue
         name = str(r.get("labelName", "ROI")).upper()
-        rcx = float(r.get("cx", 0)) - offset_x - xmin + coord_offset_x
-        rcy = float(r.get("cy", 0)) - ymin + coord_offset_y
-        gx = (rcx / coord_scale_x) * n_cols + (0.5 if n_rows <= 16 else 1.0)
-        gy = (rcy / coord_scale_y) * n_rows + (0.5 if n_rows <= 16 else 1.0)
-        gx = float(np.clip(gx, 0.8 if n_rows <= 16 else 4.0, n_cols + 0.2 if n_rows <= 16 else n_cols - 4.0))
-        gy = float(np.clip(gy, 0.8 if n_rows <= 16 else 4.0, n_rows + 0.2 if n_rows <= 16 else n_rows - 4.0))
-        mapped_rois.append((name, gx, gy))
+        rcx = float(r.get("cx", 0)) - offset_x - xmin
+        rcy = float(r.get("cy", 0)) - ymin
+        gx = (rcx / cw) * n_cols + 0.5
+        gy = (rcy / ch) * n_rows + 0.5
+
+        user_rad = float(r.get("radius", 0))
+        if user_rad > 0:
+            r_mapped = (user_rad / ch) * n_rows
+        else:
+            r_mapped = default_radius
+
+        # Cap annotation so diameter does NOT exceed 9x9 grid cells:
+        if is_roi_bounded:
+            r_final = min(4.5, max(2.5, r_mapped))
+        else:
+            r_final = r_mapped
+
+        gx = float(np.clip(gx, r_final + 0.5, n_cols - r_final + 0.5))
+        gy = float(np.clip(gy, r_final + 0.5, n_rows - r_final + 0.5))
+        mapped_rois.append((name, gx, gy, r_final))
 
     if not mapped_rois:
-        if foot_side == "RightFoot":
-            mapped_rois = [("T1", 5.2, 2.1), ("M1", 6.0, 3.8), ("M2", 4.9, 3.8)] if n_rows <= 16 else [("T1", 17.0, 22.0), ("M1", 14.0, 40.0), ("M3", 27.0, 38.0)]
+        if n_rows <= 16:
+            mapped_rois = [("T1", 5.2, 2.1, 0.45), ("M1", 6.0, 3.8, 0.45), ("M2", 4.9, 3.8, 0.45)] if foot_side == "RightFoot" else [("T1", 4.8, 2.1, 0.45), ("M1", 4.0, 3.8, 0.45), ("M2", 5.1, 3.8, 0.45)]
         else:
-            mapped_rois = [("T1", 4.8, 2.1), ("M1", 4.0, 3.8), ("M2", 5.1, 3.8)] if n_rows <= 16 else [("T1", 37.0, 19.0), ("M1", 39.0, 41.0), ("M3", 26.0, 39.0)]
+            if foot_side == "RightFoot":
+                t1_x, t1_y = 0.54 * n_cols, 0.17 * n_rows
+                m1_x, m1_y = 0.61 * n_cols, 0.33 * n_rows
+                m2_x, m2_y = 0.39 * n_cols, 0.34 * n_rows
+            else:
+                t1_x, t1_y = 0.46 * n_cols, 0.17 * n_rows
+                m1_x, m1_y = 0.39 * n_cols, 0.33 * n_rows
+                m2_x, m2_y = 0.61 * n_cols, 0.34 * n_rows
+            mapped_rois = [
+                ("T1", t1_x, t1_y, 4.5),
+                ("M1", m1_x, m1_y, 4.5),
+                ("M2", m2_x, m2_y, 4.5)
+            ]
 
     # White-Hot Colormap
     cmap_thermal = LinearSegmentedColormap.from_list("flir_whitehot", [
@@ -1196,18 +1179,18 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
     ax1.pcolormesh(X_e, Y_e, grid_disp, cmap=cmap_thermal, vmin=23.5, vmax=np.max(grid_dense),
                    edgecolors="#222222" if n_rows <= 16 else "#111111",
                    linewidth=0.6 if n_rows <= 16 else 0.20, shading="flat")
-    ax1.set_xlim(x_min_bound, x_max_bound)
-    ax1.set_ylim(y_min_bound, y_max_bound)
+    ax1.set_xlim(0.5, n_cols + 0.5)
+    ax1.set_ylim(n_rows + 0.5, 0.5)
     ax1.set_aspect("equal")
     ax1.tick_params(colors="black", labelsize=9)
 
-    for name, gx, gy in mapped_rois:
-        c_out = plt.Circle((gx, gy), radius_grid, edgecolor="#00e5ff", facecolor="none", lw=1.8 if n_rows <= 16 else 2.0, zorder=10)
-        c_in = plt.Circle((gx, gy), radius_grid * 0.82, edgecolor="red", facecolor="none", lw=1.2 if n_rows <= 16 else 1.3, zorder=11)
+    for name, gx, gy, r_rad in mapped_rois:
+        c_out = plt.Circle((gx, gy), r_rad, edgecolor="#00e5ff", facecolor="none", lw=1.8 if n_rows <= 16 else 2.0, zorder=10)
+        c_in = plt.Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=1.2 if n_rows <= 16 else 1.3, zorder=11)
         ax1.add_patch(c_out)
         ax1.add_patch(c_in)
         ax1.plot(gx, gy, "o", color="red", markeredgecolor="white", markeredgewidth=0.8, markersize=4.5, zorder=12)
-        ty = (0.75 if gy < n_rows * 0.55 else -0.75) if n_rows <= 16 else (7.5 if gy < 50 else -6.5)
+        ty = (0.75 if gy < n_rows * 0.55 else -0.75) if n_rows <= 16 else (6.5 if gy < n_rows * 0.55 else -5.5)
         ax1.text(gx, gy + ty, name, color="white", fontsize=label_fontsize, fontweight="bold",
                  ha="center", va="center", zorder=15,
                  bbox=dict(boxstyle="round,pad=0.15", facecolor="#000000", alpha=0.6, edgecolor="none"))
@@ -1230,7 +1213,7 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         ax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), foot_outline,
                     levels=[0.5], colors="#777799", linewidths=0.7, linestyles="--")
 
-    # Quiver Vector Field (step=1 for 9x9 / 9col)
+    # Quiver Vector Field (Arrows at grid intersections)
     y_q, x_q = np.mgrid[1:n_rows+1:step, 1:n_cols+1:step]
     u = sobel_x[::step, ::step]
     v = sobel_y[::step, ::step]
@@ -1243,25 +1226,34 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
 
     ax2.quiver(x_q[mask_q], y_q[mask_q], u_n[mask_q], v_n[mask_q],
                color="#0b4db7", angles="xy", scale_units="xy", scale=1.0,
-               width=arrow_width, headwidth=4.0, headlength=4.8, zorder=8)
+               width=arrow_width, headwidth=3.8, headlength=4.5, zorder=8)
 
-    ax2.set_xlim(x_min_bound, x_max_bound)
-    ax2.set_ylim(y_min_bound, y_max_bound)
+    ax2.set_xlim(0.5, n_cols + 0.5)
+    ax2.set_ylim(n_rows + 0.5, 0.5)
     ax2.set_aspect("equal")
     ax2.tick_params(colors="black", labelsize=9)
 
     metrics = []
-    for name, gx, gy in mapped_rois:
-        c_out = plt.Circle((gx, gy), radius_grid, edgecolor="red", facecolor="none", lw=1.8 if n_rows <= 16 else 2.0, zorder=10)
-        c_in = plt.Circle((gx, gy), radius_grid * 0.82, edgecolor="red", facecolor="none", lw=1.0, linestyle=":", zorder=11)
+    for name, gx, gy, r_rad in mapped_rois:
+        c_out = plt.Circle((gx, gy), r_rad, edgecolor="red", facecolor="none", lw=1.8 if n_rows <= 16 else 2.0, zorder=10)
+        c_in = plt.Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=1.0, linestyle=":", zorder=11)
         ax2.add_patch(c_out)
         ax2.add_patch(c_in)
         ax2.plot(gx, gy, "o", color="red", markersize=4.5, zorder=12)
-        ty = (0.75 if gy < n_rows * 0.55 else -0.75) if n_rows <= 16 else (7.5 if gy < 50 else -6.5)
+        ty = (0.75 if gy < n_rows * 0.55 else -0.75) if n_rows <= 16 else (6.5 if gy < n_rows * 0.55 else -5.5)
         ax2.text(gx, gy + ty, name, color="black", fontsize=label_fontsize, fontweight="bold", ha="center", va="center", zorder=15)
 
         ix = int(np.clip(round(gx) - 1, 0, n_cols - 1))
         iy = int(np.clip(round(gy) - 1, 0, n_rows - 1))
+
+        # Extract 9x9 Local Patch statistics around annotation center
+        x0 = max(0, ix - 4)
+        x1 = min(n_cols, ix + 5)
+        y0 = max(0, iy - 4)
+        y1 = min(n_rows, iy + 5)
+        patch_9x9 = grid_dense[y0:y1, x0:x1]
+        mean_9x9 = float(np.mean(patch_9x9)) if patch_9x9.size > 0 else float(grid_dense[iy, ix])
+
         val_ppp = float(grid_dense[iy, ix])
         gx_val = float(sobel_x[iy, ix])
         gy_val = float(sobel_y[iy, ix])
@@ -1271,7 +1263,9 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
             "ROI": name,
             "Grid_X": round(gx, 1),
             "Grid_Y": round(gy, 1),
+            "ROI_Radius_Grid": round(r_rad, 1),
             "PPP_Peak_Value": round(val_ppp, 2),
+            "PPP_Mean_9x9": round(mean_9x9, 2),
             "PPG_Gradient_Mag": round(val_ppg, 3),
             "PGA_Angle_Deg": round(val_pga, 1)
         })
@@ -1284,30 +1278,16 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
     fig.savefig(str(out_png), bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
-    # Also save tagged experimental files
-    tag = "9x9" if mode in ["9", "9x9", "default"] else mode
-    out_png_tag = out_dir / f"{stem}_{foot_side}_whitehot_{tag}.png"
-    out_csv_tag = out_dir / f"{stem}_{foot_side}_metrics_{tag}.csv"
-    import shutil
-    try:
-        shutil.copyfile(str(out_png), str(out_png_tag))
-    except Exception:
-        pass
-
     with open(str(out_csv), "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["ROI", "Grid_X", "Grid_Y", "PPP_Peak_Value", "PPG_Gradient_Mag", "PGA_Angle_Deg"])
+        writer = csv.DictWriter(f, fieldnames=["ROI", "Grid_X", "Grid_Y", "ROI_Radius_Grid", "PPP_Peak_Value", "PPP_Mean_9x9", "PPG_Gradient_Mag", "PGA_Angle_Deg"])
         writer.writeheader()
         writer.writerows(metrics)
-    try:
-        shutil.copyfile(str(out_csv), str(out_csv_tag))
-    except Exception:
-        pass
 
     emit({
         "status": "ok",
         "stem": stem,
         "foot_side": foot_side,
-        "grid_mode": tag,
+        "grid_mode": mode,
         "png_path": str(out_png),
         "csv_path": str(out_csv)
     })

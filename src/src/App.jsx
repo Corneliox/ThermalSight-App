@@ -112,8 +112,8 @@ export default function App() {
     setZoomScale(1.0);
   }, [activeImagePath]);
 
-  // Experimental Plantar Grid Mode ('9x9' default, '9col', 'paper')
-  const [plantarGridMode, setPlantarGridMode] = useState('9x9');
+  // Plantar Grid Mode ('aspect_locked' default full-scale, 'legacy', 'coarse_9x9')
+  const [plantarGridMode, setPlantarGridMode] = useState('aspect_locked');
 
   // Active image pixel-to-cm scale
   const activePxPerCm = (activeImagePath && calibrationsMap[activeImagePath]?.pxPerCm) || null;
@@ -2627,10 +2627,10 @@ export default function App() {
 
               {currentResults?.raw?.tempMatrix && (
                 <div style={{ marginTop: '10px' }}>
-                  {/* Experimental Plantar Grid Selector */}
-                  <div style={{ marginBottom: '8px', background: 'rgba(255, 171, 0, 0.08)', border: '1px solid rgba(255, 171, 0, 0.25)', borderRadius: '6px', padding: '6px 8px' }}>
+                  {/* Plantar Grid Mode Selector */}
+                  <div style={{ marginBottom: '8px', background: 'rgba(0, 229, 255, 0.08)', border: '1px solid rgba(0, 229, 255, 0.25)', borderRadius: '6px', padding: '6px 8px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
-                      <span style={{ fontSize: '11px', fontWeight: '700', color: '#ffab00' }}>🧪 Plantar Grid Mode</span>
+                      <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--cyan)' }}>🦶 Plantar Grid Mode</span>
                     </div>
                     <select
                       value={plantarGridMode}
@@ -2646,9 +2646,9 @@ export default function App() {
                         cursor: 'pointer'
                       }}
                     >
-                      <option value="9x9">9x9 Square Grid (Default Experimental)</option>
-                      <option value="9col">9-Column Proportional (Aspect-Locked)</option>
-                      <option value="paper">104x54 Grid (Paper Fig 1 Standard)</option>
+                      <option value="aspect_locked">Full Dense Grid (Aspect-Locked, Max 9x9 ROI) [Default]</option>
+                      <option value="legacy">Fixed 104x54 Grid (Legacy Paper)</option>
+                      <option value="coarse_9x9">9x9 Coarse Foot Grid</option>
                     </select>
                   </div>
 

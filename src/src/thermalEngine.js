@@ -2158,55 +2158,50 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
   const cropH = Math.max(1, ymax - ymin + 1);
   const mode = String(gridMode || '9x9').toLowerCase().trim();
 
-  let nRows = 9, nCols = 9, qStep = 1, radiusGrid = 0.45;
-  let padTop = 0, padLeft = 0, maxDim = Math.max(cropW, cropH);
-  let panelW = 760, panelH = 760;
-  let canvasH = 1200;
-  let titleA = '(A)\n\nPPP (9x9 Default)';
-  let titleB = '(B)\n\nPPG & PGA (Per-Pixel Arrows)';
-  let isCoarse = true;
+  let nRows = 104;
+  let nCols = Math.max(20, Math.round(nRows * (cropW / cropH)));
+  let qStep = 2;
+  let defaultRadius = 4.5; // Max 9x9 grid cells bounding window
+  let panelW = 760;
+  let panelH = Math.round(panelW * (nRows / nCols));
+  let canvasH = Math.max(1600, 260 + panelH + 150);
+  let titleA = '(A)\n\nPPP';
+  let titleB = '(B)\n\nPPG & PGA';
+  let isCoarse = false;
+  let isRoiBounded = true;
 
-  if (mode === '9col' || mode === 'proportional') {
+  if (mode === 'coarse_9x9' || mode === '9x9_coarse') {
+    nRows = 9;
     nCols = 9;
-    nRows = Math.max(5, Math.round(nCols * (cropH / cropW)));
-    panelH = Math.round(panelW * (nRows / nCols));
-    canvasH = Math.max(1200, 260 + panelH + 150);
-    titleA = `(A)\n\nPPP (9x${nRows} Proportional)`;
+    qStep = 1;
+    defaultRadius = 0.45;
+    panelW = 760;
+    panelH = 760;
+    canvasH = 1200;
+    titleA = '(A)\n\nPPP (9x9 Coarse)';
     titleB = '(B)\n\nPPG & PGA (Per-Pixel Arrows)';
     isCoarse = true;
-  } else if (mode === 'paper') {
+    isRoiBounded = false;
+  } else if (mode === 'legacy' || mode === 'paper_fixed') {
     nRows = 104;
     nCols = 54;
     qStep = 4;
-    radiusGrid = 3.6;
-    panelH = 1900;
+    defaultRadius = 3.6;
+    panelW = 760;
+    panelH = Math.round(panelW * (104 / 54));
     canvasH = 2400;
-    titleA = '(A)\n\nPPP';
+    titleA = '(A)\n\nPPP (Fixed 104x54)';
     titleB = '(B)\n\nPPG & PGA';
     isCoarse = false;
-  } else {
-    // Strict 9x9 default with aspect ratio locked via square padding
-    padTop = Math.floor((maxDim - cropH) / 2);
-    padLeft = Math.floor((maxDim - cropW) / 2);
-    nRows = 9;
-    nCols = 9;
-    panelH = 760;
-    canvasH = 1200;
-    isCoarse = true;
+    isRoiBounded = false;
   }
 
   const gridDense = [];
   for (let r = 0; r < nRows; r++) {
     gridDense[r] = new Float32Array(nCols);
     for (let c = 0; c < nCols; c++) {
-      let srcX, srcY;
-      if (mode === '9x9' || mode === 'default') {
-        srcX = (xmin - padLeft) + (c / (nCols - 1)) * (maxDim - 1);
-        srcY = (ymin - padTop) + (r / (nRows - 1)) * (maxDim - 1);
-      } else {
-        srcX = xmin + (c / (nCols - 1)) * (cropW - 1);
-        srcY = ymin + (r / (nRows - 1)) * (cropH - 1);
-      }
+      const srcX = xmin + (c / (nCols - 1)) * (cropW - 1);
+      const srcY = ymin + (r / (nRows - 1)) * (cropH - 1);
 
       if (srcX < 0 || srcX >= W || srcY < 0 || srcY >= H) {
         gridDense[r][c] = 23.5;
@@ -2271,48 +2266,69 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     }
   }
 
-  // Map user ROIs onto the grid
+  // Map user ROIs onto the grid with 9x9 bounding limit
   const mappedRois = [];
   for (const r of validRois) {
     const name = (r.labelName || 'ROI').toUpperCase();
     const rcx = (r.cx !== undefined ? r.cx : (r.points[0]?.x || 0)) - xmin;
     const rcy = (r.cy !== undefined ? r.cy : (r.points[0]?.y || 0)) - ymin;
-    let gx, gy;
-    if (mode === '9x9' || mode === 'default') {
-      gx = ((rcx + padLeft) / maxDim) * nCols + 0.5;
-      gy = ((rcy + padTop) / maxDim) * nRows + 0.5;
-      gx = Math.max(0.8, Math.min(nCols + 0.2, gx));
-      gy = Math.max(0.8, Math.min(nRows + 0.2, gy));
-    } else {
-      gx = (rcx / cropW) * nCols + 1;
-      gy = (rcy / cropH) * nRows + 1;
-      gx = Math.max(isCoarse ? 0.8 : 4.0, Math.min(isCoarse ? nCols + 0.2 : nCols - 4.0, gx));
-      gy = Math.max(isCoarse ? 0.8 : 4.0, Math.min(isCoarse ? nRows + 0.2 : nRows - 4.0, gy));
-    }
-    mappedRois.push({ name, gx, gy });
+    const gx = (rcx / cropW) * nCols + 0.5;
+    const gy = (rcy / cropH) * nRows + 0.5;
+
+    const userRad = r.radius ? (r.radius / cropH) * nRows : defaultRadius;
+    const rFinal = isRoiBounded ? Math.min(4.5, Math.max(2.2, userRad)) : userRad;
+
+    const clampedGx = Math.max(rFinal + 0.5, Math.min(nCols - rFinal + 0.5, gx));
+    const clampedGy = Math.max(rFinal + 0.5, Math.min(nRows - rFinal + 0.5, gy));
+    mappedRois.push({ name, gx: clampedGx, gy: clampedGy, rFinal });
   }
 
   if (mappedRois.length === 0) {
-    if (isRightFoot) {
-      mappedRois.push({ name: 'T1', gx: isCoarse ? 5.2 : 17.0, gy: isCoarse ? 2.1 : 22.0 });
-      mappedRois.push({ name: 'M1', gx: isCoarse ? 6.0 : 14.0, gy: isCoarse ? 3.8 : 40.0 });
-      mappedRois.push({ name: 'M2', gx: isCoarse ? 4.9 : 27.0, gy: isCoarse ? 3.8 : 38.0 });
+    if (isCoarse) {
+      if (isRightFoot) {
+        mappedRois.push({ name: 'T1', gx: 5.2, gy: 2.1, rFinal: 0.45 });
+        mappedRois.push({ name: 'M1', gx: 6.0, gy: 3.8, rFinal: 0.45 });
+        mappedRois.push({ name: 'M2', gx: 4.9, gy: 3.8, rFinal: 0.45 });
+      } else {
+        mappedRois.push({ name: 'T1', gx: 4.8, gy: 2.1, rFinal: 0.45 });
+        mappedRois.push({ name: 'M1', gx: 4.0, gy: 3.8, rFinal: 0.45 });
+        mappedRois.push({ name: 'M2', gx: 5.1, gy: 3.8, rFinal: 0.45 });
+      }
     } else {
-      mappedRois.push({ name: 'T1', gx: isCoarse ? 4.8 : 37.0, gy: isCoarse ? 2.1 : 19.0 });
-      mappedRois.push({ name: 'M1', gx: isCoarse ? 4.0 : 39.0, gy: isCoarse ? 3.8 : 41.0 });
-      mappedRois.push({ name: 'M2', gx: isCoarse ? 5.1 : 26.0, gy: isCoarse ? 3.8 : 39.0 });
+      if (isRightFoot) {
+        mappedRois.push({ name: 'T1', gx: 0.54 * nCols, gy: 0.17 * nRows, rFinal: 4.5 });
+        mappedRois.push({ name: 'M1', gx: 0.61 * nCols, gy: 0.33 * nRows, rFinal: 4.5 });
+        mappedRois.push({ name: 'M2', gx: 0.39 * nCols, gy: 0.34 * nRows, rFinal: 4.5 });
+      } else {
+        mappedRois.push({ name: 'T1', gx: 0.46 * nCols, gy: 0.17 * nRows, rFinal: 4.5 });
+        mappedRois.push({ name: 'M1', gx: 0.39 * nCols, gy: 0.33 * nRows, rFinal: 4.5 });
+        mappedRois.push({ name: 'M2', gx: 0.61 * nCols, gy: 0.34 * nRows, rFinal: 4.5 });
+      }
     }
   }
 
-  // Compute Metrics Table
+  // Compute Metrics Table (with 9x9 Local Patch mean)
   const metricsRows = [
-    'ROI,Grid_X,Grid_Y,PPP_Peak_Value,PPG_Gradient_Mag,PGA_Angle_Deg'
+    'ROI,Grid_X,Grid_Y,ROI_Radius_Grid,PPP_Peak_Value,PPP_Mean_9x9,PPG_Gradient_Mag,PGA_Angle_Deg'
   ];
   const metricsData = [];
 
   for (const m of mappedRois) {
     const ix = Math.max(0, Math.min(nCols - 1, Math.round(m.gx) - 1));
     const iy = Math.max(0, Math.min(nRows - 1, Math.round(m.gy) - 1));
+
+    // 9x9 Local Patch statistics
+    let sum9x9 = 0, count9x9 = 0;
+    for (let dr = -4; dr <= 4; dr++) {
+      for (let dc = -4; dc <= 4; dc++) {
+        const rr = iy + dr, cc = ix + dc;
+        if (rr >= 0 && rr < nRows && cc >= 0 && cc < nCols) {
+          sum9x9 += gridDense[rr][cc];
+          count9x9++;
+        }
+      }
+    }
+    const mean9x9 = count9x9 > 0 ? sum9x9 / count9x9 : gridDense[iy][ix];
 
     let ppp = gridDense[iy][ix];
     const rScan = isCoarse ? 1 : 3;
@@ -2332,12 +2348,14 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     const ppg = Math.sqrt(gxVal * gxVal + gyVal * gyVal);
     const pga = (Math.atan2(gyVal, gxVal) * 180.0) / Math.PI;
 
-    metricsRows.push(`${m.name},${m.gx.toFixed(1)},${m.gy.toFixed(1)},${ppp.toFixed(2)},${ppg.toFixed(3)},${pga.toFixed(1)}`);
+    metricsRows.push(`${m.name},${m.gx.toFixed(1)},${m.gy.toFixed(1)},${m.rFinal.toFixed(1)},${ppp.toFixed(2)},${mean9x9.toFixed(2)},${ppg.toFixed(3)},${pga.toFixed(1)}`);
     metricsData.push({
       roi: m.name,
       gx: m.gx,
       gy: m.gy,
+      roiRadius: m.rFinal.toFixed(1),
       ppp: ppp.toFixed(2),
+      pppMean9x9: mean9x9.toFixed(2),
       ppg: ppg.toFixed(3),
       pga: pga.toFixed(1)
     });
