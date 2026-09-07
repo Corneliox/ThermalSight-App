@@ -2090,13 +2090,11 @@ export function generateThermalDirectionSvg(labelName, series, theme = 'dark') {
  * builds 104x54 dense mesh, computes PPP, PPG, PGA metrics, and renders 2-panel figure:
  * (A) PPP with FLIR White-Hot palette, and (B) PPG & PGA with quiver vector flow.
  */
-export async function generatePlantarPaperFig1Package(results, W = 320, H = 240, rois = [], labelDefs = [], pxPerCm = 10.0, stem = 'sample') {
+export async function generatePlantarPaperFig1Package(results, W = 320, H = 240, rois = [], labelDefs = [], pxPerCm = 10.0, stem = 'sample', gridMode = '9x9') {
   const temp = results?.raw?.tempMatrix;
   if (!temp || !Array.isArray(temp) || temp.length === 0) return null;
 
   // 1. Determine Foot Side based on user label locations
-  // Screen Left (x < W/2) = Patient's Right Foot in camera plantar view!
-  // Screen Right (x >= W/2) = Patient's Left Foot!
   const validRois = (rois || []).filter(r => r && (r.cx !== undefined || (r.points && r.points.length > 0)));
   let avgX = W / 4;
   if (validRois.length > 0) {
@@ -2106,7 +2104,7 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     }, 0) / validRois.length;
   }
 
-  // Inter-foot valley
+  // Inter-foot thermal valley detection
   const colAverages = [];
   for (let c = 0; c < W; c++) {
     let sum = 0;
@@ -2158,23 +2156,69 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
 
   const cropW = Math.max(1, xmax - xmin + 1);
   const cropH = Math.max(1, ymax - ymin + 1);
+  const mode = String(gridMode || '9x9').toLowerCase().trim();
 
-  // Resample to 104 rows x 54 cols
-  const nRows = 104;
-  const nCols = 54;
+  let nRows = 9, nCols = 9, qStep = 1, radiusGrid = 0.45;
+  let padTop = 0, padLeft = 0, maxDim = Math.max(cropW, cropH);
+  let panelW = 760, panelH = 760;
+  let canvasH = 1200;
+  let titleA = '(A)\n\nPPP (9x9 Default)';
+  let titleB = '(B)\n\nPPG & PGA (Per-Pixel Arrows)';
+  let isCoarse = true;
+
+  if (mode === '9col' || mode === 'proportional') {
+    nCols = 9;
+    nRows = Math.max(5, Math.round(nCols * (cropH / cropW)));
+    panelH = Math.round(panelW * (nRows / nCols));
+    canvasH = Math.max(1200, 260 + panelH + 150);
+    titleA = `(A)\n\nPPP (9x${nRows} Proportional)`;
+    titleB = '(B)\n\nPPG & PGA (Per-Pixel Arrows)';
+    isCoarse = true;
+  } else if (mode === 'paper') {
+    nRows = 104;
+    nCols = 54;
+    qStep = 4;
+    radiusGrid = 3.6;
+    panelH = 1900;
+    canvasH = 2400;
+    titleA = '(A)\n\nPPP';
+    titleB = '(B)\n\nPPG & PGA';
+    isCoarse = false;
+  } else {
+    // Strict 9x9 default with aspect ratio locked via square padding
+    padTop = Math.floor((maxDim - cropH) / 2);
+    padLeft = Math.floor((maxDim - cropW) / 2);
+    nRows = 9;
+    nCols = 9;
+    panelH = 760;
+    canvasH = 1200;
+    isCoarse = true;
+  }
+
   const gridDense = [];
   for (let r = 0; r < nRows; r++) {
     gridDense[r] = new Float32Array(nCols);
-    const srcY = ymin + (r / (nRows - 1)) * (cropH - 1);
-    const y0 = Math.floor(srcY);
-    const y1 = Math.min(H - 1, y0 + 1);
-    const wy = srcY - y0;
-
     for (let c = 0; c < nCols; c++) {
-      const srcX = xmin + (c / (nCols - 1)) * (cropW - 1);
+      let srcX, srcY;
+      if (mode === '9x9' || mode === 'default') {
+        srcX = (xmin - padLeft) + (c / (nCols - 1)) * (maxDim - 1);
+        srcY = (ymin - padTop) + (r / (nRows - 1)) * (maxDim - 1);
+      } else {
+        srcX = xmin + (c / (nCols - 1)) * (cropW - 1);
+        srcY = ymin + (r / (nRows - 1)) * (cropH - 1);
+      }
+
+      if (srcX < 0 || srcX >= W || srcY < 0 || srcY >= H) {
+        gridDense[r][c] = 23.5;
+        continue;
+      }
+
       const x0 = Math.floor(srcX);
       const x1 = Math.min(W - 1, x0 + 1);
       const wx = srcX - x0;
+      const y0 = Math.floor(srcY);
+      const y1 = Math.min(H - 1, y0 + 1);
+      const wy = srcY - y0;
 
       const v00 = temp[y0][x0];
       const v01 = temp[y0][x1];
@@ -2196,12 +2240,12 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     gradMag[r] = new Float32Array(nCols);
   }
 
-  // 3x3 box smoothing
+  const boxK = isCoarse ? 1 : 2;
   for (let r = 0; r < nRows; r++) {
     for (let c = 0; c < nCols; c++) {
       let sum = 0, n = 0;
-      for (let dr = -2; dr <= 2; dr++) {
-        for (let dc = -2; dc <= 2; dc++) {
+      for (let dr = -boxK; dr <= boxK; dr++) {
+        for (let dc = -boxK; dc <= boxK; dc++) {
           const rr = r + dr, cc = c + dc;
           if (rr >= 0 && rr < nRows && cc >= 0 && cc < nCols) {
             sum += gridDense[rr][cc];
@@ -2227,34 +2271,40 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     }
   }
 
-  // Map user ROIs onto the 104 x 54 grid
+  // Map user ROIs onto the grid
   const mappedRois = [];
-  const radiusGrid = 3.6;
   for (const r of validRois) {
     const name = (r.labelName || 'ROI').toUpperCase();
     const rcx = (r.cx !== undefined ? r.cx : (r.points[0]?.x || 0)) - xmin;
     const rcy = (r.cy !== undefined ? r.cy : (r.points[0]?.y || 0)) - ymin;
-    let gx = (rcx / cropW) * nCols + 1;
-    let gy = (rcy / cropH) * nRows + 1;
-    gx = Math.max(4.0, Math.min(nCols - 4.0, gx));
-    gy = Math.max(4.0, Math.min(nRows - 4.0, gy));
+    let gx, gy;
+    if (mode === '9x9' || mode === 'default') {
+      gx = ((rcx + padLeft) / maxDim) * nCols + 0.5;
+      gy = ((rcy + padTop) / maxDim) * nRows + 0.5;
+      gx = Math.max(0.8, Math.min(nCols + 0.2, gx));
+      gy = Math.max(0.8, Math.min(nRows + 0.2, gy));
+    } else {
+      gx = (rcx / cropW) * nCols + 1;
+      gy = (rcy / cropH) * nRows + 1;
+      gx = Math.max(isCoarse ? 0.8 : 4.0, Math.min(isCoarse ? nCols + 0.2 : nCols - 4.0, gx));
+      gy = Math.max(isCoarse ? 0.8 : 4.0, Math.min(isCoarse ? nRows + 0.2 : nRows - 4.0, gy));
+    }
     mappedRois.push({ name, gx, gy });
   }
 
-  // Strictly follow user labels. Fallback to T1, M1, M3 only if 0 labels placed.
   if (mappedRois.length === 0) {
     if (isRightFoot) {
-      mappedRois.push({ name: 'T1', gx: 17.0, gy: 22.0 });
-      mappedRois.push({ name: 'M1', gx: 14.0, gy: 40.0 });
-      mappedRois.push({ name: 'M3', gx: 27.0, gy: 38.0 });
+      mappedRois.push({ name: 'T1', gx: isCoarse ? 5.2 : 17.0, gy: isCoarse ? 2.1 : 22.0 });
+      mappedRois.push({ name: 'M1', gx: isCoarse ? 6.0 : 14.0, gy: isCoarse ? 3.8 : 40.0 });
+      mappedRois.push({ name: 'M2', gx: isCoarse ? 4.9 : 27.0, gy: isCoarse ? 3.8 : 38.0 });
     } else {
-      mappedRois.push({ name: 'T1', gx: 37.0, gy: 19.0 });
-      mappedRois.push({ name: 'M1', gx: 39.0, gy: 41.0 });
-      mappedRois.push({ name: 'M3', gx: 26.0, gy: 39.0 });
+      mappedRois.push({ name: 'T1', gx: isCoarse ? 4.8 : 37.0, gy: isCoarse ? 2.1 : 19.0 });
+      mappedRois.push({ name: 'M1', gx: isCoarse ? 4.0 : 39.0, gy: isCoarse ? 3.8 : 41.0 });
+      mappedRois.push({ name: 'M2', gx: isCoarse ? 5.1 : 26.0, gy: isCoarse ? 3.8 : 39.0 });
     }
   }
 
-  // Compute Metrics Table: ROI, Grid_X, Grid_Y, PPP, PPG, PGA
+  // Compute Metrics Table
   const metricsRows = [
     'ROI,Grid_X,Grid_Y,PPP_Peak_Value,PPG_Gradient_Mag,PGA_Angle_Deg'
   ];
@@ -2264,13 +2314,13 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     const ix = Math.max(0, Math.min(nCols - 1, Math.round(m.gx) - 1));
     const iy = Math.max(0, Math.min(nRows - 1, Math.round(m.gy) - 1));
 
-    // PPP: peak temperature around ROI disk
     let ppp = gridDense[iy][ix];
-    for (let dr = -3; dr <= 3; dr++) {
-      for (let dc = -3; dc <= 3; dc++) {
+    const rScan = isCoarse ? 1 : 3;
+    for (let dr = -rScan; dr <= rScan; dr++) {
+      for (let dc = -rScan; dc <= rScan; dc++) {
         const rr = iy + dr, cc = ix + dc;
         if (rr >= 0 && rr < nRows && cc >= 0 && cc < nCols) {
-          if (dr*dr + dc*dc <= 9 && gridDense[rr][cc] > ppp) {
+          if (dr*dr + dc*dc <= rScan*rScan && gridDense[rr][cc] > ppp) {
             ppp = gridDense[rr][cc];
           }
         }
@@ -2295,35 +2345,31 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
 
   const metricsCsv = metricsRows.join('\n');
 
-  // Render 2-Panel Figure Canvas (High-res 1800 x 2400)
+  // Render 2-Panel Figure Canvas
   const canvas = document.createElement('canvas');
   canvas.width = 1800;
-  canvas.height = 2400;
+  canvas.height = canvasH;
   const ctx = canvas.getContext('2d');
 
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  const panelW = 760;
-  const panelH = 1900;
   const panelTop = 260;
   const panelA_left = 100;
   const panelB_left = 940;
 
-  // Title Headers matching paper Figure 1
   ctx.fillStyle = '#000000';
   ctx.font = 'bold 44px sans-serif';
   ctx.textAlign = 'center';
 
-  // Header (A) PPP
-  ctx.fillText('(A)', panelA_left + panelW / 2, 120);
-  ctx.fillText('PPP', panelA_left + panelW / 2, 190);
+  const tALines = titleA.split('\n\n');
+  ctx.fillText(tALines[0], panelA_left + panelW / 2, 120);
+  ctx.fillText(tALines[1] || '', panelA_left + panelW / 2, 190);
 
-  // Header (B) PPG & PGA
-  ctx.fillText('(B)', panelB_left + panelW / 2, 120);
-  ctx.fillText('PPG & PGA', panelB_left + panelW / 2, 190);
+  const tBLines = titleB.split('\n\n');
+  ctx.fillText(tBLines[0], panelB_left + panelW / 2, 120);
+  ctx.fillText(tBLines[1] || '', panelB_left + panelW / 2, 190);
 
-  // White-Hot Color Interpolation Helper
   const getWhiteHotRgb = (val, minV = 23.5, maxV = 37.5) => {
     const t = Math.max(0, Math.min(1, (val - minV) / (maxV - minV || 1)));
     let r = 0, g = 0, b = 0;
@@ -2359,7 +2405,7 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     return `rgb(${r},${g},${b})`;
   };
 
-  // ──── PANEL A: PPP (Sensor Mesh with Cell Borders) ────
+  // ──── PANEL A: PPP ────
   ctx.fillStyle = '#000000';
   ctx.fillRect(panelA_left, panelTop, panelW, panelH);
 
@@ -2375,53 +2421,52 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
   for (let r = 0; r < nRows; r++) {
     for (let c = 0; c < nCols; c++) {
       const tempVal = gridDense[r][c];
-      if (tempVal > 27.5) {
+      if (tempVal > (isCoarse ? 27.0 : 27.5)) {
         ctx.fillStyle = getWhiteHotRgb(tempVal, 23.5, maxT);
         ctx.fillRect(panelA_left + c * cellW, panelTop + r * cellH, cellW, cellH);
       }
-      ctx.strokeStyle = '#151515';
-      ctx.lineWidth = 0.5;
+      ctx.strokeStyle = isCoarse ? '#222222' : '#151515';
+      ctx.lineWidth = isCoarse ? 1.0 : 0.5;
       ctx.strokeRect(panelA_left + c * cellW, panelTop + r * cellH, cellW, cellH);
     }
   }
 
-  // Panel A Outer Border
   ctx.strokeStyle = '#222222';
   ctx.lineWidth = 2;
   ctx.strokeRect(panelA_left, panelTop, panelW, panelH);
 
   // Panel A ROI concentric rings
   for (const m of mappedRois) {
-    const rx = panelA_left + (m.gx - 1) * cellW;
-    const ry = panelTop + (m.gy - 1) * cellH;
-    const radPx = radiusGrid * cellW;
+    const rx = panelA_left + (m.gx - 0.5) * cellW;
+    const ry = panelTop + (m.gy - 0.5) * cellH;
+    const radPx = Math.max(14, radiusGrid * cellW);
 
     ctx.strokeStyle = '#00e5ff';
-    ctx.lineWidth = 5;
+    ctx.lineWidth = isCoarse ? 3 : 5;
     ctx.beginPath();
     ctx.arc(rx, ry, radPx, 0, Math.PI * 2);
     ctx.stroke();
 
     ctx.strokeStyle = '#ff0000';
-    ctx.lineWidth = 3;
+    ctx.lineWidth = isCoarse ? 2 : 3;
     ctx.beginPath();
     ctx.arc(rx, ry, radPx * 0.82, 0, Math.PI * 2);
     ctx.stroke();
 
     ctx.fillStyle = '#ffffff';
     ctx.beginPath();
-    ctx.arc(rx, ry, 6, 0, Math.PI * 2);
+    ctx.arc(rx, ry, isCoarse ? 4 : 6, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.fillStyle = 'rgba(0,0,0,0.65)';
-    ctx.fillRect(rx - 32, ry + (m.gy < 50 ? 30 : -55), 64, 30);
+    ctx.fillRect(rx - 28, ry + (m.gy < nRows * 0.55 ? 24 : -45), 56, 26);
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 22px sans-serif';
+    ctx.font = 'bold 20px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(m.name, rx, ry + (m.gy < 50 ? 53 : -33));
+    ctx.fillText(m.name, rx, ry + (m.gy < nRows * 0.55 ? 44 : -25));
   }
 
-  // ──── PANEL B: PPG & PGA (Contour lines + Quiver Arrows) ────
+  // ──── PANEL B: PPG & PGA ────
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(panelB_left, panelTop, panelW, panelH);
   ctx.strokeStyle = '#222222';
@@ -2429,11 +2474,11 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
   ctx.strokeRect(panelB_left, panelTop, panelW, panelH);
 
   // Isotherm Contour bands
-  const numLevels = 16;
+  const numLevels = isCoarse ? 12 : 16;
   for (let l = 0; l < numLevels; l++) {
     const lvlVal = 27.5 + (l / (numLevels - 1)) * (maxT - 27.5);
     ctx.strokeStyle = getWhiteHotRgb(lvlVal, 23.5, maxT);
-    ctx.lineWidth = 2;
+    ctx.lineWidth = isCoarse ? 1.5 : 2;
     ctx.beginPath();
 
     for (let r = 0; r < nRows - 1; r++) {
@@ -2451,23 +2496,41 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     ctx.stroke();
   }
 
+  // Grid lines on Panel B for coarse modes
+  if (isCoarse) {
+    ctx.strokeStyle = '#f0f0f0';
+    ctx.lineWidth = 0.8;
+    for (let c = 0; c <= nCols; c++) {
+      ctx.beginPath();
+      ctx.moveTo(panelB_left + c * cellW, panelTop);
+      ctx.lineTo(panelB_left + c * cellW, panelTop + panelH);
+      ctx.stroke();
+    }
+    for (let r = 0; r <= nRows; r++) {
+      ctx.beginPath();
+      ctx.moveTo(panelB_left, panelTop + r * cellH);
+      ctx.lineTo(panelB_left + panelW, panelTop + r * cellH);
+      ctx.stroke();
+    }
+  }
+
   // Quiver Vector Arrows flowing towards Heat Peak
-  const qStep = 4;
   ctx.fillStyle = '#0b4db7';
   ctx.strokeStyle = '#0b4db7';
-  ctx.lineWidth = 2.5;
+  ctx.lineWidth = isCoarse ? 2.0 : 2.5;
 
-  for (let r = 2; r < nRows - 2; r += qStep) {
-    for (let c = 2; c < nCols - 2; c += qStep) {
-      if (gridDense[r][c] > 28.0 && gradMag[r][c] > 0.04) {
+  for (let r = (isCoarse ? 0 : 2); r < nRows - (isCoarse ? 0 : 2); r += qStep) {
+    for (let c = (isCoarse ? 0 : 2); c < nCols - (isCoarse ? 0 : 2); c += qStep) {
+      if (gridDense[r][c] > (isCoarse ? 27.0 : 28.0) && gradMag[r][c] > (isCoarse ? 0.02 : 0.04)) {
         const gx = sobelX[r][c];
         const gy = sobelY[r][c];
         const nrm = Math.sqrt(gx * gx + gy * gy) + 1e-6;
-        const uNorm = (gx / nrm) * cellW * 1.5;
-        const vNorm = (gy / nrm) * cellH * 1.5;
+        const arrowLen = isCoarse ? cellW * 0.45 : cellW * 1.5;
+        const uNorm = (gx / nrm) * arrowLen;
+        const vNorm = (gy / nrm) * arrowLen;
 
-        const x1 = panelB_left + c * cellW;
-        const y1 = panelTop + r * cellH;
+        const x1 = panelB_left + (c + 0.5) * cellW;
+        const y1 = panelTop + (r + 0.5) * cellH;
         const x2 = x1 + uNorm;
         const y2 = y1 + vNorm;
 
@@ -2478,7 +2541,7 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
 
         // Arrowhead
         const headAng = Math.atan2(vNorm, uNorm);
-        const hLen = 7;
+        const hLen = isCoarse ? 6 : 7;
         ctx.beginPath();
         ctx.moveTo(x2, y2);
         ctx.lineTo(x2 - hLen * Math.cos(headAng - Math.PI / 6), y2 - hLen * Math.sin(headAng - Math.PI / 6));
@@ -2491,18 +2554,18 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
 
   // Panel B ROI concentric rings
   for (const m of mappedRois) {
-    const rx = panelB_left + (m.gx - 1) * cellW;
-    const ry = panelTop + (m.gy - 1) * cellH;
-    const radPx = radiusGrid * cellW;
+    const rx = panelB_left + (m.gx - 0.5) * cellW;
+    const ry = panelTop + (m.gy - 0.5) * cellH;
+    const radPx = Math.max(14, radiusGrid * cellW);
 
     ctx.strokeStyle = '#ff0000';
-    ctx.lineWidth = 5;
+    ctx.lineWidth = isCoarse ? 3 : 5;
     ctx.beginPath();
     ctx.arc(rx, ry, radPx, 0, Math.PI * 2);
     ctx.stroke();
 
     ctx.setLineDash([4, 4]);
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = isCoarse ? 1.8 : 2.5;
     ctx.beginPath();
     ctx.arc(rx, ry, radPx * 0.82, 0, Math.PI * 2);
     ctx.stroke();
@@ -2510,13 +2573,13 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
 
     ctx.fillStyle = '#ff0000';
     ctx.beginPath();
-    ctx.arc(rx, ry, 6, 0, Math.PI * 2);
+    ctx.arc(rx, ry, isCoarse ? 4 : 6, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.fillStyle = '#000000';
-    ctx.font = 'bold 24px sans-serif';
+    ctx.font = 'bold 22px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(m.name, rx, ry + (m.gy < 50 ? 55 : -35));
+    ctx.fillText(m.name, rx, ry + (m.gy < nRows * 0.55 ? 44 : -25));
   }
 
   const fig1PngDataUrl = canvas.toDataURL('image/png');
@@ -2529,5 +2592,3 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     metricsData
   };
 }
-
-

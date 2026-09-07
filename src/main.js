@@ -365,9 +365,9 @@ ipcMain.handle('gradient-scene', async (_event, imagePath, rois, pxPerCm, output
 });
 
 // ── IPC: generate-plantar-fig1 ───────────────────────────────────────────────
-ipcMain.handle('generate-plantar-fig1', async (_event, imagePath, rois, outputDir) => {
+ipcMain.handle('generate-plantar-fig1', async (_event, imagePath, rois, outputDir, gridMode = '9x9') => {
   const roisJson = JSON.stringify(rois || []);
-  const res = await runPython('plantar_fig1', [imagePath, roisJson, outputDir]);
+  const res = await runPython('plantar_fig1', [imagePath, roisJson, outputDir, gridMode]);
   if (res && res.status === 'ok') {
     try {
       if (res.png_path && fs.existsSync(res.png_path)) {

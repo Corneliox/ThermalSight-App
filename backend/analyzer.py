@@ -1004,12 +1004,12 @@ def cmd_gradient_scene(image_path: str, rois_json_str: str, px_cm: float, out_di
     })
 
 
-def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str):
+def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid_mode_str: str = "9x9"):
     out_dir = Path(out_dir_str)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = Path(image_path).stem
 
-    log(f"PLANTAR_FIG1: loading {image_path}")
+    log(f"PLANTAR_FIG1: loading {image_path} (grid_mode={grid_mode_str})")
     temp = load_temperature(image_path)
     H, W = temp.shape
 
@@ -1050,13 +1050,110 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str):
         ymin, ymax, xmin, xmax = 0, H - 1, 0, foot_patch_raw.shape[1] - 1
         foot_crop = foot_patch_raw
 
-    n_rows, n_cols = 104, 54
-    grid_dense = cv2.resize(foot_crop, (n_cols, n_rows), interpolation=cv2.INTER_AREA)
-    foot_mask = grid_dense > 28.5
+    ch, cw = foot_crop.shape
+    aspect = max(0.1, float(cw) / max(1, ch))
+
+    # Configure Grid Geometry & Aspect Ratio Locking
+    mode = str(grid_mode_str).lower().strip()
+    if mode in ["9", "9x9", "default"]:
+        # Strict 9x9 Square Grid with Symmetric Padding (Zero stretching)
+        max_dim = max(ch, cw)
+        pad_top = (max_dim - ch) // 2
+        pad_bottom = max_dim - ch - pad_top
+        pad_left = (max_dim - cw) // 2
+        pad_right = max_dim - cw - pad_left
+        foot_proc = np.pad(foot_crop, ((pad_top, pad_bottom), (pad_left, pad_right)), mode='constant', constant_values=23.5)
+        n_rows, n_cols = 9, 9
+        grid_dense = cv2.resize(foot_proc, (n_cols, n_rows), interpolation=cv2.INTER_AREA)
+        step = 1  # Per-pixel arrow at EVERY intersection
+        radius_grid = 0.45
+        label_fontsize = 12
+        fig_size = (9.5, 5.5)
+        title_a = "(A)\n\nPPP (9x9 Default)"
+        title_b = "(B)\n\nPPG & PGA (Per-Pixel Arrows)"
+        coord_scale_x = max_dim
+        coord_scale_y = max_dim
+        coord_offset_x = pad_left
+        coord_offset_y = pad_top
+        x_min_bound, x_max_bound = 0.5, n_cols + 0.5
+        y_min_bound, y_max_bound = n_rows + 0.5, 0.5
+        arrow_scale = 0.45
+        arrow_width = 0.0075
+        blur_kernel = (3, 3)
+        blur_sigma = 0.8
+        arrow_thresh = 0.02
+    elif mode in ["9col", "prop", "proportional"]:
+        # 9 Columns with Proportional Rows (Aspect-preserved rectangular grid)
+        n_cols = 9
+        n_rows = max(5, int(round(n_cols / aspect)))
+        grid_dense = cv2.resize(foot_crop, (n_cols, n_rows), interpolation=cv2.INTER_AREA)
+        step = 1
+        radius_grid = 0.45
+        label_fontsize = 12
+        fig_h = max(5.5, min(12.0, 9.5 * (n_rows / n_cols) * 0.6))
+        fig_size = (9.5, fig_h)
+        title_a = f"(A)\n\nPPP (9x{n_rows} Proportional)"
+        title_b = "(B)\n\nPPG & PGA (Per-Pixel Arrows)"
+        coord_scale_x = cw
+        coord_scale_y = ch
+        coord_offset_x = 0
+        coord_offset_y = 0
+        x_min_bound, x_max_bound = 0.5, n_cols + 0.5
+        y_min_bound, y_max_bound = n_rows + 0.5, 0.5
+        arrow_scale = 0.45
+        arrow_width = 0.0075
+        blur_kernel = (3, 3)
+        blur_sigma = 0.8
+        arrow_thresh = 0.02
+    elif mode in ["paper_aspect", "paper_locked"]:
+        # High-res Paper Mode with Aspect Ratio Locked
+        n_rows = 104
+        n_cols = max(20, int(round(n_rows * aspect)))
+        grid_dense = cv2.resize(foot_crop, (n_cols, n_rows), interpolation=cv2.INTER_AREA)
+        step = 4
+        radius_grid = 3.6
+        label_fontsize = 16
+        fig_size = (8.5, 11)
+        title_a = "(A)\n\nPPP (Aspect-Locked)"
+        title_b = "(B)\n\nPPG & PGA"
+        coord_scale_x = cw
+        coord_scale_y = ch
+        coord_offset_x = 0
+        coord_offset_y = 0
+        x_min_bound, x_max_bound = 0.5, n_cols + 0.5
+        y_min_bound, y_max_bound = n_rows + 0.5, 0.5
+        arrow_scale = 1.5
+        arrow_width = 0.0038
+        blur_kernel = (7, 7)
+        blur_sigma = 1.8
+        arrow_thresh = 0.04
+    else:
+        # Legacy Paper 104x54 mode
+        n_rows, n_cols = 104, 54
+        grid_dense = cv2.resize(foot_crop, (n_cols, n_rows), interpolation=cv2.INTER_AREA)
+        step = 4
+        radius_grid = 3.6
+        label_fontsize = 16
+        fig_size = (8.5, 11)
+        title_a = "(A)\n\nPPP"
+        title_b = "(B)\n\nPPG & PGA"
+        coord_scale_x = cw
+        coord_scale_y = ch
+        coord_offset_x = 0
+        coord_offset_y = 0
+        x_min_bound, x_max_bound = 1.5, n_cols + 0.5
+        y_min_bound, y_max_bound = n_rows + 0.5, 1.5
+        arrow_scale = 1.5
+        arrow_width = 0.0038
+        blur_kernel = (7, 7)
+        blur_sigma = 1.8
+        arrow_thresh = 0.04
+
+    foot_mask = grid_dense > (27.5 if n_rows <= 16 else 28.5)
     grid_disp = grid_dense.copy()
     grid_disp[~foot_mask] = 23.5
 
-    grid_smooth = cv2.GaussianBlur(grid_dense, (7, 7), 1.8)
+    grid_smooth = cv2.GaussianBlur(grid_dense, blur_kernel, blur_sigma)
     sobel_x = cv2.Sobel(grid_smooth, cv2.CV_64F, 1, 0, ksize=3) / 8.0
     sobel_y = cv2.Sobel(grid_smooth, cv2.CV_64F, 0, 1, ksize=3) / 8.0
     grad_mag = np.sqrt(sobel_x**2 + sobel_y**2)
@@ -1064,28 +1161,24 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str):
     grid_contour = grid_smooth.copy()
     grid_contour[~foot_mask] = np.nan
 
-    crop_w = max(1, xmax - xmin + 1)
-    crop_h = max(1, ymax - ymin + 1)
     mapped_rois = []
-    radius_grid = 3.6
-
     for r in rois:
         if not isinstance(r, dict):
             continue
         name = str(r.get("labelName", "ROI")).upper()
-        rcx = float(r.get("cx", 0)) - offset_x - xmin
-        rcy = float(r.get("cy", 0)) - ymin
-        gx = (rcx / crop_w) * n_cols + 1
-        gy = (rcy / crop_h) * n_rows + 1
-        gx = float(np.clip(gx, 4.0, n_cols - 4.0))
-        gy = float(np.clip(gy, 4.0, n_rows - 4.0))
+        rcx = float(r.get("cx", 0)) - offset_x - xmin + coord_offset_x
+        rcy = float(r.get("cy", 0)) - ymin + coord_offset_y
+        gx = (rcx / coord_scale_x) * n_cols + (0.5 if n_rows <= 16 else 1.0)
+        gy = (rcy / coord_scale_y) * n_rows + (0.5 if n_rows <= 16 else 1.0)
+        gx = float(np.clip(gx, 0.8 if n_rows <= 16 else 4.0, n_cols + 0.2 if n_rows <= 16 else n_cols - 4.0))
+        gy = float(np.clip(gy, 0.8 if n_rows <= 16 else 4.0, n_rows + 0.2 if n_rows <= 16 else n_rows - 4.0))
         mapped_rois.append((name, gx, gy))
 
     if not mapped_rois:
         if foot_side == "RightFoot":
-            mapped_rois = [("T1", 17.0, 22.0), ("M1", 14.0, 40.0), ("M3", 27.0, 38.0)]
+            mapped_rois = [("T1", 5.2, 2.1), ("M1", 6.0, 3.8), ("M2", 4.9, 3.8)] if n_rows <= 16 else [("T1", 17.0, 22.0), ("M1", 14.0, 40.0), ("M3", 27.0, 38.0)]
         else:
-            mapped_rois = [("T1", 37.0, 19.0), ("M1", 39.0, 41.0), ("M3", 26.0, 39.0)]
+            mapped_rois = [("T1", 4.8, 2.1), ("M1", 4.0, 3.8), ("M2", 5.1, 3.8)] if n_rows <= 16 else [("T1", 37.0, 19.0), ("M1", 39.0, 41.0), ("M3", 26.0, 39.0)]
 
     # White-Hot Colormap
     cmap_thermal = LinearSegmentedColormap.from_list("flir_whitehot", [
@@ -1094,73 +1187,81 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str):
         (0.85, "#fcb800"), (0.93, "#ffea70"), (1.00, "#ffffff"),
     ])
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8.5, 11), dpi=220, facecolor="white")
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=fig_size, dpi=220, facecolor="white")
     ax1.set_facecolor("#000000")
     x_edges = np.arange(0.5, n_cols + 1.5, 1)
     y_edges = np.arange(0.5, n_rows + 1.5, 1)
     X_e, Y_e = np.meshgrid(x_edges, y_edges)
 
     ax1.pcolormesh(X_e, Y_e, grid_disp, cmap=cmap_thermal, vmin=23.5, vmax=np.max(grid_dense),
-                   edgecolors="#111111", linewidth=0.20, shading="flat")
-    ax1.set_xlim(1.5, n_cols + 0.5)
-    ax1.set_ylim(n_rows + 0.5, 1.5)
+                   edgecolors="#222222" if n_rows <= 16 else "#111111",
+                   linewidth=0.6 if n_rows <= 16 else 0.20, shading="flat")
+    ax1.set_xlim(x_min_bound, x_max_bound)
+    ax1.set_ylim(y_min_bound, y_max_bound)
     ax1.set_aspect("equal")
     ax1.tick_params(colors="black", labelsize=9)
 
     for name, gx, gy in mapped_rois:
-        c_out = plt.Circle((gx, gy), radius_grid, edgecolor="#00e5ff", facecolor="none", lw=2.0, zorder=10)
-        c_in = plt.Circle((gx, gy), radius_grid * 0.82, edgecolor="red", facecolor="none", lw=1.3, zorder=11)
+        c_out = plt.Circle((gx, gy), radius_grid, edgecolor="#00e5ff", facecolor="none", lw=1.8 if n_rows <= 16 else 2.0, zorder=10)
+        c_in = plt.Circle((gx, gy), radius_grid * 0.82, edgecolor="red", facecolor="none", lw=1.2 if n_rows <= 16 else 1.3, zorder=11)
         ax1.add_patch(c_out)
         ax1.add_patch(c_in)
-        ax1.plot(gx, gy, "o", color="red", markeredgecolor="white", markeredgewidth=1.0, markersize=5, zorder=12)
-        ty = 7.5 if gy < 50 else -6.5
-        ax1.text(gx, gy + ty, name, color="white", fontsize=16, fontweight="bold",
+        ax1.plot(gx, gy, "o", color="red", markeredgecolor="white", markeredgewidth=0.8, markersize=4.5, zorder=12)
+        ty = (0.75 if gy < n_rows * 0.55 else -0.75) if n_rows <= 16 else (7.5 if gy < 50 else -6.5)
+        ax1.text(gx, gy + ty, name, color="white", fontsize=label_fontsize, fontweight="bold",
                  ha="center", va="center", zorder=15,
                  bbox=dict(boxstyle="round,pad=0.15", facecolor="#000000", alpha=0.6, edgecolor="none"))
 
-    ax1.set_title("(A)\n\nPPP", fontsize=18, fontweight="bold", pad=12)
+    ax1.set_title(title_a, fontsize=15, fontweight="bold", pad=12)
 
     ax2.set_facecolor("white")
-    levels = np.linspace(np.nanmin(grid_contour), np.nanmax(grid_contour), 16)
+    valid_contour = grid_contour[~np.isnan(grid_contour)]
+    cmin = np.min(valid_contour) if len(valid_contour) > 0 else 24.0
+    cmax = np.max(valid_contour) if len(valid_contour) > 0 else 36.0
+    levels = np.linspace(cmin, cmax, 12 if n_rows <= 16 else 16)
     ax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), grid_contour,
                 levels=levels, cmap=cmap_thermal, linewidths=1.0, alpha=0.90)
 
-    foot_outline = (foot_mask).astype(np.uint8)
-    ax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), foot_outline,
-                levels=[0.5], colors="#777799", linewidths=0.7, linestyles="--")
+    if n_rows <= 16:
+        for x in x_edges: ax2.axvline(x, color='#f0f0f0', lw=0.6, zorder=1)
+        for y in y_edges: ax2.axhline(y, color='#f0f0f0', lw=0.6, zorder=1)
+    else:
+        foot_outline = (foot_mask).astype(np.uint8)
+        ax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), foot_outline,
+                    levels=[0.5], colors="#777799", linewidths=0.7, linestyles="--")
 
-    step = 4
+    # Quiver Vector Field (step=1 for 9x9 / 9col)
     y_q, x_q = np.mgrid[1:n_rows+1:step, 1:n_cols+1:step]
     u = sobel_x[::step, ::step]
     v = sobel_y[::step, ::step]
     m = grad_mag[::step, ::step]
-    mask_q = (foot_mask[::step, ::step]) & (m > 0.04)
+    mask_q = (foot_mask[::step, ::step]) & (m > arrow_thresh)
 
     nrm = np.sqrt(u**2 + v**2) + 1e-6
-    u_n = u / nrm * 1.5
-    v_n = v / nrm * 1.5
+    u_n = u / nrm * arrow_scale
+    v_n = v / nrm * arrow_scale
 
     ax2.quiver(x_q[mask_q], y_q[mask_q], u_n[mask_q], v_n[mask_q],
                color="#0b4db7", angles="xy", scale_units="xy", scale=1.0,
-               width=0.0038, headwidth=3.4, headlength=4.2, zorder=8)
+               width=arrow_width, headwidth=4.0, headlength=4.8, zorder=8)
 
-    ax2.set_xlim(1.5, n_cols + 0.5)
-    ax2.set_ylim(n_rows + 0.5, 1.5)
+    ax2.set_xlim(x_min_bound, x_max_bound)
+    ax2.set_ylim(y_min_bound, y_max_bound)
     ax2.set_aspect("equal")
     ax2.tick_params(colors="black", labelsize=9)
 
     metrics = []
     for name, gx, gy in mapped_rois:
-        c_out = plt.Circle((gx, gy), radius_grid, edgecolor="red", facecolor="none", lw=2.0, zorder=10)
-        c_in = plt.Circle((gx, gy), radius_grid * 0.82, edgecolor="red", facecolor="none", lw=1.2, linestyle=":", zorder=11)
+        c_out = plt.Circle((gx, gy), radius_grid, edgecolor="red", facecolor="none", lw=1.8 if n_rows <= 16 else 2.0, zorder=10)
+        c_in = plt.Circle((gx, gy), radius_grid * 0.82, edgecolor="red", facecolor="none", lw=1.0, linestyle=":", zorder=11)
         ax2.add_patch(c_out)
         ax2.add_patch(c_in)
         ax2.plot(gx, gy, "o", color="red", markersize=4.5, zorder=12)
-        ty = 7.5 if gy < 50 else -6.5
-        ax2.text(gx, gy + ty, name, color="black", fontsize=16, fontweight="bold", ha="center", va="center", zorder=15)
+        ty = (0.75 if gy < n_rows * 0.55 else -0.75) if n_rows <= 16 else (7.5 if gy < 50 else -6.5)
+        ax2.text(gx, gy + ty, name, color="black", fontsize=label_fontsize, fontweight="bold", ha="center", va="center", zorder=15)
 
-        ix = int(round(gx)) - 1
-        iy = int(round(gy)) - 1
+        ix = int(np.clip(round(gx) - 1, 0, n_cols - 1))
+        iy = int(np.clip(round(gy) - 1, 0, n_rows - 1))
         val_ppp = float(grid_dense[iy, ix])
         gx_val = float(sobel_x[iy, ix])
         gy_val = float(sobel_y[iy, ix])
@@ -1175,7 +1276,7 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str):
             "PGA_Angle_Deg": round(val_pga, 1)
         })
 
-    ax2.set_title("(B)\n\nPPG & PGA", fontsize=18, fontweight="bold", pad=12)
+    ax2.set_title(title_b, fontsize=15, fontweight="bold", pad=12)
     plt.tight_layout()
 
     out_png = out_dir / f"{stem}_{foot_side}_whitehot.png"
@@ -1183,15 +1284,30 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str):
     fig.savefig(str(out_png), bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
+    # Also save tagged experimental files
+    tag = "9x9" if mode in ["9", "9x9", "default"] else mode
+    out_png_tag = out_dir / f"{stem}_{foot_side}_whitehot_{tag}.png"
+    out_csv_tag = out_dir / f"{stem}_{foot_side}_metrics_{tag}.csv"
+    import shutil
+    try:
+        shutil.copyfile(str(out_png), str(out_png_tag))
+    except Exception:
+        pass
+
     with open(str(out_csv), "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["ROI", "Grid_X", "Grid_Y", "PPP_Peak_Value", "PPG_Gradient_Mag", "PGA_Angle_Deg"])
         writer.writeheader()
         writer.writerows(metrics)
+    try:
+        shutil.copyfile(str(out_csv), str(out_csv_tag))
+    except Exception:
+        pass
 
     emit({
         "status": "ok",
         "stem": stem,
         "foot_side": foot_side,
+        "grid_mode": tag,
         "png_path": str(out_png),
         "csv_path": str(out_csv)
     })
@@ -1248,11 +1364,13 @@ if __name__ == "__main__":
 
     elif command == "plantar_fig1":
         if len(sys.argv) < 5:
-            fail("Usage: analyzer.py plantar_fig1 <imagePath> <roisJson> <outputDir>")
+            fail("Usage: analyzer.py plantar_fig1 <imagePath> <roisJson> <outputDir> [gridMode]")
+        grid_mode = sys.argv[5] if len(sys.argv) >= 6 else "9x9"
         cmd_plantar_fig1(
             image_path    = sys.argv[2],
             rois_json_str = sys.argv[3],
             out_dir_str   = sys.argv[4],
+            grid_mode_str = grid_mode,
         )
 
     else:

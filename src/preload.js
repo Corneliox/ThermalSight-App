@@ -14,8 +14,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   gradientScene: (imagePath, rois, pxPerCm, outputDir) =>
     ipcRenderer.invoke('gradient-scene', imagePath, rois, pxPerCm, outputDir),
 
-  generatePlantarFig1: (imagePath, rois, outputDir) =>
-    ipcRenderer.invoke('generate-plantar-fig1', imagePath, rois, outputDir),
+  generatePlantarFig1: (imagePath, rois, outputDir, gridMode) =>
+    ipcRenderer.invoke('generate-plantar-fig1', imagePath, rois, outputDir, gridMode),
 
   openFileDialog: () => ipcRenderer.invoke('open-file-dialog'),
   openFolderDialog: () => ipcRenderer.invoke('open-folder-dialog'),

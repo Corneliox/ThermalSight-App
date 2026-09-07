@@ -112,6 +112,9 @@ export default function App() {
     setZoomScale(1.0);
   }, [activeImagePath]);
 
+  // Experimental Plantar Grid Mode ('9x9' default, '9col', 'paper')
+  const [plantarGridMode, setPlantarGridMode] = useState('9x9');
+
   // Active image pixel-to-cm scale
   const activePxPerCm = (activeImagePath && calibrationsMap[activeImagePath]?.pxPerCm) || null;
 
@@ -1108,13 +1111,25 @@ export default function App() {
       const stem = (typeof item === 'object' && item?.stem) ? item.stem : (activeImagePath ? activeImagePath.split(/[\\/]/).pop().replace(/\.[^/.]+$/, '') : 'image');
       const segs = segmentations[activeImagePath] || [];
       const imgScale = activePxPerCm || 10;
+      const { resultDir, parentFolderName } = getResultFolderInfo();
 
-      const pkg = await generatePlantarPaperFig1Package(currentResults, w, h, segs, labels, imgScale, stem);
+      // If Desktop Electron, invoke Python directly with plantarGridMode
+      if (window.electronAPI && api.generatePlantarFig1) {
+        const pRes = await api.generatePlantarFig1(activeImagePath, segs, resultDir, plantarGridMode);
+        if (pRes && pRes.status === 'ok') {
+          const footSide = pRes.foot_side || 'RightFoot';
+          const footDisplayName = footSide === 'RightFoot' ? 'Kaki Kanan (Right Foot)' : 'Kaki Kiri (Left Foot)';
+          addLog('info', `✓ Generated Plantar Gradient (${plantarGridMode}) for ${stem}`);
+          alert(`✓ Berhasil! Hasil Gradien Kaki (${footDisplayName} - Mode: ${plantarGridMode}) berhasil dibuat:\n\n- ${stem}_${footSide}_whitehot.png\n- ${stem}_${footSide}_metrics.csv\n\nTersimpan di folder:\n${resultDir}`);
+          return;
+        }
+      }
+
+      // Web client-side fallback
+      const pkg = await generatePlantarPaperFig1Package(currentResults, w, h, segs, labels, imgScale, stem, plantarGridMode);
       if (!pkg) throw new Error('Plantar figure generator returned null');
 
-      // If Desktop Electron, save directly to {parentfolder}_result
       if (window.electronAPI) {
-        const { resultDir, parentFolderName } = getResultFolderInfo();
         const pngBase64 = pkg.fig1PngDataUrl.split(',')[1];
         await api.saveFile(`${resultDir}/${stem}_${pkg.footSide}_whitehot.png`, Buffer.from(pngBase64, 'base64'));
         await api.saveFile(`${resultDir}/${stem}_${pkg.footSide}_metrics.csv`, pkg.metricsCsv);
@@ -1368,7 +1383,7 @@ export default function App() {
         // 5. Plantar Gradient Scientific Figure (Panel A: PPP, Panel B: PPG & PGA) for Labeled Foot
         if (window.electronAPI && api.generatePlantarFig1) {
           try {
-            const pRes = await api.generatePlantarFig1(imgPath, segs, resultDir);
+            const pRes = await api.generatePlantarFig1(imgPath, segs, resultDir, plantarGridMode);
             if (pRes && pRes.status === 'ok') {
               const footSide = pRes.foot_side || 'RightFoot';
               if (pRes.fig1PngDataUrl) {
@@ -1391,7 +1406,7 @@ export default function App() {
         } else {
           // Web client-side Canvas fallback
           try {
-            const plantarPkg = await generatePlantarPaperFig1Package(res, w, h, segs, labels, imgScale, fileStem);
+            const plantarPkg = await generatePlantarPaperFig1Package(res, w, h, segs, labels, imgScale, fileStem, plantarGridMode);
             if (plantarPkg) {
               const pngBase64 = plantarPkg.fig1PngDataUrl.split(',')[1];
               exportFilesMap[`${fileStem}_${plantarPkg.footSide}_whitehot.png`] = pngBase64;
@@ -2612,6 +2627,31 @@ export default function App() {
 
               {currentResults?.raw?.tempMatrix && (
                 <div style={{ marginTop: '10px' }}>
+                  {/* Experimental Plantar Grid Selector */}
+                  <div style={{ marginBottom: '8px', background: 'rgba(255, 171, 0, 0.08)', border: '1px solid rgba(255, 171, 0, 0.25)', borderRadius: '6px', padding: '6px 8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: '700', color: '#ffab00' }}>🧪 Plantar Grid Mode</span>
+                    </div>
+                    <select
+                      value={plantarGridMode}
+                      onChange={(e) => setPlantarGridMode(e.target.value)}
+                      style={{
+                        width: '100%',
+                        fontSize: '11px',
+                        padding: '4px 6px',
+                        background: '#161b22',
+                        color: '#f0f6fc',
+                        border: '1px solid #30363d',
+                        borderRadius: '4px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <option value="9x9">9x9 Square Grid (Default Experimental)</option>
+                      <option value="9col">9-Column Proportional (Aspect-Locked)</option>
+                      <option value="paper">104x54 Grid (Paper Fig 1 Standard)</option>
+                    </select>
+                  </div>
+
                   <button
                     className="btn-secondary btn-tiny w-full"
                     style={{
