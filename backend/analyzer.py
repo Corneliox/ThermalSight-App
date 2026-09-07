@@ -1058,10 +1058,9 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
     # Blank out the extreme right edge colorbar strip outside the scene
     temp_work[:, 310:320] = 23.5
 
-    # 2. Determine Foot Side: Screen Left (avg_x < valley_idx) -> Right Foot in camera plantar view
+    # 2. Determine Foot Side: Screen Left (avg_x < W/2) -> Right Foot in camera plantar view
     xs = [r.get("cx", r.get("points", [{}])[0].get("x", W / 2)) for r in rois if isinstance(r, dict)]
-    avg_x = float(np.mean(xs)) if xs else (W / 4)
-
+    avg_x = float(np.mean(xs)) if xs else (W * 0.28)
     col_prof = np.mean(temp_work, axis=0)
     c_start, c_end = int(W * 0.35), int(W * 0.65)
     valley_idx = int(np.argmin(col_prof[c_start:c_end])) + c_start
@@ -1078,8 +1077,8 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
     # Crop clean foot bounding box (isolated from background & bedsheet)
     if np.max(foot_patch_raw) < 100:
         # Radiometric Celsius mode: spatially-aware threshold to separate blanket/bedsheet from heel
-        bg_map = np.full_like(foot_patch_raw, max(26.2, float(np.percentile(foot_patch_raw, 25))))
-        bg_map[int(H * 0.72):, :] = max(27.6, float(np.percentile(foot_patch_raw[int(H * 0.72):, :], 40)))
+        bg_map = np.full_like(foot_patch_raw, 26.5)
+        bg_map[int(H * 0.75):, :] = 27.8
         binary_cand = (foot_patch_raw > bg_map).astype(np.uint8)
         num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_cand)
         if num_labels > 1:
@@ -1112,7 +1111,6 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         xmax = min(foot_patch_raw.shape[1] - 1, int(np.max(xs_mask)) + pad)
         foot_crop = foot_patch_raw[ymin:ymax+1, xmin:xmax+1].copy()
         mask_crop = clean_foot_mask[ymin:ymax+1, xmin:xmax+1]
-        # Clean ambient replacement outside biological foot contour
         foot_crop[~mask_crop] = 23.5
     else:
         ymin, ymax, xmin, xmax = 0, H - 1, 0, foot_patch_raw.shape[1] - 1
@@ -1162,7 +1160,7 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         n_cols = max(20, int(round(n_rows * aspect)))
         grid_dense = cv2.resize(foot_crop, (n_cols, n_rows), interpolation=cv2.INTER_AREA)
         mask_dense = cv2.resize(mask_crop.astype(np.uint8), (n_cols, n_rows), interpolation=cv2.INTER_NEAREST).astype(bool)
-        step = 3  # Well-spaced quiver arrows revealing true thermal flow lines
+        step = 2  # Dense grid intersections (~1160 nodes) answering Prof's expectation of high arrow density with anchor dots
         default_radius = 4.5  # Exactly 9x9 cells bounding window (radius 4.5 -> diameter 9.0)
         label_fontsize = 15
         fig_w = max(7.0, min(14.0, 10.5 * (n_cols / n_rows) * 2.1))
@@ -1170,8 +1168,8 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         fig_size = (fig_w, fig_h)
         title_a = "(A)\n\nPPP"
         title_b = "(B)\n\nPPG & PGA"
-        arrow_scale = 1.6
-        arrow_width = 0.0042
+        arrow_scale = 1.05
+        arrow_width = 0.0036
         blur_kernel = (7, 7)
         blur_sigma = 1.8
         arrow_thresh_pct = 40
@@ -1284,7 +1282,7 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         ax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), foot_outline,
                     levels=[0.5], colors="#777799", linewidths=0.7, linestyles="--")
 
-    # Magnitude-Weighted Quiver Vector Field (Clear Directional Flow)
+    # Magnitude-Weighted Quiver Vector Field with Origin Anchor Dots
     y_q, x_q = np.mgrid[1:n_rows+1:step, 1:n_cols+1:step]
     u = sobel_x[::step, ::step]
     v = sobel_y[::step, ::step]
@@ -1297,13 +1295,19 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
 
     # Sub-linear power-law scaling: reveals interior gradient flow without blowing up outer edge vectors
     p75_mag = float(np.percentile(foot_mags, 75)) if len(foot_mags) > 0 else 1.0
-    arrow_len = np.clip((m / (p75_mag + 1e-6)) ** 0.45 * 1.25, 0.35, 1.6)
+    arrow_len = np.clip((m / (p75_mag + 1e-6)) ** 0.45 * (1.05 if step == 2 else 1.25), 0.3, 1.6)
     u_plot = (u / (m + 1e-6)) * arrow_len
     v_plot = (v / (m + 1e-6)) * arrow_len
 
+    # Origin Anchor Dots at each grid pixel intersection
+    dot_sz = 2.4 if step == 2 else (1.0 if step == 1 else 3.2)
+    ax2.plot(x_q[mask_q], y_q[mask_q], 'o', color="#0b4db7", markersize=dot_sz, alpha=0.9, zorder=7)
+
+    # Quiver Vector Flow starting from the anchor dots
     ax2.quiver(x_q[mask_q], y_q[mask_q], u_plot[mask_q], v_plot[mask_q],
                color="#0b4db7", angles="xy", scale_units="xy", scale=1.0,
-               width=arrow_width, headwidth=3.6, headlength=4.2, zorder=8)
+               width=arrow_width, headwidth=3.2 if step == 2 else 3.6, headlength=3.8 if step == 2 else 4.2,
+               pivot='tail', zorder=8)
 
     ax2.set_xlim(0.5, n_cols + 0.5)
     ax2.set_ylim(n_rows + 0.5, 0.5)

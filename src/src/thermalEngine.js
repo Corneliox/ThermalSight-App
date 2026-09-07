@@ -2166,7 +2166,7 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
 
   let nRows = 104;
   let nCols = Math.max(20, Math.round(nRows * (cropW / cropH)));
-  let qStep = 3;
+  let qStep = 2;
   let defaultRadius = 4.5; // Max 9x9 grid cells bounding window
   let panelW = 760;
   let panelH = Math.round(panelW * (nRows / nCols));
@@ -2575,6 +2575,11 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
         const y1 = panelTop + (r + 0.5) * cellH;
         const x2 = x1 + uNorm;
         const y2 = y1 + vNorm;
+
+        // Origin Anchor Dot at grid node intersection
+        ctx.beginPath();
+        ctx.arc(x1, y1, isCoarse ? 3.0 : 2.0, 0, Math.PI * 2);
+        ctx.fill();
 
         ctx.beginPath();
         ctx.moveTo(x1, y1);
