@@ -112,8 +112,8 @@ export default function App() {
     setZoomScale(1.0);
   }, [activeImagePath]);
 
-  // Plantar Grid Mode ('aspect_locked' default full-scale, 'legacy', 'coarse_9x9')
-  const [plantarGridMode, setPlantarGridMode] = useState('aspect_locked');
+  // Plantar Grid Mode ('key_vectors' default FLIR0202 style, 'empty_center', 'dense_dots', 'aspect_locked', 'legacy', 'coarse_9x9')
+  const [plantarGridMode, setPlantarGridMode] = useState('key_vectors');
 
   // Active image pixel-to-cm scale
   const activePxPerCm = (activeImagePath && calibrationsMap[activeImagePath]?.pxPerCm) || null;
@@ -2646,7 +2646,10 @@ export default function App() {
                         cursor: 'pointer'
                       }}
                     >
-                      <option value="aspect_locked">Full Dense Grid (Aspect-Locked, Max 9x9 ROI) [Default]</option>
+                      <option value="key_vectors">Key Significant Vectors (FLIR0202 Paper Style) [Default]</option>
+                      <option value="empty_center">Empty Middle Zone (Threshold 0.18)</option>
+                      <option value="dense_dots">Full Grid Dots & Dense Micro-Vectors</option>
+                      <option value="aspect_locked">Full Dense Grid (Aspect-Locked, Max 9x9 ROI)</option>
                       <option value="legacy">Fixed 104x54 Grid (Legacy Paper)</option>
                       <option value="coarse_9x9">9x9 Coarse Foot Grid</option>
                     </select>

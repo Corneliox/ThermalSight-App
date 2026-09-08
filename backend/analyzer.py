@@ -20,7 +20,7 @@ All log/debug goes to stderr (never stdout, or the JSON parse breaks).
 Exit 0 = ok, Exit 1 = error (error key in JSON).
 """
 
-import sys, os, json, warnings, csv
+import sys, os, json, warnings, csv, shutil
 warnings.filterwarnings("ignore")
 
 import numpy as np
@@ -1004,6 +1004,127 @@ def cmd_gradient_scene(image_path: str, rois_json_str: str, px_cm: float, out_di
     })
 
 
+def render_single_plantar_figure(
+    out_png: Path,
+    grid_dense: np.ndarray,
+    grid_disp: np.ndarray,
+    grid_contour: np.ndarray,
+    mask_dense: np.ndarray,
+    sobel_x: np.ndarray,
+    sobel_y: np.ndarray,
+    grad_mag: np.ndarray,
+    mapped_rois: list,
+    n_rows: int,
+    n_cols: int,
+    fig_size: tuple,
+    title_a: str,
+    title_b: str,
+    step: int,
+    thresh: float,
+    show_dots: bool,
+    arrow_mode: str = "normalized_1.5",
+    label_fontsize: int = 15,
+):
+    cmap_thermal = LinearSegmentedColormap.from_list("flir_whitehot", [
+        (0.00, "#000000"), (0.12, "#180036"), (0.28, "#4f046e"),
+        (0.44, "#990060"), (0.60, "#d92c20"), (0.74, "#f57a00"),
+        (0.85, "#fcb800"), (0.93, "#ffea70"), (1.00, "#ffffff"),
+    ])
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=fig_size, dpi=220, facecolor="white")
+    ax1.set_facecolor("#000000")
+    x_edges = np.arange(0.5, n_cols + 1.5, 1)
+    y_edges = np.arange(0.5, n_rows + 1.5, 1)
+    X_e, Y_e = np.meshgrid(x_edges, y_edges)
+
+    ax1.pcolormesh(X_e, Y_e, grid_disp, cmap=cmap_thermal, vmin=23.5, vmax=np.max(grid_dense),
+                   edgecolors="#222222" if n_rows <= 16 else "#111111",
+                   linewidth=0.6 if n_rows <= 16 else 0.20, shading="flat")
+    ax1.set_xlim(0.5, n_cols + 0.5)
+    ax1.set_ylim(n_rows + 0.5, 0.5)
+    ax1.set_aspect("equal")
+    ax1.tick_params(colors="black", labelsize=9)
+
+    for name, gx, gy, r_rad in mapped_rois:
+        c_out = plt.Circle((gx, gy), r_rad, edgecolor="#00e5ff", facecolor="none", lw=1.8 if n_rows <= 16 else 2.0, zorder=10)
+        c_in = plt.Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=1.2 if n_rows <= 16 else 1.3, zorder=11)
+        ax1.add_patch(c_out)
+        ax1.add_patch(c_in)
+        ax1.plot(gx, gy, "o", color="red", markeredgecolor="white", markeredgewidth=0.8, markersize=4.5, zorder=12)
+        ty = (0.75 if gy < n_rows * 0.55 else -0.75) if n_rows <= 16 else (6.5 if gy < n_rows * 0.55 else -5.5)
+        ax1.text(gx, gy + ty, name, color="white", fontsize=label_fontsize, fontweight="bold",
+                 ha="center", va="center", zorder=15,
+                 bbox=dict(boxstyle="round,pad=0.15", facecolor="#000000", alpha=0.6, edgecolor="none"))
+
+    ax1.set_title(title_a, fontsize=15, fontweight="bold", pad=12)
+
+    ax2.set_facecolor("white")
+    valid_contour = grid_contour[np.isfinite(grid_contour)]
+    cmin = float(np.min(valid_contour)) if len(valid_contour) > 0 else 24.0
+    cmax = float(np.max(valid_contour)) if len(valid_contour) > 0 else 36.0
+    levels = np.linspace(cmin, cmax, 12 if n_rows <= 16 else 16)
+    ax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), grid_contour,
+                levels=levels, cmap=cmap_thermal, linewidths=1.0, alpha=0.90)
+
+    if n_rows <= 16:
+        for x in x_edges: ax2.axvline(x, color='#f0f0f0', lw=0.6, zorder=1)
+        for y in y_edges: ax2.axhline(y, color='#f0f0f0', lw=0.6, zorder=1)
+    else:
+        foot_outline = (mask_dense).astype(np.uint8)
+        ax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), foot_outline,
+                    levels=[0.5], colors="#777799", linewidths=0.7, linestyles="--")
+
+    y_q, x_q = np.mgrid[1:n_rows+1:step, 1:n_cols+1:step]
+    u = sobel_x[::step, ::step]
+    v = sobel_y[::step, ::step]
+    m = grad_mag[::step, ::step]
+    foot_sub = mask_dense[::step, ::step]
+    mask_q = foot_sub & (m >= thresh)
+
+    if show_dots:
+        dot_sz = 2.0 if step == 2 else 2.8
+        ax2.plot(x_q[foot_sub], y_q[foot_sub], 'o', color="#0b4db7", markersize=dot_sz, alpha=0.65, zorder=7)
+
+    if arrow_mode == "normalized_1.5":
+        nrm = np.sqrt(u**2 + v**2) + 1e-6
+        u_plot = (u / nrm) * 1.5
+        v_plot = (v / nrm) * 1.5
+        ax2.quiver(x_q[mask_q], y_q[mask_q], u_plot[mask_q], v_plot[mask_q],
+                   color="#0b4db7", angles="xy", scale_units="xy", scale=1.0,
+                   width=0.0038, headwidth=3.4, headlength=4.2, zorder=8)
+    else:
+        foot_mags = grad_mag[mask_dense]
+        p75_mag = float(np.percentile(foot_mags, 75)) if len(foot_mags) > 0 else 1.0
+        arrow_len = np.clip((m / (p75_mag + 1e-6)) ** 0.45 * (1.05 if step == 2 else 1.25), 0.25, 1.6)
+        u_plot = (u / (m + 1e-6)) * arrow_len
+        v_plot = (v / (m + 1e-6)) * arrow_len
+        ax2.quiver(x_q[mask_q], y_q[mask_q], u_plot[mask_q], v_plot[mask_q],
+                   color="#0b4db7", angles="xy", scale_units="xy", scale=1.0,
+                   width=0.0040 if step == 2 else 0.0042, headwidth=3.2 if step == 2 else 3.6, headlength=3.8 if step == 2 else 4.2,
+                   pivot='tail', zorder=8)
+
+    ax2.set_xlim(0.5, n_cols + 0.5)
+    ax2.set_ylim(n_rows + 0.5, 0.5)
+    ax2.set_aspect("equal")
+    ax2.tick_params(colors="black", labelsize=9)
+
+    for name, gx, gy, r_rad in mapped_rois:
+        c_out = plt.Circle((gx, gy), r_rad, edgecolor="red", facecolor="none", lw=1.8 if n_rows <= 16 else 2.0, zorder=10)
+        c_in = plt.Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=1.0, linestyle=":", zorder=11)
+        ax2.add_patch(c_out)
+        ax2.add_patch(c_in)
+        ax2.plot(gx, gy, "o", color="red", markersize=4.5, zorder=12)
+        ty = (0.75 if gy < n_rows * 0.55 else -0.75) if n_rows <= 16 else (6.5 if gy < n_rows * 0.55 else -5.5)
+        ax2.text(gx, gy + ty, name, color="black", fontsize=label_fontsize, fontweight="bold", ha="center", va="center", zorder=15)
+
+    ax2.set_title(title_b, fontsize=15, fontweight="bold", pad=12)
+    plt.tight_layout()
+    fig.savefig(str(out_png), bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
+
+
 def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid_mode_str: str = "9x9"):
     out_dir = Path(out_dir_str)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1232,99 +1353,9 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
                 ("M2", m2_x, m2_y, 4.5)
             ]
 
-    # White-Hot Colormap
-    cmap_thermal = LinearSegmentedColormap.from_list("flir_whitehot", [
-        (0.00, "#000000"), (0.12, "#180036"), (0.28, "#4f046e"),
-        (0.44, "#990060"), (0.60, "#d92c20"), (0.74, "#f57a00"),
-        (0.85, "#fcb800"), (0.93, "#ffea70"), (1.00, "#ffffff"),
-    ])
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=fig_size, dpi=220, facecolor="white")
-    ax1.set_facecolor("#000000")
-    x_edges = np.arange(0.5, n_cols + 1.5, 1)
-    y_edges = np.arange(0.5, n_rows + 1.5, 1)
-    X_e, Y_e = np.meshgrid(x_edges, y_edges)
-
-    ax1.pcolormesh(X_e, Y_e, grid_disp, cmap=cmap_thermal, vmin=23.5, vmax=np.max(grid_dense),
-                   edgecolors="#222222" if n_rows <= 16 else "#111111",
-                   linewidth=0.6 if n_rows <= 16 else 0.20, shading="flat")
-    ax1.set_xlim(0.5, n_cols + 0.5)
-    ax1.set_ylim(n_rows + 0.5, 0.5)
-    ax1.set_aspect("equal")
-    ax1.tick_params(colors="black", labelsize=9)
-
-    for name, gx, gy, r_rad in mapped_rois:
-        c_out = plt.Circle((gx, gy), r_rad, edgecolor="#00e5ff", facecolor="none", lw=1.8 if n_rows <= 16 else 2.0, zorder=10)
-        c_in = plt.Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=1.2 if n_rows <= 16 else 1.3, zorder=11)
-        ax1.add_patch(c_out)
-        ax1.add_patch(c_in)
-        ax1.plot(gx, gy, "o", color="red", markeredgecolor="white", markeredgewidth=0.8, markersize=4.5, zorder=12)
-        ty = (0.75 if gy < n_rows * 0.55 else -0.75) if n_rows <= 16 else (6.5 if gy < n_rows * 0.55 else -5.5)
-        ax1.text(gx, gy + ty, name, color="white", fontsize=label_fontsize, fontweight="bold",
-                 ha="center", va="center", zorder=15,
-                 bbox=dict(boxstyle="round,pad=0.15", facecolor="#000000", alpha=0.6, edgecolor="none"))
-
-    ax1.set_title(title_a, fontsize=15, fontweight="bold", pad=12)
-
-    ax2.set_facecolor("white")
-    valid_contour = grid_contour[np.isfinite(grid_contour)]
-    cmin = float(np.min(valid_contour)) if len(valid_contour) > 0 else 24.0
-    cmax = float(np.max(valid_contour)) if len(valid_contour) > 0 else 36.0
-    levels = np.linspace(cmin, cmax, 12 if n_rows <= 16 else 16)
-    ax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), grid_contour,
-                levels=levels, cmap=cmap_thermal, linewidths=1.0, alpha=0.90)
-
-    if n_rows <= 16:
-        for x in x_edges: ax2.axvline(x, color='#f0f0f0', lw=0.6, zorder=1)
-        for y in y_edges: ax2.axhline(y, color='#f0f0f0', lw=0.6, zorder=1)
-    else:
-        foot_outline = (mask_dense).astype(np.uint8)
-        ax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), foot_outline,
-                    levels=[0.5], colors="#777799", linewidths=0.7, linestyles="--")
-
-    # Magnitude-Weighted Quiver Vector Field with Origin Anchor Dots
-    y_q, x_q = np.mgrid[1:n_rows+1:step, 1:n_cols+1:step]
-    u = sobel_x[::step, ::step]
-    v = sobel_y[::step, ::step]
-    m = grad_mag[::step, ::step]
-
-    foot_mags = grad_mag[mask_dense]
-    # Physical noise-floor threshold so internal plantar flow is not erased (reveals gentle middle-zone gradients)
-    mag_thresh = max(0.03, float(np.percentile(foot_mags, 5))) if len(foot_mags) > 0 else 0.03
-    foot_sub = mask_dense[::step, ::step]
-    mask_q = foot_sub & (m >= mag_thresh)
-
-    # Sub-linear power-law scaling: reveals interior gradient flow without blowing up outer edge vectors
-    p75_mag = float(np.percentile(foot_mags, 75)) if len(foot_mags) > 0 else 1.0
-    arrow_len = np.clip((m / (p75_mag + 1e-6)) ** 0.45 * (1.05 if step == 2 else 1.25), 0.25, 1.6)
-    u_plot = (u / (m + 1e-6)) * arrow_len
-    v_plot = (v / (m + 1e-6)) * arrow_len
-
-    # Origin Anchor Dots at ALL grid pixel intersections within biological foot
-    dot_sz = 2.0 if step == 2 else (1.0 if step == 1 else 2.8)
-    ax2.plot(x_q[foot_sub], y_q[foot_sub], 'o', color="#0b4db7", markersize=dot_sz, alpha=0.65, zorder=7)
-
-    # Quiver Vector Flow starting from active gradient nodes
-    ax2.quiver(x_q[mask_q], y_q[mask_q], u_plot[mask_q], v_plot[mask_q],
-               color="#0b4db7", angles="xy", scale_units="xy", scale=1.0,
-               width=arrow_width, headwidth=3.2 if step == 2 else 3.6, headlength=3.8 if step == 2 else 4.2,
-               pivot='tail', zorder=8)
-
-    ax2.set_xlim(0.5, n_cols + 0.5)
-    ax2.set_ylim(n_rows + 0.5, 0.5)
-    ax2.set_aspect("equal")
-    ax2.tick_params(colors="black", labelsize=9)
-
+    # Calculate ROI metrics table
     metrics = []
     for name, gx, gy, r_rad in mapped_rois:
-        c_out = plt.Circle((gx, gy), r_rad, edgecolor="red", facecolor="none", lw=1.8 if n_rows <= 16 else 2.0, zorder=10)
-        c_in = plt.Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=1.0, linestyle=":", zorder=11)
-        ax2.add_patch(c_out)
-        ax2.add_patch(c_in)
-        ax2.plot(gx, gy, "o", color="red", markersize=4.5, zorder=12)
-        ty = (0.75 if gy < n_rows * 0.55 else -0.75) if n_rows <= 16 else (6.5 if gy < n_rows * 0.55 else -5.5)
-        ax2.text(gx, gy + ty, name, color="black", fontsize=label_fontsize, fontweight="bold", ha="center", va="center", zorder=15)
-
         ix = int(np.clip(round(gx) - 1, 0, n_cols - 1))
         iy = int(np.clip(round(gy) - 1, 0, n_rows - 1))
 
@@ -1352,18 +1383,53 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
             "PGA_Angle_Deg": round(val_pga, 1)
         })
 
-    ax2.set_title(title_b, fontsize=15, fontweight="bold", pad=12)
-    plt.tight_layout()
-
-    out_png = out_dir / f"{stem}_{foot_side}_whitehot.png"
+    # Save CSV metrics table
     out_csv = out_dir / f"{stem}_{foot_side}_metrics.csv"
-    fig.savefig(str(out_png), bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-
     with open(str(out_csv), "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["ROI", "Grid_X", "Grid_Y", "ROI_Radius_Grid", "PPP_Peak_Value", "PPP_Mean_9x9", "PPG_Gradient_Mag", "PGA_Angle_Deg"])
         writer.writeheader()
         writer.writerows(metrics)
+
+    # Render ALL 3 distinct requested output variants:
+    # 1. empty_center: High threshold (0.18), central plateau empty because gradient is small
+    out_png_1 = out_dir / f"{stem}_{foot_side}_1_empty_center.png"
+    render_single_plantar_figure(
+        out_png_1, grid_dense, grid_disp, grid_contour, mask_dense,
+        sobel_x, sobel_y, grad_mag, mapped_rois, n_rows, n_cols, fig_size,
+        title_a, title_b, step=3, thresh=0.18, show_dots=False, arrow_mode="power_law", label_fontsize=label_fontsize
+    )
+
+    # 2. dense_with_dots: Grid dots on every active node + sensitive micro-vectors in center
+    out_png_2 = out_dir / f"{stem}_{foot_side}_2_dense_with_dots.png"
+    render_single_plantar_figure(
+        out_png_2, grid_dense, grid_disp, grid_contour, mask_dense,
+        sobel_x, sobel_y, grad_mag, mapped_rois, n_rows, n_cols, fig_size,
+        title_a, title_b, step=2, thresh=0.03, show_dots=True, arrow_mode="power_law", label_fontsize=label_fontsize
+    )
+
+    # 3. key_vectors: FLIR0202 reference paper style (step=4, thresh=0.04, clean quiver vectors, NO dot lattice)
+    out_png_3 = out_dir / f"{stem}_{foot_side}_3_key_vectors_flir0202_style.png"
+    render_single_plantar_figure(
+        out_png_3, grid_dense, grid_disp, grid_contour, mask_dense,
+        sobel_x, sobel_y, grad_mag, mapped_rois, n_rows, n_cols, fig_size,
+        title_a, title_b, step=4, thresh=0.04, show_dots=False, arrow_mode="normalized_1.5", label_fontsize=label_fontsize
+    )
+
+    # Set primary output file {stem}_{foot_side}_whitehot.png based on requested mode (defaulting to key_vectors)
+    out_png = out_dir / f"{stem}_{foot_side}_whitehot.png"
+    if mode in ["empty_center", "1_empty_center"]:
+        shutil.copy2(str(out_png_1), str(out_png))
+    elif mode in ["dense_dots", "2_dense_with_dots"]:
+        shutil.copy2(str(out_png_2), str(out_png))
+    elif mode in ["coarse_9x9", "9x9_coarse"]:
+        render_single_plantar_figure(
+            out_png, grid_dense, grid_disp, grid_contour, mask_dense,
+            sobel_x, sobel_y, grad_mag, mapped_rois, n_rows, n_cols, fig_size,
+            title_a, title_b, step=1, thresh=0.02, show_dots=False, arrow_mode="normalized_1.5", label_fontsize=label_fontsize
+        )
+    else:
+        # Default: Key Vectors Style matching FLIR0202 paper figure
+        shutil.copy2(str(out_png_3), str(out_png))
 
     emit({
         "status": "ok",
@@ -1371,7 +1437,10 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         "foot_side": foot_side,
         "grid_mode": mode,
         "png_path": str(out_png),
-        "csv_path": str(out_csv)
+        "csv_path": str(out_csv),
+        "path_1_empty_center": str(out_png_1),
+        "path_2_dense_dots": str(out_png_2),
+        "path_3_key_vectors": str(out_png_3)
     })
 
 

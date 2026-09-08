@@ -2553,31 +2553,48 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
   const magThresh = footGrads.length > 0 ? Math.max(0.015, footGrads[p15Idx]) : 0.015;
   const p75Mag = footGrads.length > 0 ? footGrads[p75Idx] : 0.08;
 
+  // Mode-aware configuration: key_vectors (default paper style), empty_center, dense_dots
+  const modeClean = String(gridMode || 'key_vectors').toLowerCase();
+  const showDots = modeClean === 'dense_dots' || modeClean === '2_dense_with_dots';
+  const isEmptyCenter = modeClean === 'empty_center' || modeClean === '1_empty_center';
+  const effectiveThresh = isEmptyCenter ? 0.18 : (showDots ? 0.025 : 0.04);
+  const effectiveStep = isCoarse ? 1 : (showDots ? 2 : (isEmptyCenter ? 3 : 4));
+
   // Quiver Vector Arrows flowing along Thermal Gradient
   ctx.fillStyle = '#0b4db7';
   ctx.strokeStyle = '#0b4db7';
   ctx.lineWidth = isCoarse ? 2.0 : 2.2;
 
-  for (let r = (isCoarse ? 0 : 2); r < nRows - (isCoarse ? 0 : 2); r += qStep) {
-    for (let c = (isCoarse ? 0 : 2); c < nCols - (isCoarse ? 0 : 2); c += qStep) {
+  for (let r = (isCoarse ? 0 : 2); r < nRows - (isCoarse ? 0 : 2); r += effectiveStep) {
+    for (let c = (isCoarse ? 0 : 2); c < nCols - (isCoarse ? 0 : 2); c += effectiveStep) {
       if (gridDense[r][c] > (isCoarse ? 26.5 : 26.8)) {
         const x1 = panelB_left + (c + 0.5) * cellW;
         const y1 = panelTop + (r + 0.5) * cellH;
 
-        // Origin Anchor Dot at every active grid node intersection
-        ctx.fillStyle = '#0b4db7';
-        ctx.beginPath();
-        ctx.arc(x1, y1, isCoarse ? 3.0 : 2.0, 0, Math.PI * 2);
-        ctx.fill();
+        // Origin Anchor Dot only when requested in dense_dots mode
+        if (showDots) {
+          ctx.fillStyle = '#0b4db7';
+          ctx.beginPath();
+          ctx.arc(x1, y1, isCoarse ? 3.0 : 2.0, 0, Math.PI * 2);
+          ctx.fill();
+        }
 
         const magVal = gradMag[r][c];
-        if (magVal >= Math.min(0.025, magThresh)) {
+        if (magVal >= effectiveThresh) {
           const gx = sobelX[r][c];
           const gy = sobelY[r][c];
           const nrm = Math.sqrt(gx * gx + gy * gy) + 1e-6;
-          // Sub-linear power-law scaling
-          const normScale = Math.max(0.25, Math.min(1.6, Math.pow(magVal / (p75Mag + 1e-6), 0.45) * 1.25));
-          const arrowLen = (isCoarse ? cellW * 0.45 : cellW * 1.0) * normScale;
+
+          let arrowLen;
+          if (!showDots && !isEmptyCenter) {
+            // Paper FLIR0202 reference style: uniform normalized directional vector
+            arrowLen = cellW * 1.5;
+          } else {
+            // Sub-linear power-law scaling
+            const normScale = Math.max(0.25, Math.min(1.6, Math.pow(magVal / (p75Mag + 1e-6), 0.45) * 1.25));
+            arrowLen = (isCoarse ? cellW * 0.45 : cellW * 1.0) * normScale;
+          }
+
           const uNorm = (gx / nrm) * arrowLen;
           const vNorm = (gy / nrm) * arrowLen;
 
