@@ -827,6 +827,9 @@ def cmd_crop(image_path: str, points_json_str: str, label_name: str,
             for c_idx in range(rw):
                 if mask_crop[r_idx, c_idx] > 0:
                     row_vals.append(f"{temp_crop[r_idx, c_idx]:.6f}")
+                else:
+                    row_vals.append("NaN")
+            w_csv.writerow(row_vals)
     # Calculate automatic 8-point star gradient inside this ROI
     cx = float(np.mean(pts_arr[:, 0]))
     cy = float(np.mean(pts_arr[:, 1]))
@@ -1062,6 +1065,8 @@ def render_single_plantar_figure(
     valid_contour = grid_contour[np.isfinite(grid_contour)]
     cmin = float(np.min(valid_contour)) if len(valid_contour) > 0 else 24.0
     cmax = float(np.max(valid_contour)) if len(valid_contour) > 0 else 36.0
+    if cmax - cmin < 0.1:
+        cmax = cmin + 0.5
     levels = np.linspace(cmin, cmax, 12 if n_rows <= 16 else 16)
     ax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), grid_contour,
                 levels=levels, cmap=cmap_thermal, linewidths=1.0, alpha=0.90)

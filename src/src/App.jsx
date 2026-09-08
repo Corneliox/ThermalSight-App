@@ -196,7 +196,7 @@ export default function App() {
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
-    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.6.7 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
+    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.6.8 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
   ]);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const terminalEndRef = useRef(null);
@@ -1146,9 +1146,9 @@ export default function App() {
 
       if (window.electronAPI) {
         const pngBase64 = pkg.fig1PngDataUrl.split(',')[1];
-        await api.saveFile(`${resultDir}/${stem}_${pkg.footSide}_whitehot.png`, Buffer.from(pngBase64, 'base64'));
+        await api.saveFile(`${resultDir}/${stem}_${pkg.footSide}_whitehot.png`, pngBase64);
         await api.saveFile(`${resultDir}/${stem}_${pkg.footSide}_metrics.csv`, pkg.metricsCsv);
-        await api.saveFile(`${resultDir}/Gradient/${stem}_${pkg.footSide}_whitehot.png`, Buffer.from(pngBase64, 'base64'));
+        await api.saveFile(`${resultDir}/Gradient/${stem}_${pkg.footSide}_whitehot.png`, pngBase64);
         await api.saveFile(`${resultDir}/Sheet/${stem}_${pkg.footSide}_metrics.csv`, pkg.metricsCsv);
         addLog('info', `✓ Generated & saved ${stem}_${pkg.footSide}_whitehot.png and metrics.csv to ${resultDir}`);
         alert(`✓ Berhasil! Hasil Gradien Kaki (${pkg.footDisplayName}) berhasil dibuat:\n\n- ${stem}_${pkg.footSide}_whitehot.png\n- ${stem}_${pkg.footSide}_metrics.csv\n\nTersimpan di folder:\n${resultDir}`);
@@ -1161,9 +1161,11 @@ export default function App() {
 
         const blob = new Blob([pkg.metricsCsv], { type: 'text/csv;charset=utf-8;' });
         const aCsv = document.createElement('a');
-        aCsv.href = URL.createObjectURL(blob);
+        const csvBlobUrl = URL.createObjectURL(blob);
+        aCsv.href = csvBlobUrl;
         aCsv.download = `${stem}_${pkg.footSide}_metrics.csv`;
         aCsv.click();
+        setTimeout(() => URL.revokeObjectURL(csvBlobUrl), 1000);
         addLog('info', `✓ Downloaded Plantar Gradient Figure & CSV for ${pkg.footDisplayName}`);
       }
     } catch (err) {
@@ -1885,7 +1887,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.6.7 (Web & Desktop)</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.6.8 (Web & Desktop)</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -2035,7 +2037,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.6.7' : 'v1.6.7'}</span>
+          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.6.8' : 'v1.6.8'}</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (

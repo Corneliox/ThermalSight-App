@@ -329,8 +329,14 @@ ipcMain.handle('crop-labels', async (_event, imagePath, roiPoints, labelName, ro
       if (res.png_2x_3d_path && fs.existsSync(res.png_2x_3d_path)) {
         res.png2x3dDataUrl = `data:image/png;base64,${fs.readFileSync(res.png_2x_3d_path).toString('base64')}`;
       }
+      if (res.csv_path && fs.existsSync(res.csv_path)) {
+        res.csvContent = fs.readFileSync(res.csv_path, 'utf8');
+      }
+      if (res.star_csv_path && fs.existsSync(res.star_csv_path)) {
+        res.starCsvContent = fs.readFileSync(res.star_csv_path, 'utf8');
+      }
     } catch (err) {
-      sendLogToRenderer('warning', `Failed to encode cropped PNGs to base64: ${err.message}`);
+      sendLogToRenderer('warning', `Failed to encode cropped PNGs/CSVs: ${err.message}`);
     }
   }
 
@@ -530,14 +536,16 @@ ipcMain.handle('open-external', async (_event, url) => {
 
 ipcMain.handle('save-file', async (_event, filePath, content) => {
   try {
-    // Security: reject path traversal attempts
     const resolved = path.resolve(filePath);
-    if (resolved.includes('..')) {
-      return { error: 'Path traversal detected — operation rejected.' };
-    }
     const dir = path.dirname(resolved);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(resolved, content, 'utf-8');
+
+    if (resolved.toLowerCase().endsWith('.png')) {
+      const b64 = typeof content === 'string' && content.includes(';base64,') ? content.split(',')[1] : content;
+      fs.writeFileSync(resolved, Buffer.isBuffer(content) ? content : Buffer.from(b64, 'base64'));
+    } else {
+      fs.writeFileSync(resolved, content, 'utf-8');
+    }
     return { status: 'ok', path: resolved };
   } catch (e) {
     return { error: e.message };
