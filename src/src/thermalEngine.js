@@ -2560,41 +2560,46 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
 
   for (let r = (isCoarse ? 0 : 2); r < nRows - (isCoarse ? 0 : 2); r += qStep) {
     for (let c = (isCoarse ? 0 : 2); c < nCols - (isCoarse ? 0 : 2); c += qStep) {
-      const magVal = gradMag[r][c];
-      if (gridDense[r][c] > (isCoarse ? 26.5 : 26.8) && magVal >= magThresh) {
-        const gx = sobelX[r][c];
-        const gy = sobelY[r][c];
-        const nrm = Math.sqrt(gx * gx + gy * gy) + 1e-6;
-        // Sub-linear power-law scaling
-        const normScale = Math.max(0.35, Math.min(1.6, Math.pow(magVal / (p75Mag + 1e-6), 0.45) * 1.25));
-        const arrowLen = (isCoarse ? cellW * 0.45 : cellW * 1.0) * normScale;
-        const uNorm = (gx / nrm) * arrowLen;
-        const vNorm = (gy / nrm) * arrowLen;
-
+      if (gridDense[r][c] > (isCoarse ? 26.5 : 26.8)) {
         const x1 = panelB_left + (c + 0.5) * cellW;
         const y1 = panelTop + (r + 0.5) * cellH;
-        const x2 = x1 + uNorm;
-        const y2 = y1 + vNorm;
 
-        // Origin Anchor Dot at grid node intersection
+        // Origin Anchor Dot at every active grid node intersection
+        ctx.fillStyle = '#0b4db7';
         ctx.beginPath();
         ctx.arc(x1, y1, isCoarse ? 3.0 : 2.0, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.beginPath();
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2);
-        ctx.stroke();
+        const magVal = gradMag[r][c];
+        if (magVal >= Math.min(0.025, magThresh)) {
+          const gx = sobelX[r][c];
+          const gy = sobelY[r][c];
+          const nrm = Math.sqrt(gx * gx + gy * gy) + 1e-6;
+          // Sub-linear power-law scaling
+          const normScale = Math.max(0.25, Math.min(1.6, Math.pow(magVal / (p75Mag + 1e-6), 0.45) * 1.25));
+          const arrowLen = (isCoarse ? cellW * 0.45 : cellW * 1.0) * normScale;
+          const uNorm = (gx / nrm) * arrowLen;
+          const vNorm = (gy / nrm) * arrowLen;
 
-        // Arrowhead
-        const headAng = Math.atan2(vNorm, uNorm);
-        const hLen = isCoarse ? 6 : 7;
-        ctx.beginPath();
-        ctx.moveTo(x2, y2);
-        ctx.lineTo(x2 - hLen * Math.cos(headAng - Math.PI / 6), y2 - hLen * Math.sin(headAng - Math.PI / 6));
-        ctx.lineTo(x2 - hLen * Math.cos(headAng + Math.PI / 6), y2 - hLen * Math.sin(headAng + Math.PI / 6));
-        ctx.closePath();
-        ctx.fill();
+          const x2 = x1 + uNorm;
+          const y2 = y1 + vNorm;
+
+          ctx.strokeStyle = '#0b4db7';
+          ctx.beginPath();
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y2);
+          ctx.stroke();
+
+          // Arrowhead
+          const headAng = Math.atan2(vNorm, uNorm);
+          const hLen = isCoarse ? 6 : 7;
+          ctx.beginPath();
+          ctx.moveTo(x2, y2);
+          ctx.lineTo(x2 - hLen * Math.cos(headAng - Math.PI / 6), y2 - hLen * Math.sin(headAng - Math.PI / 6));
+          ctx.lineTo(x2 - hLen * Math.cos(headAng + Math.PI / 6), y2 - hLen * Math.sin(headAng + Math.PI / 6));
+          ctx.closePath();
+          ctx.fill();
+        }
       }
     }
   }

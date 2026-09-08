@@ -1289,21 +1289,22 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
     m = grad_mag[::step, ::step]
 
     foot_mags = grad_mag[mask_dense]
-    # Physical noise-floor threshold so internal plantar flow is not erased
-    mag_thresh = max(0.18, float(np.percentile(foot_mags, 15))) if len(foot_mags) > 0 else 0.15
-    mask_q = (mask_dense[::step, ::step]) & (m >= mag_thresh)
+    # Physical noise-floor threshold so internal plantar flow is not erased (reveals gentle middle-zone gradients)
+    mag_thresh = max(0.03, float(np.percentile(foot_mags, 5))) if len(foot_mags) > 0 else 0.03
+    foot_sub = mask_dense[::step, ::step]
+    mask_q = foot_sub & (m >= mag_thresh)
 
     # Sub-linear power-law scaling: reveals interior gradient flow without blowing up outer edge vectors
     p75_mag = float(np.percentile(foot_mags, 75)) if len(foot_mags) > 0 else 1.0
-    arrow_len = np.clip((m / (p75_mag + 1e-6)) ** 0.45 * (1.05 if step == 2 else 1.25), 0.3, 1.6)
+    arrow_len = np.clip((m / (p75_mag + 1e-6)) ** 0.45 * (1.05 if step == 2 else 1.25), 0.25, 1.6)
     u_plot = (u / (m + 1e-6)) * arrow_len
     v_plot = (v / (m + 1e-6)) * arrow_len
 
-    # Origin Anchor Dots at each grid pixel intersection
-    dot_sz = 2.4 if step == 2 else (1.0 if step == 1 else 3.2)
-    ax2.plot(x_q[mask_q], y_q[mask_q], 'o', color="#0b4db7", markersize=dot_sz, alpha=0.9, zorder=7)
+    # Origin Anchor Dots at ALL grid pixel intersections within biological foot
+    dot_sz = 2.0 if step == 2 else (1.0 if step == 1 else 2.8)
+    ax2.plot(x_q[foot_sub], y_q[foot_sub], 'o', color="#0b4db7", markersize=dot_sz, alpha=0.65, zorder=7)
 
-    # Quiver Vector Flow starting from the anchor dots
+    # Quiver Vector Flow starting from active gradient nodes
     ax2.quiver(x_q[mask_q], y_q[mask_q], u_plot[mask_q], v_plot[mask_q],
                color="#0b4db7", angles="xy", scale_units="xy", scale=1.0,
                width=arrow_width, headwidth=3.2 if step == 2 else 3.6, headlength=3.8 if step == 2 else 4.2,
