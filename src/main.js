@@ -55,9 +55,17 @@ function createApplicationMenu() {
     {
       label: 'Edit',
       submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+        { type: 'separator' },
         {
           label: 'Undo Last ROI',
-          accelerator: 'CmdOrCtrl+Z',
+          accelerator: 'CmdOrCtrl+Alt+Z',
           click: () => {
             if (mainWindow) mainWindow.webContents.send('menu-trigger-undo');
           }
@@ -639,4 +647,32 @@ ipcMain.handle('test-backend-connection', async () => {
     sendLogToRenderer('error', `[DIAGNOSTICS FAILED] ${errMsg}`);
     return { success: false, error: errMsg, executable };
   }
+});
+
+// ── Native Dialog & Focus Recovery IPC Handlers (Fixes Windows 10 Focus Drop) ─
+ipcMain.on('show-alert-sync', (event, message) => {
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      dialog.showMessageBoxSync(mainWindow, {
+        type: 'info',
+        title: 'ThermalSight',
+        message: String(message),
+        buttons: ['OK'],
+        noLink: true
+      });
+      // Force Windows Chromium webContents to regain keyboard focus
+      mainWindow.webContents.focus();
+    }
+  } catch (err) {
+    console.error('show-alert-sync error:', err);
+  }
+  event.returnValue = true;
+});
+
+ipcMain.handle('refocus-window', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.focus();
+    mainWindow.webContents.focus();
+  }
+  return { status: 'ok' };
 });

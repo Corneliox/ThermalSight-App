@@ -26,6 +26,8 @@ const api = window.electronAPI || {
   gradientScene: async () => { throw new Error('Electron API unavailable'); },
   generatePlantarFig1: async () => null,
   saveFile: async () => null,
+  showAlertSync: (msg) => { alert(msg); return true; },
+  refocusWindow: async () => ({ status: 'ok' }),
   openFileDialog: async () => null,
   openFolderDialog: async () => null,
   listFolderImages: async () => [],
@@ -43,6 +45,24 @@ const api = window.electronAPI || {
   runMacPermissionFix: async () => ({ status: 'skipped' }),
   testBackendConnection: async () => ({ success: true }),
 };
+
+// ── Native Dialog & Focus Lockout Defense (Windows 10 / Electron) ─────────────
+if (typeof window !== 'undefined') {
+  const _origAlert = window.alert;
+  window.alert = (msg) => {
+    if (window.electronAPI && window.electronAPI.showAlertSync) {
+      try {
+        window.electronAPI.showAlertSync(String(msg));
+        window.focus();
+        return;
+      } catch {
+        // fallback to native
+      }
+    }
+    _origAlert(msg);
+    window.focus();
+  };
+}
 
 const toFileUrl = (p) => {
   if (!p) return '';
@@ -214,6 +234,29 @@ export default function App() {
   }, []);
 
   const imgRef = useRef(null);
+  const calibInputRef = useRef(null);
+
+  // Auto-focus and select calibration input when banner opens
+  useEffect(() => {
+    if (showDistInput && calibInputRef.current) {
+      setTimeout(() => {
+        calibInputRef.current?.focus();
+        calibInputRef.current?.select();
+      }, 50);
+    }
+  }, [showDistInput]);
+
+  // Global Input Focus Guardian: Ensure clicking any input element immediately focuses it
+  useEffect(() => {
+    const handleInputFocus = (e) => {
+      const target = e.target;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        target.focus();
+      }
+    };
+    window.addEventListener('mousedown', handleInputFocus, true);
+    return () => window.removeEventListener('mousedown', handleInputFocus, true);
+  }, []);
 
   // ── macOS Platform & Backend Health Check on Startup ────────────────────────
   useEffect(() => {
@@ -2718,8 +2761,13 @@ export default function App() {
               {showDistInput && (
                 <div className="inline-form">
                   <label>Real distance (cm):</label>
-                  <input type="number" min="0.1" step="0.1" value={calibDist} autoFocus
-                         onChange={e=>setCalibDist(e.target.value)}
+                  <input ref={calibInputRef}
+                         className="field-input"
+                         type="text"
+                         inputMode="decimal"
+                         placeholder="e.g. 10.0"
+                         value={calibDist}
+                         onChange={e=>setCalibDist(e.target.value.replace(',', '.'))}
                          onKeyDown={e=>{if(e.key==='Enter')confirmCalib();if(e.key==='Escape')resetCalib();}}/>
                   <div className="inline-form-btns">
                     <button className="btn-primary" onClick={confirmCalib}>Confirm</button>
@@ -2751,10 +2799,10 @@ export default function App() {
               </div>
 
               <label className="field-label">Distance (cm)</label>
-              <input className="field-input" type="number" min="0.1" step="0.5"
+              <input className="field-input" type="text" inputMode="decimal"
                      value={starDist}
                      disabled={starStep === 'align' || starStep === 'saving' || starStep === 'done'}
-                     onChange={e=>setStarDist(e.target.value)}/>
+                     onChange={e=>setStarDist(e.target.value.replace(',', '.'))}/>
 
               {/* Step 1: Place button */}
               {(!starStep || starStep === 'done') && (

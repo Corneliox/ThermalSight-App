@@ -42,6 +42,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   runMacPermissionFix: () => ipcRenderer.invoke('run-mac-permission-fix'),
   testBackendConnection: () => ipcRenderer.invoke('test-backend-connection'),
 
+  // Windows Focus Recovery & Native Dialog APIs
+  showAlertSync: (message) => ipcRenderer.sendSync('show-alert-sync', message),
+  refocusWindow: () => ipcRenderer.invoke('refocus-window'),
+
   // Menu Event Listeners
   onMenuOpenSettings: (callback) => ipcRenderer.on('menu-open-settings', () => callback()),
   onMenuOpenAbout: (callback) => ipcRenderer.on('menu-open-about', () => callback()),
