@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 import AnalyticsView from './AnalyticsView';
 import { getProtocolStep, generateGraphSvg } from './protocol';
@@ -23,6 +23,9 @@ const api = window.electronAPI || {
   runAnalysis: async () => { throw new Error('Electron API unavailable'); },
   measureStar: async () => { throw new Error('Electron API unavailable'); },
   cropLabels: async () => { throw new Error('Electron API unavailable'); },
+  gradientScene: async () => { throw new Error('Electron API unavailable'); },
+  generatePlantarFig1: async () => null,
+  saveFile: async () => null,
   openFileDialog: async () => null,
   openFolderDialog: async () => null,
   listFolderImages: async () => [],
@@ -197,6 +200,18 @@ export default function App() {
   ]);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const terminalEndRef = useRef(null);
+
+  const addLog = useCallback((type, text) => {
+    setTerminalLogs(prev => [
+      ...prev.slice(-200),
+      {
+        id: Date.now() + Math.random(),
+        type: typeof type === 'string' ? type : 'info',
+        text: typeof text === 'string' ? text : JSON.stringify(text),
+        timestamp: new Date().toLocaleTimeString()
+      }
+    ]);
+  }, []);
 
   const imgRef = useRef(null);
 
