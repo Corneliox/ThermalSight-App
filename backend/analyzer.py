@@ -1087,7 +1087,7 @@ def render_single_plantar_figure(
     mask_q = foot_sub & (m >= thresh)
 
     if show_dots:
-        dot_sz = 2.0 if step == 2 else 2.8
+        dot_sz = 1.3 if step == 1 else (2.0 if step == 2 else 2.8)
         ax2.plot(x_q[foot_sub], y_q[foot_sub], 'o', color="#0b4db7", markersize=dot_sz, alpha=0.65, zorder=7)
 
     if arrow_mode == "normalized_1.5":
@@ -1100,12 +1100,14 @@ def render_single_plantar_figure(
     else:
         foot_mags = grad_mag[mask_dense]
         p75_mag = float(np.percentile(foot_mags, 75)) if len(foot_mags) > 0 else 1.0
-        arrow_len = np.clip((m / (p75_mag + 1e-6)) ** 0.45 * (1.05 if step == 2 else 1.25), 0.25, 1.6)
+        arrow_len = np.clip((m / (p75_mag + 1e-6)) ** 0.45 * (0.75 if step == 1 else (1.05 if step == 2 else 1.25)), 0.20, 1.1 if step == 1 else 1.6)
         u_plot = (u / (m + 1e-6)) * arrow_len
         v_plot = (v / (m + 1e-6)) * arrow_len
         ax2.quiver(x_q[mask_q], y_q[mask_q], u_plot[mask_q], v_plot[mask_q],
                    color="#0b4db7", angles="xy", scale_units="xy", scale=1.0,
-                   width=0.0040 if step == 2 else 0.0042, headwidth=3.2 if step == 2 else 3.6, headlength=3.8 if step == 2 else 4.2,
+                   width=0.0030 if step == 1 else (0.0040 if step == 2 else 0.0042),
+                   headwidth=2.8 if step == 1 else (3.2 if step == 2 else 3.6),
+                   headlength=3.2 if step == 1 else (3.8 if step == 2 else 4.2),
                    pivot='tail', zorder=8)
 
     ax2.set_xlim(0.5, n_cols + 0.5)
@@ -1404,12 +1406,12 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         title_a, title_b, step=3, thresh=0.18, show_dots=False, arrow_mode="power_law", label_fontsize=label_fontsize
     )
 
-    # 2. dense_with_dots: Grid dots on every active node + sensitive micro-vectors in center
+    # 2. dense_with_dots: 1:1 per-grid-cell vectors on every active node (9 arrows across M1)
     out_png_2 = out_dir / f"{stem}_{foot_side}_2_dense_with_dots.png"
     render_single_plantar_figure(
         out_png_2, grid_dense, grid_disp, grid_contour, mask_dense,
         sobel_x, sobel_y, grad_mag, mapped_rois, n_rows, n_cols, fig_size,
-        title_a, title_b, step=2, thresh=0.03, show_dots=True, arrow_mode="power_law", label_fontsize=label_fontsize
+        title_a, title_b, step=1, thresh=0.02, show_dots=True, arrow_mode="power_law", label_fontsize=label_fontsize
     )
 
     # 3. key_vectors: FLIR0202 reference paper style (step=4, thresh=0.04, clean quiver vectors, NO dot lattice)
