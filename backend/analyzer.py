@@ -1027,6 +1027,10 @@ def render_single_plantar_figure(
     show_dots: bool,
     arrow_mode: str = "normalized_1.5",
     label_fontsize: int = 15,
+    quiver_width: float = None,
+    quiver_alpha: float = 1.0,
+    quiver_headwidth: float = None,
+    quiver_headlength: float = None,
 ):
     cmap_thermal = LinearSegmentedColormap.from_list("flir_whitehot", [
         (0.00, "#000000"), (0.12, "#180036"), (0.28, "#4f046e"),
@@ -1088,26 +1092,31 @@ def render_single_plantar_figure(
 
     if show_dots:
         dot_sz = 1.3 if step == 1 else (2.0 if step == 2 else 2.8)
-        ax2.plot(x_q[foot_sub], y_q[foot_sub], 'o', color="#0b4db7", markersize=dot_sz, alpha=0.65, zorder=7)
+        dot_alpha = 0.50 if quiver_alpha < 1.0 else 0.65
+        ax2.plot(x_q[foot_sub], y_q[foot_sub], 'o', color="#0b4db7", markersize=dot_sz, alpha=dot_alpha, zorder=7)
 
     if arrow_mode == "normalized_1.5":
         nrm = np.sqrt(u**2 + v**2) + 1e-6
         u_plot = (u / nrm) * 1.5
         v_plot = (v / nrm) * 1.5
+        w = quiver_width if quiver_width is not None else 0.0038
+        hw = quiver_headwidth if quiver_headwidth is not None else 3.4
+        hl = quiver_headlength if quiver_headlength is not None else 4.2
         ax2.quiver(x_q[mask_q], y_q[mask_q], u_plot[mask_q], v_plot[mask_q],
                    color="#0b4db7", angles="xy", scale_units="xy", scale=1.0,
-                   width=0.0038, headwidth=3.4, headlength=4.2, zorder=8)
+                   width=w, headwidth=hw, headlength=hl, alpha=quiver_alpha, zorder=8)
     else:
         foot_mags = grad_mag[mask_dense]
         p75_mag = float(np.percentile(foot_mags, 75)) if len(foot_mags) > 0 else 1.0
         arrow_len = np.clip((m / (p75_mag + 1e-6)) ** 0.45 * (0.75 if step == 1 else (1.05 if step == 2 else 1.25)), 0.20, 1.1 if step == 1 else 1.6)
         u_plot = (u / (m + 1e-6)) * arrow_len
         v_plot = (v / (m + 1e-6)) * arrow_len
+        w = quiver_width if quiver_width is not None else (0.0030 if step == 1 else (0.0040 if step == 2 else 0.0042))
+        hw = quiver_headwidth if quiver_headwidth is not None else (2.8 if step == 1 else (3.2 if step == 2 else 3.6))
+        hl = quiver_headlength if quiver_headlength is not None else (3.2 if step == 1 else (3.8 if step == 2 else 4.2))
         ax2.quiver(x_q[mask_q], y_q[mask_q], u_plot[mask_q], v_plot[mask_q],
                    color="#0b4db7", angles="xy", scale_units="xy", scale=1.0,
-                   width=0.0030 if step == 1 else (0.0040 if step == 2 else 0.0042),
-                   headwidth=2.8 if step == 1 else (3.2 if step == 2 else 3.6),
-                   headlength=3.2 if step == 1 else (3.8 if step == 2 else 4.2),
+                   width=w, headwidth=hw, headlength=hl, alpha=quiver_alpha,
                    pivot='tail', zorder=8)
 
     ax2.set_xlim(0.5, n_cols + 0.5)
@@ -1397,29 +1406,42 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         writer.writeheader()
         writer.writerows(metrics)
 
-    # Render ALL 3 distinct requested output variants:
-    # 1. empty_center: High threshold (0.18), central plateau empty because gradient is small
+    # Render ALL 4 distinct requested output variants:
+    # 1. empty_center: High threshold (0.18), central plateau empty because gradient is small, width=0.0030, alpha=1.0
     out_png_1 = out_dir / f"{stem}_{foot_side}_1_empty_center.png"
     render_single_plantar_figure(
         out_png_1, grid_dense, grid_disp, grid_contour, mask_dense,
         sobel_x, sobel_y, grad_mag, mapped_rois, n_rows, n_cols, fig_size,
-        title_a, title_b, step=3, thresh=0.18, show_dots=False, arrow_mode="power_law", label_fontsize=label_fontsize
+        title_a, title_b, step=3, thresh=0.18, show_dots=False, arrow_mode="power_law",
+        quiver_width=0.0030, quiver_alpha=1.0, label_fontsize=label_fontsize
     )
 
-    # 2. dense_with_dots: 1:1 per-grid-cell vectors on every active node (9 arrows across M1)
+    # 2. dense_with_dots: Step = 2, width = 0.0030, alpha = 1.0 (5 arrows across M1)
     out_png_2 = out_dir / f"{stem}_{foot_side}_2_dense_with_dots.png"
     render_single_plantar_figure(
         out_png_2, grid_dense, grid_disp, grid_contour, mask_dense,
         sobel_x, sobel_y, grad_mag, mapped_rois, n_rows, n_cols, fig_size,
-        title_a, title_b, step=1, thresh=0.02, show_dots=True, arrow_mode="power_law", label_fontsize=label_fontsize
+        title_a, title_b, step=2, thresh=0.03, show_dots=True, arrow_mode="power_law",
+        quiver_width=0.0030, quiver_alpha=1.0, label_fontsize=label_fontsize
     )
 
-    # 3. key_vectors: FLIR0202 reference paper style (step=4, thresh=0.04, clean quiver vectors, NO dot lattice)
+    # 3. key_vectors: FLIR0202 reference paper style (step=4, thresh=0.04, clean quiver vectors, NO dot lattice, alpha=1.0)
     out_png_3 = out_dir / f"{stem}_{foot_side}_3_key_vectors_flir0202_style.png"
     render_single_plantar_figure(
         out_png_3, grid_dense, grid_disp, grid_contour, mask_dense,
         sobel_x, sobel_y, grad_mag, mapped_rois, n_rows, n_cols, fig_size,
-        title_a, title_b, step=4, thresh=0.04, show_dots=False, arrow_mode="normalized_1.5", label_fontsize=label_fontsize
+        title_a, title_b, step=4, thresh=0.04, show_dots=False, arrow_mode="normalized_1.5",
+        quiver_width=0.0038, quiver_alpha=1.0, label_fontsize=label_fontsize
+    )
+
+    # 4. hairline_dense: Step = 1 (1:1 grid nodes, 9 arrows across M1), hairline width = 0.0019, alpha = 0.75
+    out_png_4 = out_dir / f"{stem}_{foot_side}_4_hairline_dense.png"
+    render_single_plantar_figure(
+        out_png_4, grid_dense, grid_disp, grid_contour, mask_dense,
+        sobel_x, sobel_y, grad_mag, mapped_rois, n_rows, n_cols, fig_size,
+        title_a, title_b, step=1, thresh=0.02, show_dots=True, arrow_mode="power_law",
+        quiver_width=0.0019, quiver_alpha=0.75, quiver_headwidth=2.5, quiver_headlength=3.0,
+        label_fontsize=label_fontsize
     )
 
     # Set primary output file {stem}_{foot_side}_whitehot.png based on requested mode (defaulting to key_vectors)
@@ -1428,6 +1450,8 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         shutil.copy2(str(out_png_1), str(out_png))
     elif mode in ["dense_dots", "2_dense_with_dots"]:
         shutil.copy2(str(out_png_2), str(out_png))
+    elif mode in ["hairline_dense", "4_hairline_dense", "hairline", "dense_hairline"]:
+        shutil.copy2(str(out_png_4), str(out_png))
     elif mode in ["coarse_9x9", "9x9_coarse"]:
         render_single_plantar_figure(
             out_png, grid_dense, grid_disp, grid_contour, mask_dense,
@@ -1447,7 +1471,8 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         "csv_path": str(out_csv),
         "path_1_empty_center": str(out_png_1),
         "path_2_dense_dots": str(out_png_2),
-        "path_3_key_vectors": str(out_png_3)
+        "path_3_key_vectors": str(out_png_3),
+        "path_4_hairline_dense": str(out_png_4)
     })
 
 

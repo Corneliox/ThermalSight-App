@@ -1,0 +1,11 @@
+﻿# ISOLATED ROI TEMPERATURE MATRIX
+# stem,FLIR0205
+# label,t1
+# roi_index,1
+# mean_temp,35.4396
+# min_temp,34.5065
+# max_temp,36.3629
+# std_temp,0.5618
+# pixel_count,529
+#
+y_offset,24,x_offset,86,width,26,height,26

@@ -216,7 +216,7 @@ export default function App() {
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
-    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.6.9 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
+    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.7.0 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
   ]);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const terminalEndRef = useRef(null);
@@ -1177,8 +1177,14 @@ export default function App() {
         if (pRes && pRes.status === 'ok') {
           const footSide = pRes.foot_side || 'RightFoot';
           const footDisplayName = footSide === 'RightFoot' ? 'Kaki Kanan (Right Foot)' : 'Kaki Kiri (Left Foot)';
-          addLog('info', `✓ Generated Plantar Gradient (${plantarGridMode}) for ${stem}`);
-          alert(`✓ Berhasil! Hasil Gradien Kaki (${footDisplayName} - Mode: ${plantarGridMode}) berhasil dibuat:\n\n- ${stem}_${footSide}_whitehot.png\n- ${stem}_${footSide}_metrics.csv\n\nTersimpan di folder:\n${resultDir}`);
+          alert(`✓ Berhasil! Hasil Gradien Kaki (${footDisplayName} - Mode: ${plantarGridMode}) berhasil dibuat:\n\n` +
+                `- ${stem}_${footSide}_whitehot.png\n` +
+                `- 1. ${stem}_${footSide}_1_empty_center.png\n` +
+                `- 2. ${stem}_${footSide}_2_dense_with_dots.png\n` +
+                `- 3. ${stem}_${footSide}_3_key_vectors_flir0202_style.png\n` +
+                `- 4. ${stem}_${footSide}_4_hairline_dense.png\n` +
+                `- ${stem}_${footSide}_metrics.csv\n\n` +
+                `Tersimpan di folder:\n${resultDir}`);
           return;
         }
       }
@@ -1930,7 +1936,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.6.9 (Web & Desktop)</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.7.0 (Web & Desktop)</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -2080,7 +2086,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.6.9' : 'v1.6.9'}</span>
+          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.7.0' : 'v1.7.0'}</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (
@@ -2706,9 +2712,10 @@ export default function App() {
                         cursor: 'pointer'
                       }}
                     >
-                      <option value="key_vectors">Key Significant Vectors (FLIR0202 Paper Style) [Default]</option>
-                      <option value="empty_center">Empty Middle Zone (Threshold 0.18)</option>
-                      <option value="dense_dots">Full Grid Dots & Dense Micro-Vectors</option>
+                      <option value="key_vectors">3. Key Significant Vectors (FLIR0202 Style, Alpha 1.0) [Default]</option>
+                      <option value="hairline_dense">4. Hairline Dense Grid (Step 1, Width 0.0019, Alpha 0.75)</option>
+                      <option value="dense_dots">2. Dense Dots & Arrows (Step 2, Width 0.0030, Alpha 1.0)</option>
+                      <option value="empty_center">1. Empty Middle Zone (Threshold 0.18, Alpha 1.0)</option>
                       <option value="aspect_locked">Full Dense Grid (Aspect-Locked, Max 9x9 ROI)</option>
                       <option value="legacy">Fixed 104x54 Grid (Legacy Paper)</option>
                       <option value="coarse_9x9">9x9 Coarse Foot Grid</option>

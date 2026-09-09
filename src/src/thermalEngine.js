@@ -2553,17 +2553,26 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
   const magThresh = footGrads.length > 0 ? Math.max(0.015, footGrads[p15Idx]) : 0.015;
   const p75Mag = footGrads.length > 0 ? footGrads[p75Idx] : 0.08;
 
-  // Mode-aware configuration: key_vectors (default paper style), empty_center, dense_dots
+  // Mode-aware configuration:
+  // 1: empty_center (Threshold 0.18, step 3, alpha 1.0)
+  // 2: dense_dots (Step 2, with dots, alpha 1.0)
+  // 3: key_vectors (FLIR0202 paper style, step 4, alpha 1.0)
+  // 4: hairline_dense (Step 1, hairline width 1.0, alpha 0.75)
   const modeClean = String(gridMode || 'key_vectors').toLowerCase();
-  const showDots = modeClean === 'dense_dots' || modeClean === '2_dense_with_dots';
+  const isHairline = modeClean === 'hairline_dense' || modeClean === '4_hairline_dense' || modeClean === 'dense_hairline' || modeClean === 'hairline';
+  const isDenseDots = modeClean === 'dense_dots' || modeClean === '2_dense_with_dots';
+  const showDots = isDenseDots || isHairline;
   const isEmptyCenter = modeClean === 'empty_center' || modeClean === '1_empty_center';
   const effectiveThresh = isEmptyCenter ? 0.18 : (showDots ? 0.02 : 0.04);
-  const effectiveStep = isCoarse ? 1 : (showDots ? 1 : (isEmptyCenter ? 3 : 4));
+  const effectiveStep = isCoarse ? 1 : (isHairline ? 1 : (isDenseDots ? 2 : (isEmptyCenter ? 3 : 4)));
+  const quiverAlpha = isHairline ? 0.75 : 1.0;
 
   // Quiver Vector Arrows flowing along Thermal Gradient
+  ctx.save();
+  ctx.globalAlpha = quiverAlpha;
   ctx.fillStyle = '#0b4db7';
   ctx.strokeStyle = '#0b4db7';
-  ctx.lineWidth = isCoarse ? 2.0 : (effectiveStep === 1 ? 1.4 : 2.2);
+  ctx.lineWidth = isCoarse ? 2.0 : (isHairline ? 1.0 : (isDenseDots ? 1.8 : (effectiveStep === 1 ? 1.4 : 2.2)));
 
   for (let r = (isCoarse ? 0 : 2); r < nRows - (isCoarse ? 0 : 2); r += effectiveStep) {
     for (let c = (isCoarse ? 0 : 2); c < nCols - (isCoarse ? 0 : 2); c += effectiveStep) {
@@ -2571,11 +2580,11 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
         const x1 = panelB_left + (c + 0.5) * cellW;
         const y1 = panelTop + (r + 0.5) * cellH;
 
-        // Origin Anchor Dot only when requested in dense_dots mode
+        // Origin Anchor Dot only when requested in dense modes
         if (showDots) {
           ctx.fillStyle = '#0b4db7';
           ctx.beginPath();
-          ctx.arc(x1, y1, isCoarse ? 3.0 : (effectiveStep === 1 ? 1.3 : 2.0), 0, Math.PI * 2);
+          ctx.arc(x1, y1, isCoarse ? 3.0 : (isHairline ? 1.1 : (effectiveStep === 1 ? 1.3 : 2.0)), 0, Math.PI * 2);
           ctx.fill();
         }
 
@@ -2592,7 +2601,7 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
           } else {
             // Sub-linear power-law scaling
             const normScale = Math.max(0.20, Math.min(effectiveStep === 1 ? 1.1 : 1.6, Math.pow(magVal / (p75Mag + 1e-6), 0.45) * (effectiveStep === 1 ? 0.75 : 1.25)));
-            arrowLen = (isCoarse ? cellW * 0.45 : cellW * 1.0) * normScale;
+            arrowLen = (isCoarse ? cellW * 0.45 : (isHairline ? cellW * 0.85 : cellW * 1.0)) * normScale;
           }
 
           const uNorm = (gx / nrm) * arrowLen;
@@ -2609,7 +2618,7 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
 
           // Arrowhead
           const headAng = Math.atan2(vNorm, uNorm);
-          const hLen = isCoarse ? 6 : (effectiveStep === 1 ? 4.5 : 7);
+          const hLen = isCoarse ? 6 : (isHairline ? 3.5 : (effectiveStep === 1 ? 4.5 : 7));
           ctx.beginPath();
           ctx.moveTo(x2, y2);
           ctx.lineTo(x2 - hLen * Math.cos(headAng - Math.PI / 6), y2 - hLen * Math.sin(headAng - Math.PI / 6));
@@ -2620,6 +2629,7 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
       }
     }
   }
+  ctx.restore();
 
   // Panel B ROI concentric rings
   for (const m of mappedRois) {
