@@ -84,7 +84,8 @@ def load_temperature(filepath: str) -> np.ndarray:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def compute(temp: np.ndarray) -> dict:
-    img     = (255 * temp / temp.max()).astype(np.float32)
+    max_val = float(temp.max())
+    img     = (255 * temp / (max_val if max_val > 1e-6 else 1.0)).astype(np.float32)
     blurred = cv2.GaussianBlur(img, (5, 5), sigmaX=1.5)
 
     sx_raw = cv2.Sobel(blurred, cv2.CV_64F, 1, 0, ksize=3)
@@ -677,11 +678,11 @@ def save_star_csv(star: dict, cx: float, cy: float, dist_cm: float,
             p = star["points"][name]
             w.writerow([name,
                         f"{p['px']:.2f}", f"{p['py']:.2f}",
-                        f"{p['px']/px_cm:.4f}", f"{p['py']/px_cm:.4f}",
+                        f"{p['px']/max(px_cm, 1e-8):.4f}", f"{p['py']/max(px_cm, 1e-8):.4f}",
                         f"{p['angle_deg']:.1f}",
                         f"{p['temp']:.6f}",
                         f"{p['diff']:+.6f}",
-                        f"{p['diff']/dist_cm:+.6f}"])
+                        f"{p['diff']/max(dist_cm, 1e-8):+.6f}"])
 
     log(f"  saved {csv_path.name}")
     return str(csv_path)
@@ -1193,10 +1194,13 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         temp_work = inpainted_u8.astype(np.float32)
 
     # Blank out the extreme right edge colorbar strip outside the scene
-    temp_work[:, 310:320] = 23.5
+    if W >= 320:
+        temp_work[:, 310:320] = 23.5
+    elif W > 10:
+        temp_work[:, int(W * 0.968):] = 23.5
 
     # 2. Determine Foot Side: Screen Left (avg_x < W/2) -> Right Foot in camera plantar view
-    xs = [r.get("cx", r.get("points", [{}])[0].get("x", W / 2)) for r in rois if isinstance(r, dict)]
+    xs = [r.get("cx", (r.get("points") or [{}])[0].get("x", W / 2)) for r in rois if isinstance(r, dict)]
     avg_x = float(np.mean(xs)) if xs else (W * 0.28)
     col_prof = np.mean(temp_work, axis=0)
     c_start, c_end = int(W * 0.35), int(W * 0.65)

@@ -47,15 +47,51 @@ contextBridge.exposeInMainWorld('electronAPI', {
   refocusWindow: () => ipcRenderer.invoke('refocus-window'),
 
   // Menu Event Listeners
-  onMenuOpenSettings: (callback) => ipcRenderer.on('menu-open-settings', () => callback()),
-  onMenuOpenAbout: (callback) => ipcRenderer.on('menu-open-about', () => callback()),
-  onMenuOpenMacGuide: (callback) => ipcRenderer.on('menu-open-mac-guide', () => callback()),
-  onMenuTriggerUndo: (callback) => ipcRenderer.on('menu-trigger-undo', () => callback()),
-  onMenuOpenSingle: (callback) => ipcRenderer.on('menu-open-single', () => callback()),
-  onMenuOpenFolder: (callback) => ipcRenderer.on('menu-open-folder', () => callback()),
-  onMenuOpenAnnotation: (callback) => ipcRenderer.on('menu-open-annotation', () => callback()),
-  onMenuOpenProject: (callback) => ipcRenderer.on('menu-open-project', () => callback()),
+  onMenuOpenSettings: (callback) => {
+    const sub = () => callback();
+    ipcRenderer.on('menu-open-settings', sub);
+    return () => ipcRenderer.removeListener('menu-open-settings', sub);
+  },
+  onMenuOpenAbout: (callback) => {
+    const sub = () => callback();
+    ipcRenderer.on('menu-open-about', sub);
+    return () => ipcRenderer.removeListener('menu-open-about', sub);
+  },
+  onMenuOpenMacGuide: (callback) => {
+    const sub = () => callback();
+    ipcRenderer.on('menu-open-mac-guide', sub);
+    return () => ipcRenderer.removeListener('menu-open-mac-guide', sub);
+  },
+  onMenuTriggerUndo: (callback) => {
+    const sub = () => callback();
+    ipcRenderer.on('menu-trigger-undo', sub);
+    return () => ipcRenderer.removeListener('menu-trigger-undo', sub);
+  },
+  onMenuOpenSingle: (callback) => {
+    const sub = () => callback();
+    ipcRenderer.on('menu-open-single', sub);
+    return () => ipcRenderer.removeListener('menu-open-single', sub);
+  },
+  onMenuOpenFolder: (callback) => {
+    const sub = () => callback();
+    ipcRenderer.on('menu-open-folder', sub);
+    return () => ipcRenderer.removeListener('menu-open-folder', sub);
+  },
+  onMenuOpenAnnotation: (callback) => {
+    const sub = () => callback();
+    ipcRenderer.on('menu-open-annotation', sub);
+    return () => ipcRenderer.removeListener('menu-open-annotation', sub);
+  },
+  onMenuOpenProject: (callback) => {
+    const sub = () => callback();
+    ipcRenderer.on('menu-open-project', sub);
+    return () => ipcRenderer.removeListener('menu-open-project', sub);
+  },
 
   // Terminal & Live Diagnostics Log Listener
-  onBackendLog: (callback) => ipcRenderer.on('backend-log', (_event, log) => callback(log)),
+  onBackendLog: (callback) => {
+    const sub = (_event, log) => callback(log);
+    ipcRenderer.on('backend-log', sub);
+    return () => ipcRenderer.removeListener('backend-log', sub);
+  },
 });

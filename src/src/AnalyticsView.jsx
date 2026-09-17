@@ -117,7 +117,11 @@ export default function AnalyticsView({
   const barW = Math.max(3, Math.min(10, 36 / nSteps));
 
   // Security: CSV escape to prevent formula injection in Excel
-  const csvEsc = (val) => { const s = String(val ?? '').replace(/"/g, '""'); return /[,"\n\r=+\-@\t]/.test(s) ? `"${s}"` : s; };
+  const csvEsc = (val) => {
+    let s = String(val ?? '').replace(/"/g, '""');
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return /[,"\n\r]/.test(s) ? `"${s}"` : s;
+  };
 
   const exportSummaryCsv = () => {
     let csvContent = `step,picture_name,session_name,timestamp_min,label,mean_temp,min_temp,max_temp,std_temp,pixel_count,delta_mean_vs_step1_c,delta_center_vs_step1_c,gradient_max_c_per_cm,gradient_modus,star_center_temp,star_radius_cm\n`;

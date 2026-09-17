@@ -158,8 +158,12 @@ def render_paper_figure(foot_patch: np.ndarray, out_path: Path, rois: list, n_ro
     ax1.set_title('(A)\n\nPPP', fontsize=18, fontweight='bold', pad=12)
 
     # ──────────────────────── PANEL B: PPG & PGA ────────────────────────
-    ax2.set_facecolor('white')
-    levels = np.linspace(np.nanmin(grid_contour), np.nanmax(grid_contour), 16)
+    valid_c = grid_contour[np.isfinite(grid_contour)]
+    cmin = float(np.min(valid_c)) if len(valid_c) > 0 else 24.0
+    cmax = float(np.max(valid_c)) if len(valid_c) > 0 else 36.0
+    if cmax - cmin < 0.1:
+        cmax = cmin + 0.5
+    levels = np.linspace(cmin, cmax, 16)
     ax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), grid_contour,
                 levels=levels, cmap=CMAP_THERMAL_WHITEHOT, linewidths=1.0, alpha=0.90)
 
@@ -207,8 +211,8 @@ def render_paper_figure(foot_patch: np.ndarray, out_path: Path, rois: list, n_ro
     # Metrics CSV
     metrics = []
     for name, cx, cy, _ in rois:
-        ix = int(round(cx)) - 1
-        iy = int(round(cy)) - 1
+        ix = int(np.clip(round(cx) - 1, 0, n_cols - 1))
+        iy = int(np.clip(round(cy) - 1, 0, n_rows - 1))
         val_ppp = float(grid_dense[iy, ix])
         gx = float(sobel_x[iy, ix])
         gy = float(sobel_y[iy, ix])

@@ -216,7 +216,7 @@ export default function App() {
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
-    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.7.0 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
+    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.7.1 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
   ]);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const terminalEndRef = useRef(null);
@@ -251,7 +251,9 @@ export default function App() {
     const handleInputFocus = (e) => {
       const target = e.target;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
-        target.focus();
+        if (document.activeElement !== target) {
+          target.focus();
+        }
       }
     };
     window.addEventListener('mousedown', handleInputFocus, true);
@@ -299,19 +301,36 @@ export default function App() {
     }
   }, [terminalLogs, isTerminalOpen]);
 
+  // Mutable ref for current menu action handlers (prevents re-subscribing IPC listeners)
+  const menuHandlersRef = useRef({});
+  menuHandlersRef.current = {
+    setShowSettingsModal,
+    setShowAboutModal,
+    setShowMacGuideModal,
+    undoLastRoi,
+    handleBrowseSingle,
+    handleBrowseFolder,
+    handleOpenAnnotationSession,
+    openFolder,
+  };
+
   // ── Menu Bar Event IPC Listeners (Electron) ──────────────────────────────────
   useEffect(() => {
-    if (window.electronAPI) {
-      if (api.onMenuOpenSettings)   api.onMenuOpenSettings(() => setShowSettingsModal(true));
-      if (api.onMenuOpenAbout)      api.onMenuOpenAbout(() => setShowAboutModal(true));
-      if (api.onMenuOpenMacGuide)   api.onMenuOpenMacGuide(() => setShowMacGuideModal(true));
-      if (api.onMenuTriggerUndo)    api.onMenuTriggerUndo(() => undoLastRoi());
-      if (api.onMenuOpenSingle)     api.onMenuOpenSingle(() => handleBrowseSingle());
-      if (api.onMenuOpenFolder)     api.onMenuOpenFolder(() => handleBrowseFolder());
-      if (api.onMenuOpenAnnotation) api.onMenuOpenAnnotation(() => handleOpenAnnotationSession());
-      if (api.onMenuOpenProject)    api.onMenuOpenProject(() => openFolder());
-    }
-  }, [segmentations, activeImagePath, imageList, currentIndex, filePath]);
+    if (!window.electronAPI) return;
+    const cleanups = [];
+    if (api.onMenuOpenSettings)   cleanups.push(api.onMenuOpenSettings(() => menuHandlersRef.current.setShowSettingsModal?.(true)));
+    if (api.onMenuOpenAbout)      cleanups.push(api.onMenuOpenAbout(() => menuHandlersRef.current.setShowAboutModal?.(true)));
+    if (api.onMenuOpenMacGuide)   cleanups.push(api.onMenuOpenMacGuide(() => menuHandlersRef.current.setShowMacGuideModal?.(true)));
+    if (api.onMenuTriggerUndo)    cleanups.push(api.onMenuTriggerUndo(() => menuHandlersRef.current.undoLastRoi?.()));
+    if (api.onMenuOpenSingle)     cleanups.push(api.onMenuOpenSingle(() => menuHandlersRef.current.handleBrowseSingle?.()));
+    if (api.onMenuOpenFolder)     cleanups.push(api.onMenuOpenFolder(() => menuHandlersRef.current.handleBrowseFolder?.()));
+    if (api.onMenuOpenAnnotation) cleanups.push(api.onMenuOpenAnnotation(() => menuHandlersRef.current.handleOpenAnnotationSession?.()));
+    if (api.onMenuOpenProject)    cleanups.push(api.onMenuOpenProject(() => menuHandlersRef.current.openFolder?.()));
+
+    return () => {
+      cleanups.forEach(fn => typeof fn === 'function' && fn());
+    };
+  }, []);
 
   // ── Startup Crash Recovery Check ─────────────────────────────────────────────
   useEffect(() => {
@@ -1253,7 +1272,11 @@ export default function App() {
     const { parentFolderName, resultDir } = getResultFolderInfo();
     const isolatedDir = `${resultDir}/${parentFolderName}_isolated_labels`;
     const exportFilesMap = {};
-    const csvEsc = (val) => { const s = String(val ?? '').replace(/"/g, '""'); return /[,"\n\r=+\-@\t]/.test(s) ? `"${s}"` : s; };
+    const csvEsc = (val) => {
+      let s = String(val ?? '').replace(/"/g, '""');
+      if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+      return /[,"\n\r]/.test(s) ? `"${s}"` : s;
+    };
 
     try {
       for (let imgIdx = 0; imgIdx < targetPaths.length; imgIdx++) {
@@ -1590,7 +1613,7 @@ export default function App() {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(downloadUrl);
+        setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
         localStorage.removeItem('thermalsight_draft');
       }
 
@@ -1936,7 +1959,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.7.0 (Web & Desktop)</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.7.1 (Web & Desktop)</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -2086,7 +2109,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.7.0' : 'v1.7.0'}</span>
+          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.7.1' : 'v1.7.1'}</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (
