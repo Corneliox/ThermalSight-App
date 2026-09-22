@@ -86,4 +86,6 @@ scratch/
 *.jpg_analysis/
 *.png_analysis/
 *_Result/
+*_Result*/
 *.jpg_Result/
+*.jpg_Result*/

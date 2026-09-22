@@ -1,15 +1,18 @@
 # 🌡 ThermalSight
 
-[![Version](https://img.shields.io/badge/stable%20version-1.7.1-brightgreen.svg)](https://github.com/Corneliox/ThermalSight-App/releases/tag/v1.7.1)
+[![Version](https://img.shields.io/badge/stable%20version-1.8.0-brightgreen.svg)](https://github.com/Corneliox/ThermalSight-App/releases/tag/v1.8.0)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Web-brightgreen.svg)]()
 [![Web App](https://img.shields.io/badge/Live%20Demo-Firebase%20Hosting-orange.svg)](https://thermalsight-web-2026.web.app)
 [![License](https://img.shields.io/badge/license-MIT-purple.svg)]()
 
 > [!NOTE]
-> **Production Stable Milestone: v1.7.1**  
-> The current official and verified stable production release is **[ThermalSight v1.7.1](https://github.com/Corneliox/ThermalSight-App/releases/tag/v1.7.1)**. All multi-platform binaries (`.exe`, Linux `.AppImage`, macOS Intel/Apple Silicon `.dmg` and `.zip`) and web builds are fully published and tested.
-> 
-> *Active Development (v1.8.0-dev)*: Introduces foundational architectural upgrades including Blocking Sequence Upload with Error Recovery, Dual Ruler/Reference Box Calibration First Workflow, Dynamic Distance Physical Grid Normalization, and Synchronized Physical Circle Radii.
+> **Production Stable Milestone: v1.8.0**  
+> The current official and verified stable production release is **ThermalSight v1.8.0**. Features include:
+> - **In-App Multilingual Interactive Workflow Guide**: 3-perspective architecture and operating guide available in English (`EN` - default), Indonesian (`ID`), and Traditional Chinese (`繁中`).
+> - **Pure Radiometric Sensor Loading ("Mode Mula-mula")**: Artificial inpainting bypassed; 16-bit radiometric sensor metadata decoded directly via FLIR Planck parameters with zero visual OSD stamp artifacts.
+> - **Standardized 9×9 Grid ROI Windows**: ROI circle dimensions locked to exactly 9×9 grid cells ($r = 4.5$ cells) for uniform, reproducible thermal flux quantification.
+> - **Automatic Legacy Annotation Translation**: Historical sessions (v1.6 / v1.7) automatically upgrade to the 9×9 grid standard upon file load while preserving anatomical centroids.
+> - **Blocking Sequence Upload & Terminal Diagnostics**: Top-level root folder filtering and live error recovery for multi-image datasets.
 
 **ThermalSight** is a high-precision biomedical and industrial thermal imaging suite designed for radiometric temperature analysis, multi-label region segmentation, time-series treadmill/pressure protocol tracking, and automated 8-point compass thermal gradient extraction.
 

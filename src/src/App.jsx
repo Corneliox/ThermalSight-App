@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 import AnalyticsView from './AnalyticsView';
+import WorkflowView from './WorkflowView';
 import { getProtocolStep, generateGraphSvg } from './protocol';
 import JSZip from 'jszip';
 import {
@@ -244,6 +245,7 @@ export default function App() {
   const [analyticsData,      setAnalyticsData]      = useState(null);
   const [showSettingsModal,  setShowSettingsModal]  = useState(false);
   const [showAboutModal,     setShowAboutModal]     = useState(false);
+  const [showWorkflowModal,  setShowWorkflowModal]  = useState(false);
   const [isMacPlatform,      setIsMacPlatform]      = useState(false);
   const [showMacGuideModal,  setShowMacGuideModal]  = useState(false);
   const [backendDiagnostics, setBackendDiagnostics] = useState(null);
@@ -2456,6 +2458,11 @@ export default function App() {
         </div>
       )}
 
+      {/* WORKFLOW MODAL */}
+      {showWorkflowModal && (
+        <WorkflowView onClose={() => setShowWorkflowModal(false)} />
+      )}
+
       {/* v1.8.0 FULL BLOCKING BATCH INGESTION OVERLAY */}
       {isBatchLoading && (
         <div className="batch-loader-overlay">
@@ -2595,6 +2602,9 @@ export default function App() {
           <button className="btn-ghost" title="Open Saved Annotation Session (annotations_session.json)" onClick={handleOpenAnnotationSession}>
             📂 Load Session
           </button>
+          <button className="btn-ghost" title="Workflow Architecture & Operating Guide" onClick={() => setShowWorkflowModal(true)}>
+            🗺️ Workflow
+          </button>
           <button className="btn-ghost" title="Settings / Variable Configurations" onClick={() => setShowSettingsModal(true)}>
             ⚙ Settings
           </button>
@@ -2674,6 +2684,12 @@ export default function App() {
               <div className="drop-icon">📂</div>
               <p className="drop-title">Open Saved Annotations</p>
               <p className="drop-sub">Load annotations_session.json or project session</p>
+            </div>
+
+            <div className="drop-zone" onClick={() => setShowWorkflowModal(true)}>
+              <div className="drop-icon">🗺️</div>
+              <p className="drop-title">Workflow & Architecture Guide</p>
+              <p className="drop-sub">User Manual, System Logic & Integrated Dataflow (EN / ID / 繁中)</p>
             </div>
           </div>
         </main>
