@@ -10,315 +10,271 @@ import React, { useState } from 'react';
  */
 
 export const MERMAID_FLOWCHART_EN = `flowchart TD
-    Start(["🚀 Start: Launch ThermalSight v1.8.0"]) --> Launch["Application Welcome Screen"]
-    
-    %% Input Data Selection
-    Launch --> InputChoice{"Select Input Method"}
-    InputChoice -->|"Folder Bulk Mode"| OpenFolder["Click 'Open Image Folder'<br>Select sequence folder (e.g., example/bas)"]
-    InputChoice -->|"Single Image"| OpenSingle["Click 'Open Single Image'<br>Select 1 radiometric file (.jpg/.png/.tiff)"]
-    InputChoice -->|"Saved Session"| OpenSession["Click 'Open Saved Annotations'<br>Load annotations_session.json"]
-    InputChoice -->|"Drag & Drop"| DragDrop["Drag & Drop Folder / ZIP onto Canvas"]
+    classDef purple fill:#3b1366,stroke:#a855f7,stroke-width:2px,color:#ffffff;
+    classDef green fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#ffffff;
 
-    %% Filtering & Pure Radiometric Extraction
-    OpenFolder --> RootFilter["Automatic Root Folder Filter:<br>Strictly ingests files in top-level directory.<br>Subfolders (_Result, _analysis) are ignored."]
-    DragDrop --> RootFilter
-    OpenSingle --> IngestionOverlay
-    OpenSession --> AutoUpgradeCheck
+    Start(["🚀 Start ThermalSight Application v1.8.0"]) --> ChooseFolder["📁 Select Image Sequence Folder (Bulk Mode)"]
 
-    RootFilter --> PureSensorDecode["Pure Radiometric Decoding ('Mode Mula-mula'):<br>Decodes 16-bit FLIR Planck data directly.<br>Zero artificial inpainting; eliminates OSD stamps naturally."]
-    PureSensorDecode --> IngestionOverlay
+    %% Subgraph 1: Smart Ingestion & Root Filter
+    subgraph S1 ["📦 Smart Ingestion & Root Filter Stage"]
+        Filter["Automatic Filter: Strictly Ingest Top-Level Root Photos<br>(Ignore *_analysis & *_Result folders)"]
+        Blocking["Full Blocking Progress Overlay Screen<br>Live Audit Logging in Process Terminal"]
+        CheckDecode{"Were All Files Successfully Decoded?"}
+        ErrorBanner["Warning Banner Appears with Refresh & Back Buttons"]
+        PureExtract["flyr Engine: Pure Radiometric Temperature Extraction<br>(100% Free of Logos, 35°C Text & Colorbar Stamps)"]
 
-    %% Full Blocking Batch Ingestion Overlay
-    subgraph BLOCKING_INGESTION ["Full Blocking Batch Ingestion Overlay"]
-        IngestionOverlay["Canvas & Controls 100% Locked<br>Displays Real-time Progress Bar & Terminal Diagnostics"]
-        IngestionOverlay --> StatusCheck{"Any Decoding Errors?"}
-        
-        StatusCheck -->|"Corrupt / Invalid File"| ShowErrorBanner["Alert Banner Displayed Above Progress Bar:<br>Lists problematic filenames & error codes."]
-        ShowErrorBanner --> IngestionErrorAction{"User Recovery Action"}
-        IngestionErrorAction -->|"Click 🔄 Refresh / Retry"| IngestionOverlay
-        IngestionErrorAction -->|"Click ← Back / Cancel"| CancelIngestion["Abort & Return to Welcome Screen"]
-        
-        StatusCheck -->|"All Succeeded (100%)"| UnlockIngestion["Ingestion Completed Successfully (100%)"]
+        Filter --> Blocking
+        Blocking --> CheckDecode
+        CheckDecode -->|"Error Detected"| ErrorBanner
+        ErrorBanner -->|"Retry"| Blocking
+        CheckDecode -->|"100% Succeeded"| PureExtract
     end
 
-    CancelIngestion --> Launch
+    ChooseFolder --> Filter
 
-    %% Legacy Session Auto-Upgrade Routine
-    subgraph LEGACY_UPGRADE ["Legacy Session Auto-Upgrade Engine"]
-        AutoUpgradeCheck{"Session Version Check"}
-        AutoUpgradeCheck -->|"Legacy v1.6 / v1.7 (< 9x9 Grid)"| UpgradeMatrix["Automatic Translation Matrix:<br>1. Centroids (cx, cy) preserved 100%<br>2. Circle radii expanded to 9x9 grid cells (r = 4.5 cells = 1.2 cm)<br>3. 36-vertex polygons regenerated"]
-        AutoUpgradeCheck -->|"Standard v1.8.0 (9x9 Grid)"| DirectLoad["Load Annotations Directly"]
-        UpgradeMatrix --> DirectLoad
-    end
-    DirectLoad --> MainWorkspace
+    %% Subgraph 2: Dynamic Scale Calibration
+    subgraph S2 ["📏 Dynamic Scale Calibration Stage (Mandatory at Start)"]
+        CalibBanner["Calibration Banner Opens Above Canvas"]
+        CalibMethod{"Select Calibration Method"}
+        RulerAction["Click 2 Points Along Ruler<br>(Hold Shift for Orthogonal Straight Line)"]
+        BoxAction["Drag Box over Calibration Card<br>(Example: 5.0 cm × 5.0 cm Target)"]
+        CalcScale["Compute Scale (px/cm) & Lock Physical Dimension<br>Circle Radius Automatically Bound to: 1.2 cm"]
+        ConfirmCalib["Click '✓ Done & Start Annotating'"]
 
-    %% Mandatory Calibration Wizard
-    UnlockIngestion --> CalibWizardCheck{"Is Image Calibrated?"}
-    CalibWizardCheck -->|"Yes (Saved in Session)"| MainWorkspace
-    CalibWizardCheck -->|"No (New Image / Uncalibrated)"| EnterWizard
-
-    subgraph CALIB_WIZARD ["Mandatory Scale Calibration Wizard"]
-        EnterWizard["Calibration Wizard Banner Appears:<br>ROI Annotation Temporarily Locked.<br>Scale Panel Highlighted in Cyan."]
-        
-        EnterWizard --> ChooseCalibType{"Select Calibration Modality"}
-        
-        ChooseCalibType -->|"⏹️ Reference Box"| BoxCalib["1. Enter physical dimensions (Default: 10 x 10 cm)<br>2. Click 2 diagonal corners (Top-Left & Bottom-Right)<br>3. Dashed preview box & 4 anchor dots appear<br>4. Isotropic scale: S = (Wpx + Hpx) / (Wcm + Hcm) [px/cm]"]
-        
-        ChooseCalibType -->|"📏 Ruler Line"| RulerCalib["1. Enter physical length (cm)<br>2. Click Start Point & End Point along ruler<br>3. Linear scale: S = DistPx / DistCm [px/cm]"]
-
-        BoxCalib --> ConfirmCalib["Click 'Confirm & Set Calibration'"]
-        RulerCalib --> ConfirmCalib
-        ConfirmCalib --> UnlockWorkspaceBtn["Click Banner Button:<br>'✓ Done & Start Annotating'"]
+        CalibBanner --> CalibMethod
+        CalibMethod -->|"Ruler Line"| RulerAction
+        CalibMethod -->|"Reference Box (Default)"| BoxAction
+        RulerAction --> CalcScale
+        BoxAction --> CalcScale
+        CalcScale --> ConfirmCalib
     end
 
-    UnlockWorkspaceBtn --> MainWorkspace["Full Workspace Unlocked:<br>Canvas, Toolbars, and All Diagnostic Panels Ready"]
+    PureExtract --> CalibBanner
 
-    %% ROI Segmentation & 9x9 Grid Standards
-    subgraph ANNOTATION_PHASE ["ROI Segmentation & 9x9 Grid Standard"]
-        MainWorkspace --> SelectDrawTool{"Select ROI Tool"}
+    %% Subgraph 3: ROI Annotation & Legacy Migration
+    subgraph S3 ["🎯 ROI Annotation & Legacy Session Migration Stage"]
+        WorkflowChoice{"Select Annotation Workflow"}
         
-        SelectDrawTool -->|"Circle Tool (C)"| CircleMode["Standardized 9x9 Grid Circle Mode:<br>- Physical radius synchronized: r_cm = 1.2 cm<br>- Exact 9x9 grid cells window (radius = 4.5 cells)<br>- Dynamically rescales pixel radius with camera distance"]
-        
-        CircleMode --> PlaceCircle["Click Canvas to Place ROI Circle"]
+        %% Left: Direct New Annotation
+        ClickCentroid["Single Click on Foot Anatomical Centroid"]
+        CircleCreated["1.2 cm Circle Generated Instantly<br>8-Directional Compass Star Computed Automatically"]
+        AutoAdvance["Label Auto-Advance: T1 -> M1 -> M2<br>Quick Navigation: Right Arrow -> Next Image"]
 
-        SelectDrawTool -->|"Polygon Tool (P)"| PolyMode["Freehand Polygon Tool:<br>Click sequential vertices, close loop at start point."]
-        PolyMode --> PlacePoly["Polygon ROI Created"]
+        %% Right: Legacy Session Migration
+        SelectSession["Select annotations_session.json (v1.6 / v1.7)"]
+        UpgradeEngine["⚡ Auto-Upgrade Engine v1.8.0<br>• Centroid coordinates (cx, cy) preserved 100%<br>• Legacy circle scaled up to Radius 12 px (1.2 cm)<br>• 36 circular polygon vertices regenerated"]
+        LegacyReady["Legacy Annotations Ready for Use Without Redrawing!"]
 
-        PlaceCircle --> AssignLabelShortcuts["Assign Anatomical Landmark Hotkeys:<br>[T] = T1 Hallux | [M] = M1 Metatarsal | [3] = M3 Midfoot"]
-        PlacePoly --> AssignLabelShortcuts
+        WorkflowChoice -->|"Direct New Annotation"| ClickCentroid
+        ClickCentroid --> CircleCreated
+        CircleCreated --> AutoAdvance
+
+        WorkflowChoice -->|"📂 Load Legacy Session"| SelectSession
+        SelectSession --> UpgradeEngine
+        UpgradeEngine --> LegacyReady
     end
 
-    %% Thermal Gradient & Star Compass Analysis
-    subgraph ANALYSIS_PHASE ["Thermal Gradient & Directional Analysis"]
-        AssignLabelShortcuts --> AnalysisChoice{"Select Diagnostic Tool"}
-        
-        AnalysisChoice -->|"8-Point Compass Star (S)"| StarAnalysis["Automated 8-Directional Radial Sampling:<br>- Evaluates N, NE, E, SE, S, SW, W, NW<br>- Computes thermal difference ΔT relative to center<br>- Identifies dominant thermal drift direction"]
-        
-        AnalysisChoice -->|"Sobel Gradient Field"| SobelAnalysis["Spatial Gradient Convolution:<br>- Computes derivatives Gx, Gy via Sobel-Feldman kernels<br>- Gradient magnitude ||∇T|| in °C/px and °C/cm<br>- Gradient direction θ = atan2(Gy, Gx)"]
-        
-        AnalysisChoice -->|"Plantar Paper Fig.1"| PlantarAnalysis["Generate Publication Fig.1 Package:<br>- Whitehot high-contrast monochrome background<br>- Ironbow false-color thermal colormap inside ROIs<br>- 4 Grid Modes: Normal Sparse, Dense Dots,<br>  Sparse Lines, Hairline Dense (step=1, width=0.0019)<br>- Quiver drift vectors & polar radar rose overlay"]
-        
-        AnalysisChoice -->|"Analytics Dashboard"| AnalyticsView["Multi-ROI Thermal Trendlines & Stability Analysis"]
+    ConfirmCalib --> WorkflowChoice
+
+    %% Subgraph 4: Grid 9x9 & Publication Export
+    subgraph S4 ["🔬 9×9 Grid Standardization & Publication Export Stage"]
+        ClickSave["Click '💾 Save Label & Export'"]
+        GridExtract["Extract 104-Row Rigid Plantar Grid Window"]
+        Standard9x9["Standardized Precision Diameter: Exactly 9x9 Grid Cells<br>(r = 4.5 cells & full 9x9 compass matrix)"]
+        ExportPackage["Complete International Journal Publication Package:<br>• Upgraded annotations_session.json<br>• _whitehot.png (Panel A: PPP, Panel B: PPG & PQA)<br>• Quiver_metrics.csv (ROI_Radius_Grid: 4.5, PPG-Mean, %rt)<br>• SVG Analysis Charts & Sequence Montage Composites"]
+
+        ClickSave --> GridExtract
+        GridExtract --> Standard9x9
+        Standard9x9 --> ExportPackage
     end
 
-    %% Export & Packaging
-    StarAnalysis --> ExportPackage
-    SobelAnalysis --> ExportPackage
-    PlantarAnalysis --> ExportPackage
-    AnalyticsView --> ExportPackage
+    AutoAdvance --> ClickSave
+    LegacyReady --> ClickSave
 
-    subgraph EXPORT_PHASE ["Multi-Format Export & Archival"]
-        ExportPackage["Click '💾 Save Label & Export' / 'Export ZIP Package'"] --> SaveResults["Automated Multi-Format Export:<br>1. Clean Radiometric Image (1:1 pure sensor)<br>2. metrics.csv (Min, Max, Mean, Dominant Vectors)<br>3. Plantar Fig.1 Composites (Whitehot + Ironbow)<br>4. Quiver Gradient Vector Maps & Polar Roses<br>5. annotations_session.json (Portable Backup)"]
-    end
-    
-    SaveResults --> Finish(["✅ Complete: Clinically Validated, Calibrated & Publication Ready"])`;
+    Finish(["🏁 Analysis Complete & Standardized"])
+    ExportPackage --> Finish
+
+    class UpgradeEngine purple;
+    class LegacyReady green;
+    class Standard9x9 green;`;
 
 export const MERMAID_FLOWCHART_ZH = `flowchart TD
-    Start(["🚀 開始：啟動 ThermalSight v1.8.0"]) --> Launch["應用程式歡迎與載入主畫面"]
-    
-    %% 資料匯入方式選擇
-    Launch --> InputChoice{"選擇資料匯入方式"}
-    InputChoice -->|"資料夾批量模式"| OpenFolder["點擊「開啟影像資料夾 (Bulk Mode)」<br>選取序列資料夾（例如：example/bas）"]
-    InputChoice -->|"單張影像模式"| OpenSingle["點擊「開啟單張熱像圖」<br>選取單一輻射檔案 (.jpg/.png/.tiff)"]
-    InputChoice -->|"讀取已存專案"| OpenSession["點擊「開啟儲存之標註專案」<br>載入 annotations_session.json"]
-    InputChoice -->|"拖放上傳"| DragDrop["直接將資料夾或 ZIP 壓縮檔拖曳至畫布"]
+    classDef purple fill:#3b1366,stroke:#a855f7,stroke-width:2px,color:#ffffff;
+    classDef green fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#ffffff;
 
-    %% 資料夾過濾與純感測解碼
-    OpenFolder --> RootFilter["根目錄自動過濾機制：<br>嚴格僅讀取最外層主要照片。<br>自動忽略所有結果子資料夾（如 _Result、_analysis）。"]
-    DragDrop --> RootFilter
-    OpenSingle --> IngestionOverlay
-    OpenSession --> AutoUpgradeCheck
+    Start(["🚀 啟動 ThermalSight 應用程式 v1.8.0"]) --> ChooseFolder["📁 選取影像序列資料夾 (Bulk Mode)"]
 
-    RootFilter --> PureSensorDecode["純輻射感測解碼（Mode Mula-mula）：<br>直接依據 FLIR 普朗克公式解算 16 位元原始溫度。<br>零破壞性修復，天然消除原廠螢幕 OSD 水印與溫度標籤。"]
-    PureSensorDecode --> IngestionOverlay
+    %% 第一階段：智慧匯入與根目錄過濾
+    subgraph S1 ["📦 智慧匯入與根目錄過濾階段"]
+        Filter["自動過濾機制：僅讀取最外層主要照片<br>（自動忽略 *_analysis 與 *_Result 結果資料夾）"]
+        Blocking["全阻斷載入畫面 (Blocking Progress Screen)<br>即時終端啟用診斷稽核紀錄"]
+        CheckDecode{"所有檔案是否全數成功解碼？"}
+        ErrorBanner["進度條上方顯示警告橫幅與重新整理/返回按鈕"]
+        PureExtract["flyr 感測引擎：純淨輻射溫度萃取<br>（100% 無 Logo 水印、無 35°C 標籤與色階條干擾）"]
 
-    %% 全阻斷批量載入遮罩
-    subgraph BLOCKING_INGESTION ["全阻斷批量載入畫面 (Full Blocking Ingestion)"]
-        IngestionOverlay["畫布與控制項 100% 鎖定<br>顯示即時進度條與終端診斷視窗"]
-        IngestionOverlay --> StatusCheck{"是否有檔案解碼異常？"}
-        
-        StatusCheck -->|"有損壞或非熱像檔"| ShowErrorBanner["警告橫幅即時顯示於進度條正上方：<br>列出問題檔案名稱與錯誤代碼。"]
-        ShowErrorBanner --> IngestionErrorAction{"使用者應對選項"}
-        IngestionErrorAction -->|"點擊 🔄 重新整理 / 重試"| IngestionOverlay
-        IngestionErrorAction -->|"點擊 ← 返回 / 取消（左上方）"| CancelIngestion["放棄載入並返回首頁"]
-        
-        StatusCheck -->|"全數解碼成功 (100%)"| UnlockIngestion["批量影像載入完成 (100%)"]
+        Filter --> Blocking
+        Blocking --> CheckDecode
+        CheckDecode -->|"發現異常 / 損壞"| ErrorBanner
+        ErrorBanner -->|"重試"| Blocking
+        CheckDecode -->|"100% 成功"| PureExtract
     end
 
-    CancelIngestion --> Launch
+    ChooseFolder --> Filter
 
-    %% 舊版標註向後相容升級矩陣
-    subgraph LEGACY_UPGRADE ["舊版標註專案自動升級引擎"]
-        AutoUpgradeCheck{"標註版本檢查"}
-        AutoUpgradeCheck -->|"舊版 v1.6 / v1.7（未達 9x9 規格）"| UpgradeMatrix["自動相容性轉換矩陣：<br>1. 解剖幾何中心 (cx, cy) 100% 絕對鎖定<br>2. 圓形半徑自動擴展至 9x9 網格單元 (半徑 r = 4.5 格 = 1.2 cm)<br>3. 重新計算並生成 36 頂點多邊形邊界"]
-        AutoUpgradeCheck -->|"新版 v1.8.0（標準 9x9 規格）"| DirectLoad["直接套用標註數據"]
-        UpgradeMatrix --> DirectLoad
-    end
-    DirectLoad --> MainWorkspace
+    %% 第二階段：動態尺寸校準
+    subgraph S2 ["📏 動態尺寸校準階段（初始強制執行）"]
+        CalibBanner["畫布上方展開校準嚮導頂部橫幅"]
+        CalibMethod{"選取校準工具模式"}
+        RulerAction["於標定尺點擊起點與終點 2 點<br>（按住 Shift 可強制鎖定正交直線）"]
+        BoxAction["於標定板框選參考方塊<br>（例如：5.0 cm × 5.0 cm 校準卡）"]
+        CalcScale["計算 px/cm 比例並鎖定實體物理尺寸<br>解剖圓形半徑自動同步綁定：1.2 cm"]
+        ConfirmCalib["點擊「✓ 完成並開始標註」按鈕"]
 
-    %% 強制尺度校準嚮導
-    UnlockIngestion --> CalibWizardCheck{"該影像是否已建立校準比例？"}
-    CalibWizardCheck -->|"已校準（專案已存）"| MainWorkspace
-    CalibWizardCheck -->|"未校準（全新拍攝影像）"| EnterWizard
-
-    subgraph CALIB_WIZARD ["強制物理尺寸校準嚮導 (Calibration Wizard)"]
-        EnterWizard["校準嚮導頂部橫幅啟動：<br>暫時鎖定標註繪製功能，<br>右側校準面板以青色亮框提示。"]
-        
-        EnterWizard --> ChooseCalibType{"選取校準工具模式"}
-        
-        ChooseCalibType -->|"⏹️ 參考方塊 (Reference Box)"| BoxCalib["1. 輸入實體公制長寬（預設：10 x 10 cm）<br>2. 於畫布對角線點擊 2 點（左上角與右下角）<br>3. 即時顯示虛線預覽框與 4 頂點錨點<br>4. 自動計算各向同性比例：S = (Wpx + Hpx) / (Wcm + Hcm) [px/cm]"]
-        
-        ChooseCalibType -->|"📏 直尺標記 (Ruler Line)"| RulerCalib["1. 輸入直尺長度（公分 cm）<br>2. 點擊標定直尺的起點與終點<br>3. 計算線性像素比例：S = DistPx / DistCm [px/cm]"]
-
-        BoxCalib --> ConfirmCalib["點擊「確認並套用校準比例」"]
-        RulerCalib --> ConfirmCalib
-        ConfirmCalib --> UnlockWorkspaceBtn["點擊頂部橫幅按鈕：<br>「✓ 完成並開始進行解剖標註」"]
+        CalibBanner --> CalibMethod
+        CalibMethod -->|"直尺標記 (Ruler)"| RulerAction
+        CalibMethod -->|"參考方塊（預設）"| BoxAction
+        RulerAction --> CalcScale
+        BoxAction --> CalcScale
+        CalcScale --> ConfirmCalib
     end
 
-    UnlockWorkspaceBtn --> MainWorkspace["工作區完整解鎖：<br>畫布、繪圖工具列與所有診斷面板全面就緒"]
+    PureExtract --> CalibBanner
 
-    %% 解剖標記與 9x9 網格標準
-    subgraph ANNOTATION_PHASE ["解剖標註與 9×9 網格標準化"]
-        MainWorkspace --> SelectDrawTool{"選取標註工具"}
+    %% 第三階段：解剖標註與舊版專案無縫遷移
+    subgraph S3 ["🎯 解剖標註與舊版專案無縫遷移階段"]
+        WorkflowChoice{"選擇標註工作流路徑"}
         
-        SelectDrawTool -->|"圓形工具 (C)"| CircleMode["標準化 9×9 網格圓形模式：<br>- 鎖定物理實體半徑：r_cm = 1.2 cm<br>- 精確符合 9×9 網格單元觀測窗（半徑 = 4.5 格）<br>- 自動根據鏡頭拍攝距離動態調整像素半徑大小"]
-        
-        CircleMode --> PlaceCircle["點擊畫布放置解剖圓形 ROI"]
+        %% 左側分支：直接全新標註
+        ClickCentroid["於足底解剖關鍵點中心點擊 1 次"]
+        CircleCreated["瞬間生成 1.2 cm 標準圓形<br>自動計算八向星形羅盤熱梯度"]
+        AutoAdvance["標籤自動遞進：T1 -> M1 -> M2<br>快捷鍵導航：右方向鍵 -> 切換下一張影像"]
 
-        SelectDrawTool -->|"多邊形工具 (P)"| PolyMode["自由多邊形鋼筆工具：<br>依序點擊邊界節點，於起點閉合輪廓。"]
-        PolyMode --> PlacePoly["多邊形 ROI 建立完成"]
+        %% 右側分支：舊版專案載入
+        SelectSession["選取 annotations_session.json 檔案 (v1.6 / v1.7)"]
+        UpgradeEngine["⚡ v1.8.0 自動無縫升級引擎<br>• 解剖幾何中心 (cx, cy) 100% 絕對鎖定保留<br>• 舊版小圓形自動擴展至半徑 12 px (1.2 cm)<br>• 重新演算並建立 36 節點圓形多邊形"]
+        LegacyReady["歷史標註即刻生效，完全免除手動重新繪製！"]
 
-        PlaceCircle --> AssignLabelShortcuts["鍵盤快速鍵指派解剖標籤：<br>[T] = T1 拇趾 | [M] = M1 第一蹠骨 | [3] = M3 中足部"]
-        PlacePoly --> AssignLabelShortcuts
+        WorkflowChoice -->|"直接開始全新標註"| ClickCentroid
+        ClickCentroid --> CircleCreated
+        CircleCreated --> AutoAdvance
+
+        WorkflowChoice -->|"📂 載入歷史存檔專案"| SelectSession
+        SelectSession --> UpgradeEngine
+        UpgradeEngine --> LegacyReady
     end
 
-    %% 熱梯度與八向星形羅盤分析
-    subgraph ANALYSIS_PHASE ["熱梯度場與熱流傳播分析"]
-        AssignLabelShortcuts --> AnalysisChoice{"選擇診斷分析面板"}
-        
-        AnalysisChoice -->|"八向星形羅盤 (S)"| StarAnalysis["自動化八向徑向溫度採樣：<br>- 測量 8 個方位角（N, NE, E, SE, S, SW, W, NW）<br>- 計算相對於幾何中心之溫差 ΔT<br>- 自動識別主導熱擴散偏移方位 (Modus)"]
-        
-        AnalysisChoice -->|"Sobel 空間梯度場"| SobelAnalysis["空間梯度卷積運算：<br>- 透過 Sobel-Feldman 空間核計算偏導數 Gx, Gy<br>- 梯度向量模長 ||∇T||（°C/px 與 °C/cm）<br>- 梯度夾角 θ = atan2(Gy, Gx)"]
-        
-        AnalysisChoice -->|"足底論文 Figure 1"| PlantarAnalysis["生成國際期刊級 Figure 1 複合圖：<br>- Whitehot 高對比黑白足底輪廓底圖<br>- ROI 解剖區域內套用高解析度 Ironbow 鐵紅熱色表<br>- 4 種網格模式：稀疏點陣、密集點陣、稀疏格線、<br>  密集極細髮絲線 (step=1, 線寬=0.0019)<br>- 自動疊加向量流向箭頭與極坐標雷達玫瑰圖"]
-        
-        AnalysisChoice -->|"多特徵統計圖表"| AnalyticsView["全序列多 ROI 溫度變化趨勢與熱穩定度分析圖"]
+    ConfirmCalib --> WorkflowChoice
+
+    %% 第四階段：9x9 網格標準化與期刊發表導出
+    subgraph S4 ["🔬 9×9 網格標準化與期刊發表級成果導出階段"]
+        ClickSave["點擊「💾 儲存標註並導出」按鈕"]
+        GridExtract["擷取足底 104 列剛性網格觀測窗"]
+        Standard9x9["精確標準化直徑：恆等於 9×9 網格單元<br>（半徑 r = 4.5 格 & 覆蓋完整 9×9 羅盤矩陣）"]
+        ExportPackage["國際期刊級完整導出成果包：<br>• 全面升級之 annotations_session.json 備份<br>• _whitehot.png 足底圖（Panel A: PPP, Panel B: PPG & PQA）<br>• Quiver_metrics.csv（記錄 ROI_Radius_Grid: 4.5, PPG-Mean, %rt）<br>• SVG 向量分析圖表與全序列蒙太奇拼圖"]
+
+        ClickSave --> GridExtract
+        GridExtract --> Standard9x9
+        Standard9x9 --> ExportPackage
     end
 
-    %% 成果導出與存檔
-    StarAnalysis --> ExportPackage
-    SobelAnalysis --> ExportPackage
-    PlantarAnalysis --> ExportPackage
-    AnalyticsView --> ExportPackage
+    AutoAdvance --> ClickSave
+    LegacyReady --> ClickSave
 
-    subgraph EXPORT_PHASE ["多格式結果導出與成果歸檔"]
-        ExportPackage["點擊「💾 儲存標註並導出」 / 「導出 ZIP 完整壓縮包」"] --> SaveResults["自動化多格式導出套件：<br>1. 純淨感測影像 (1:1 原始無干擾)<br>2. metrics.csv (最高溫、最低溫、平均溫、主導向量)<br>3. Plantar Fig.1 複合期刊圖 (Whitehot + Ironbow)<br>4. 梯度向量 Quiver 圖與極坐標玫瑰圖<br>5. annotations_session.json (完整專案備份檔)"]
-    end
-    
-    SaveResults --> Finish(["✅ 完成：臨床驗證完備、物理尺寸精準且具備期刊發表品質"])`;
+    Finish(["🏁 分析圓滿完成，全面標準化"])
+    ExportPackage --> Finish
+
+    class UpgradeEngine purple;
+    class LegacyReady green;
+    class Standard9x9 green;`;
 
 export const MERMAID_FLOWCHART_ID = `flowchart TD
-    Start(["🚀 Mulai: Buka ThermalSight v1.8.0"]) --> Launch["Tampilan Awal Aplikasi"]
-    
-    %% Input Data
-    Launch --> InputChoice{"Pilih Metode Input Folder / Citra"}
-    InputChoice -->|"Folder Bulk Mode"| OpenFolder["Klik 'Open Image Folder'<br>Pilih folder sequence (misal: example/bas)"]
-    InputChoice -->|"Single Image"| OpenSingle["Klik 'Open Single Image'<br>Pilih 1 file (.jpg/.png/.tiff)"]
-    InputChoice -->|"Saved Session"| OpenSession["Klik 'Open Saved Annotations'<br>Load annotations_session.json"]
-    InputChoice -->|"Drag & Drop"| DragDrop["Drag & Drop Folder / ZIP ke Kanvas"]
+    classDef purple fill:#3b1366,stroke:#a855f7,stroke-width:2px,color:#ffffff;
+    classDef green fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#ffffff;
 
-    %% Filter Subfolder & Pure Sensor
-    OpenFolder --> RootFilter["Filter Folder Otomatis:<br>Hanya mengambil foto di ROOT folder utama.<br>Semua subfolder result (_Result, _analysis) diabaikan."]
-    DragDrop --> RootFilter
-    OpenSingle --> IngestionOverlay
-    OpenSession --> AutoUpgradeCheck
+    Start(["🚀 Mulai Aplikasi ThermalSight v1.8.0"]) --> ChooseFolder["📁 Pilih Folder Sekuens Gambar (Bulk Mode)"]
 
-    RootFilter --> PureSensorDecode["Dekode Radiometrik Murni ('Mode Mula-mula'):<br>Data suhu dihitung langsung dari 16-bit Planck FLIR.<br>Bebas inpainting; bebas watermark teks OSD kamera."]
-    PureSensorDecode --> IngestionOverlay
+    %% Subgraph 1: Ingestion & Filter Cerdas
+    subgraph S1 ["📦 Tahap Ingestion & Filter Cerdas"]
+        Filter["Filter Otomatis: Hanya Ambil Foto di Root Folder<br>(Abaikan *_analysis & *_Result)"]
+        Blocking["Layar Terkunci (Blocking Progress Screen)<br>Audit Log Aktif di Live Terminal"]
+        CheckDecode{"Semua File Berhasil Didecoding?"}
+        ErrorBanner["Muncul Warning Banner & Tombol Refresh/Back"]
+        PureExtract["Pustaka flyr: Ekstraksi Suhu Radiometrik Murni<br>(100% Bebas Logo, Teks 35°C & Colorbar)"]
 
-    %% Full Blocking Ingestion Screen
-    subgraph BLOCKING_INGESTION ["Layar Terkunci Penuh (Full Blocking Batch Ingestion)"]
-        IngestionOverlay["Layar Utama & Kanvas Terkunci 100%<br>Menampilkan Progress Bar & Terminal Diagnostik"]
-        IngestionOverlay --> StatusCheck{"Apakah Ada Error Pembacaan?"}
-        
-        StatusCheck -->|"Ada File Corrupt"| ShowErrorBanner["Banner Peringatan Muncul Tepat di Atas Progress Bar:<br>Daftar file gagal & kode error."]
-        ShowErrorBanner --> IngestionErrorAction{"Pilihan Pengguna"}
-        IngestionErrorAction -->|"Klik 🔄 Refresh / Retry"| IngestionOverlay
-        IngestionErrorAction -->|"Klik ← Back / Cancel"| CancelIngestion["Batal & Kembali ke Tampilan Awal"]
-        
-        StatusCheck -->|"Semua Sukses (100%)"| UnlockIngestion["Ingestion Selesai 100%"]
+        Filter --> Blocking
+        Blocking --> CheckDecode
+        CheckDecode -->|"Ada Error"| ErrorBanner
+        ErrorBanner -->|"Retry"| Blocking
+        CheckDecode -->|"Sukses 100%"| PureExtract
     end
 
-    CancelIngestion --> Launch
+    ChooseFolder --> Filter
 
-    %% Translasi Otomatis Sesi Lama
-    subgraph LEGACY_UPGRADE ["Mesin Auto-Upgrade Sesi Lama"]
-        AutoUpgradeCheck{"Pemeriksaan Versi Sesi"}
-        AutoUpgradeCheck -->|"Sesi Lama v1.6 / v1.7 (< 9x9 Grid)"| UpgradeMatrix["Matriks Translasi Otomatis:<br>1. Titik pusat anatomi (cx, cy) terkunci 100%<br>2. Radius lingkaran diperbesar ke standar grid 9x9 (r = 4.5 sel = 1.2 cm)<br>3. Poligon 36-titik dihitung ulang"]
-        AutoUpgradeCheck -->|"Standar v1.8.0 (Grid 9x9)"| DirectLoad["Terapkan Anotasi Langsung"]
-        UpgradeMatrix --> DirectLoad
-    end
-    DirectLoad --> MainWorkspace
+    %% Subgraph 2: Kalibrasi Skala Dinamis
+    subgraph S2 ["📏 Tahap Kalibrasi Skala Dinamis (Wajib Di Awal)"]
+        CalibBanner["Banner Kalibrasi Terbuka di Atas Kanvas"]
+        CalibMethod{"Pilih Metode Kalibrasi"}
+        RulerAction["Klik 2 Titik Penggaris<br>(Tekan Shift untuk Garis Lurus)"]
+        BoxAction["Tarik Kotak pada Kartu Kalibrasi<br>(Contoh: Kartu 5.0 cm × 5.0 cm)"]
+        CalcScale["Hitung Skala px/cm & Kunci Ukuran Fisik<br>Radius Lingkaran Otomatis Terikat: 1.2 cm"]
+        ConfirmCalib["Klik '✓ Done & Start Annotating'"]
 
-    %% Mandatory Calibration Wizard
-    UnlockIngestion --> CalibWizardCheck{"Apakah Citra Sudah Terkalibrasi?"}
-    CalibWizardCheck -->|"Sudah (Tersimpan di Sesi)"| MainWorkspace
-    CalibWizardCheck -->|"Belum (Citra Baru)"| EnterWizard
-
-    subgraph CALIB_WIZARD ["Langkah Wajib: Calibration Wizard Step"]
-        EnterWizard["Banner Kalibrasi Muncul:<br>Fitur Anotasi Terkunci Sementara,<br>Panel Kalibrasi Menyala dengan Bingkai Cyan."]
-        
-        EnterWizard --> ChooseCalibType{"Pilih Modalitas Kalibrasi"}
-        
-        ChooseCalibType -->|"⏹️ Reference Box (Kotak)"| BoxCalib["1. Masukkan ukuran kotak (Default: 10 x 10 cm)<br>2. Klik 2 titik sudut diagonal (Kiri-Atas & Kanan-Bawah)<br>3. Kotak preview putus-putus & 4 anchor dot muncul<br>4. Skala isotropik: S = (Wpx+Hpx)/(Wcm+Hcm) [px/cm]"]
-        
-        ChooseCalibType -->|"📏 Ruler Line (Mistar)"| RulerCalib["1. Masukkan panjang garis (cm)<br>2. Klik Titik Awal & Akhir garis mistar<br>3. Skala dihitung: S = DistPx / DistCm [px/cm]"]
-
-        BoxCalib --> ConfirmCalib["Klik 'Confirm & Set Calibration'"]
-        RulerCalib --> ConfirmCalib
-        ConfirmCalib --> UnlockWorkspaceBtn["Klik Tombol Banner:<br>'✓ Selesai & Mulai Anotasi'"]
+        CalibBanner --> CalibMethod
+        CalibMethod -->|"Garis Mistar (Ruler)"| RulerAction
+        CalibMethod -->|"Kotak Referensi (Default)"| BoxAction
+        RulerAction --> CalcScale
+        BoxAction --> CalcScale
+        CalcScale --> ConfirmCalib
     end
 
-    UnlockWorkspaceBtn --> MainWorkspace["Workspace Terbuka Penuh:<br>Canvas, Tool Draw, dan Seluruh Panel Siap Digunakan"]
+    PureExtract --> CalibBanner
 
-    %% Anotasi & Sinkronisasi Fisik
-    subgraph ANNOTATION_PHASE ["Anotasi ROI & Standar Grid 9x9"]
-        MainWorkspace --> SelectDrawTool{"Pilih Tool Anotasi"}
+    %% Subgraph 3: Anotasi & Migrasi Sesi Lama
+    subgraph S3 ["🎯 Tahap Anotasi & Migrasi Sesi Lama"]
+        WorkflowChoice{"Pilih Alur Kerja Anotasi"}
         
-        SelectDrawTool -->|"Mode Lingkaran (C)"| CircleMode["Mode Lingkaran Standar 9x9 Grid:<br>- Radius terkunci fisik: r_cm = 1.2 cm<br>- Jendela ROI tepat 9x9 sel grid (radius = 4.5 sel)<br>- Menyesuaikan skala piksel otomatis sesuai jarak kamera"]
-        
-        CircleMode --> PlaceCircle["Klik Kanvas untuk Menaruh ROI Lingkaran"]
+        %% Kiri: Anotasi Baru Langsung
+        ClickCentroid["Klik 1x pada Pusat Anatomis Kaki"]
+        CircleCreated["Lingkaran 1.2 cm Terbentuk Instan<br>Kompas Star 8 Arah Dihitung Otomatis"]
+        AutoAdvance["Label Auto-Advance: T1 -> M1 -> M2<br>Navigasi Cepat: Panah Kanan -> Gambar Berikutnya"]
 
-        SelectDrawTool -->|"Mode Poligon (P)"| PolyMode["Mode Poligon (Pen Tool):<br>Klik titik-titik kontur bebas, tutup di titik awal."]
-        PolyMode --> PlacePoly["ROI Poligon Terbentuk"]
+        %% Kanan: Load Session Lama
+        SelectSession["Pilih annotations_session.json (v1.6 / v1.7)"]
+        UpgradeEngine["⚡ Mesin Auto-Upgrade v1.8.0<br>• Titik pusat (cx, cy) dipertahankan 100%<br>• Lingkaran lama diperbesar ke Radius 12 px (1.2 cm)<br>• 36 titik poligon dibentuk ulang"]
+        LegacyReady["Anotasi Lama Siap Digunakan Tanpa Gambar Ulang!"]
 
-        PlaceCircle --> AssignLabelShortcuts["Beri Label Anatomi via Shortcut Keyboard:<br>[T] = T1 Ibu Jari | [M] = M1 Metatarsal 1 | [3] = M3 Midfoot"]
-        PlacePoly --> AssignLabelShortcuts
+        WorkflowChoice -->|"Anotasi Baru Langsung"| ClickCentroid
+        ClickCentroid --> CircleCreated
+        CircleCreated --> AutoAdvance
+
+        WorkflowChoice -->|"📂 Load Session Lama"| SelectSession
+        SelectSession --> UpgradeEngine
+        UpgradeEngine --> LegacyReady
     end
 
-    %% Analisis Lanjutan & Ekspor
-    subgraph ANALYSIS_PHASE ["Analisis Gradien Termal & Arah"]
-        AssignLabelShortcuts --> AnalysisChoice{"Pilih Panel Diagnostik"}
-        
-        AnalysisChoice -->|"Bintang Kompas 8 Arah (S)"| StarAnalysis["Pengukuran Radial Otomatis 8 Arah:<br>- Evaluasi N, NE, E, SE, S, SW, W, NW<br>- Hitung selisih suhu ΔT terhadap pusat<br>- Tentukan arah rambat panas dominan (Modus)"]
-        
-        AnalysisChoice -->|"Gradien Sobel Spasial"| SobelAnalysis["Konvolusi Gradien Spasial:<br>- Hitung turunan Gx, Gy via kernel Sobel-Feldman<br>- Magnitudo ||∇T|| dalam °C/px dan °C/cm<br>- Sudut arah θ = atan2(Gy, Gx)"]
-        
-        AnalysisChoice -->|"Plantar Paper Fig.1"| PlantarAnalysis["Replika Plantar Fig 1 untuk Publikasi:<br>- Latar Whitehot kontras tinggi<br>- Colormap Ironbow di dalam lingkaran ROI<br>- 4 Pilihan Grid: Sparse Dots, Dense Dots,<br>  Sparse Lines, Hairline Dense (step=1, width=0.0019)<br>- Overlay panah rambat vektor & mawar radar"]
-        
-        AnalysisChoice -->|"Analytics Dashboard"| AnalyticsView["Grafik Tren Suhu Multi-ROI & Stabilitas"]
+    ConfirmCalib --> WorkflowChoice
+
+    %% Subgraph 4: Grid 9x9 & Ekspor Publikasi
+    subgraph S4 ["🔬 Tahap Grid 9x9 & Ekspor Publikasi"]
+        ClickSave["Klik '💾 Save Label & Export'"]
+        GridExtract["Ekstraksi Jendela Grid Kaki 104-Baris"]
+        Standard9x9["Standardisasi Diameter Presisi 9x9 Sel Grid<br>(r = 4.5 sel & kompas penuh 9x9 array)"]
+        ExportPackage["Paket Ekspor Lengkap Jurnal Internasional:<br>• annotations_session.json ter-upgrade<br>• _whitehot.png (Panel A: PPP, Panel B: PPG & PQA)<br>• Quiver_metrics.csv (ROI_Radius_Grid: 4.5, PPG-Mean, %rt)<br>• Grafik Analisis SVG & Sequence Montage"]
+
+        ClickSave --> GridExtract
+        GridExtract --> Standard9x9
+        Standard9x9 --> ExportPackage
     end
 
-    StarAnalysis --> ExportPackage
-    SobelAnalysis --> ExportPackage
-    PlantarAnalysis --> ExportPackage
-    AnalyticsView --> ExportPackage
+    AutoAdvance --> ClickSave
+    LegacyReady --> ClickSave
 
-    subgraph EXPORT_PHASE ["Ekspor Multi-Format & Penyimpanan"]
-        ExportPackage["Klik '💾 Simpan Label & Ekspor' / 'Ekspor Paket ZIP'"] --> SaveResults["Ekspor Otomatis Multi-Format:<br>1. Citra Bersih (1:1 sensor murni)<br>2. metrics.csv (Min, Max, Rerata, Vektor Dominan)<br>3. Plantar Fig.1 Komposit (Whitehot + Ironbow)<br>4. Peta Vektor Quiver & Mawar Polar<br>5. annotations_session.json (Cadangan Portabel)"]
-    end
-    
-    SaveResults --> Finish(["✅ Selesai: Analisis Valid, Terkalibrasi Fisik & Siap Publikasi"])`;
+    Finish(["🏁 Analisis Selesai & Terstandarisasi"])
+    ExportPackage --> Finish
+
+    class UpgradeEngine purple;
+    class LegacyReady green;
+    class Standard9x9 green;`;
 
 export const WORKFLOW_CONTENT = {
   en: {
