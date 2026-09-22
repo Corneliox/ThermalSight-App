@@ -2412,7 +2412,7 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     const gy = (rcy / cropH) * nRows + 0.5;
 
     const userRad = r.radius ? (r.radius / cropH) * nRows : defaultRadius;
-    const rFinal = isRoiBounded ? Math.min(4.5, Math.max(2.2, userRad)) : userRad;
+    const rFinal = isRoiBounded ? 4.5 : userRad;
 
     const clampedGx = Math.max(rFinal + 0.5, Math.min(nCols - rFinal + 0.5, gx));
     const clampedGy = Math.max(rFinal + 0.5, Math.min(nRows - rFinal + 0.5, gy));

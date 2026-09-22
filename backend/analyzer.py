@@ -1402,9 +1402,9 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         else:
             r_mapped = default_radius
 
-        # Cap annotation so diameter does NOT exceed 9x9 grid cells:
+        # Standardize annotation to full 9x9 grid cells window (radius 4.5 -> diameter 9.0 cells):
         if is_roi_bounded:
-            r_final = min(4.5, max(2.5, r_mapped))
+            r_final = 4.5
         else:
             r_final = r_mapped
 

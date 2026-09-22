@@ -1951,7 +1951,7 @@ export default function App() {
       }
     }
 
-    // Remap segmentations with basename tolerance
+    // Remap segmentations with basename tolerance and auto-translate to v1.8.0 9x9 Grid mode
     if (sessionData.segmentations) {
       const incomingSegs = sessionData.segmentations;
       const basenameMap = {};
@@ -1960,21 +1960,81 @@ export default function App() {
         basenameMap[base] = incomingSegs[key];
       });
 
+      // Helper to translate old ROI annotations to the v1.8.0 9x9 Grid mode
+      const translateRoisTo9x9Mode = (roisList, fPath, base) => {
+        if (!Array.isArray(roisList) || roisList.length === 0) return [];
+
+        // Find calibration for this file if available
+        const calib = (sessionData.calibrationsMap && (sessionData.calibrationsMap[fPath] || sessionData.calibrationsMap[base]))
+          || calibrationsMap[fPath] || calibrationsMap[base];
+        const pxPerCm = calib?.pxPerCm || 10.0;
+
+        // Standard physical circle radius is 1.2 cm (spanning 9x9 cells on the rigid grid)
+        const targetRadiusCm = 1.2;
+        const targetRadiusPx = computePhysicalCircleRadiusPx(targetRadiusCm, pxPerCm); // e.g. 12.0 px at 10 px/cm
+
+        let upgradedCount = 0;
+        const upgradedRois = roisList.map(r => {
+          if (!r || typeof r !== 'object') return r;
+
+          if (r.type === 'circle' || r.radius !== undefined) {
+            const oldRadPx = parseFloat(r.radius) || 0;
+            const oldRadCm = parseFloat(r.radius_cm) || 0;
+
+            // If previous radius is smaller than 9x9 Grid requirement, enlarge it
+            if (oldRadPx < targetRadiusPx || oldRadCm < 1.0) {
+              upgradedCount++;
+              const upgradedRadiusPx = Math.max(oldRadPx, targetRadiusPx);
+              const upgradedRadiusCm = Math.max(oldRadCm, targetRadiusCm);
+              const cx = r.cx !== undefined ? r.cx : (r.points?.[0]?.x || 0);
+              const cy = r.cy !== undefined ? r.cy : (r.points?.[0]?.y || 0);
+
+              // Recompute 36 circular polygon vertices for canvas rendering and masking
+              const polyPoints = [];
+              for (let i = 0; i < 36; i++) {
+                const a = (i * 10 * Math.PI) / 180.0;
+                polyPoints.push({
+                  x: cx + upgradedRadiusPx * Math.cos(a),
+                  y: cy + upgradedRadiusPx * Math.sin(a),
+                });
+              }
+
+              return {
+                ...r,
+                type: 'circle',
+                cx,
+                cy,
+                radius: upgradedRadiusPx,
+                radius_cm: upgradedRadiusCm,
+                points: polyPoints
+              };
+            }
+          }
+          return r;
+        });
+
+        if (upgradedCount > 0) {
+          addLog('info', `[v1.8.0 Auto-Upgrade] Translated ${upgradedCount} ROI(s) on ${base} to 9x9 Grid scale (Radius: ${targetRadiusPx.toFixed(1)}px / ${targetRadiusCm}cm)`);
+        }
+
+        return upgradedRois;
+      };
+
       if (activeFiles && activeFiles.length > 0) {
         const remapped = {};
         activeFiles.forEach(fPath => {
           const base = fPath.split(/[\\/]/).pop();
-          if (incomingSegs[fPath]) {
-            remapped[fPath] = incomingSegs[fPath];
-          } else if (basenameMap[base]) {
-            remapped[fPath] = basenameMap[base];
-          } else {
-            remapped[fPath] = [];
-          }
+          const rawRois = incomingSegs[fPath] || basenameMap[base] || [];
+          remapped[fPath] = translateRoisTo9x9Mode(rawRois, fPath, base);
         });
         setSegmentations(remapped);
       } else {
-        setSegmentations(incomingSegs);
+        const remapped = {};
+        Object.keys(incomingSegs).forEach(key => {
+          const base = key.split(/[\\/]/).pop();
+          remapped[key] = translateRoisTo9x9Mode(incomingSegs[key], key, base);
+        });
+        setSegmentations(remapped);
       }
     }
   };
