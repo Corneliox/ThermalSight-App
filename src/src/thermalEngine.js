@@ -249,9 +249,6 @@ export function loadThermalImageData(imageSource) {
       const imgData = ctx.getImageData(0, 0, W, H);
       const data = imgData.data;
 
-      // v1.8.0: Automatically clean all FLIR accessories (OSD text, logo, colorbar, reticles)
-      cleanFlirAccessoriesRgba(data, W, H);
-      ctx.putImageData(imgData, 0, 0);
       const cleanImageDataUrl = canvas.toDataURL('image/png');
 
       const tempMatrix = new Float32Array(W * H);

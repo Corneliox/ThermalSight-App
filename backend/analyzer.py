@@ -758,8 +758,6 @@ def cmd_analyze(image_path: str, out_dir_str: str):
 
     log(f"Loading: {image_path}")
     temp = load_temperature(image_path)
-    # v1.8.0: Automatically clean all FLIR accessories on initial load
-    temp = clean_flir_accessories(temp)
     log(f"Shape {temp.shape}  range {temp.min():.1f}–{temp.max():.1f}")
 
     log("Computing gradients…")
