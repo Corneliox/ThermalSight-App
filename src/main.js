@@ -133,6 +133,7 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
+      webSecurity: false,
     },
   });
 
@@ -425,12 +426,35 @@ ipcMain.handle('list-folder-images', async (_event, folderPath) => {
   const files = fs.readdirSync(folderPath);
   const exts  = ['.jpg', '.jpeg', '.png', '.tiff', '.tif'];
   
-  const validFiles = files.filter(f => exts.includes(path.extname(f).toLowerCase()));
+  const validFiles = files.filter(f => {
+    try {
+      const fullPath = path.join(folderPath, f);
+      const stat = fs.statSync(fullPath);
+      if (!stat.isFile()) return false; // Strictly only top-level files, ignore subdirectories!
+    } catch {
+      return false;
+    }
+    return exts.includes(path.extname(f).toLowerCase());
+  });
   
   // Natural sorting (e.g. img_1, img_2, ..., img_10)
   validFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
 
   return validFiles.map(f => path.join(folderPath, f));
+});
+
+// ── IPC: read-image-base64 (Bulletproof fallback for local file loading) ──────
+ipcMain.handle('read-image-base64', async (_event, filePath) => {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return null;
+    const buf = fs.readFileSync(filePath);
+    const ext = path.extname(filePath).toLowerCase().replace('.', '') || 'png';
+    const mime = (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg' : 'image/png';
+    return `data:${mime};base64,${buf.toString('base64')}`;
+  } catch (err) {
+    console.error('read-image-base64 error:', err);
+    return null;
+  }
 });
 
 // ── IPC: Annotation Session Project Loading ──────────────────────────────────

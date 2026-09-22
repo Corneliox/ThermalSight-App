@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openFileDialog: () => ipcRenderer.invoke('open-file-dialog'),
   openFolderDialog: () => ipcRenderer.invoke('open-folder-dialog'),
   listFolderImages: (folderPath) => ipcRenderer.invoke('list-folder-images', folderPath),
+  readImageBase64: (filePath) => ipcRenderer.invoke('read-image-base64', filePath),
 
   // Draft Session Recovery APIs
   saveDraft: (draftData) => ipcRenderer.invoke('save-draft', draftData),

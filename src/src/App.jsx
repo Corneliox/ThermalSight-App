@@ -15,7 +15,10 @@ import {
   generateFullGradientMagnitudeCanvas,
   generateFullGradientLabeledCanvas,
   generateFullGradientQuiverContourCanvas,
-  generatePlantarPaperFig1Package
+  generatePlantarPaperFig1Package,
+  computeReferenceBoxScale,
+  computePhysicalGridStepPx,
+  computePhysicalCircleRadiusPx
 } from './thermalEngine';
 
 // Access secure electronAPI exposed via contextBridge in preload.js
@@ -41,12 +44,13 @@ const api = window.electronAPI || {
   loadAnnotationFile: async () => null,
   checkExistingAnnotation: async () => null,
   exportResultPackage: async () => {},
+  readImageBase64: async () => null,
   getPlatformInfo: async () => ({ platform: 'web', isMac: false, isPackaged: false, arch: 'web' }),
   runMacPermissionFix: async () => ({ status: 'skipped' }),
   testBackendConnection: async () => ({ success: true }),
 };
 
-// ── Native Dialog & Focus Lockout Defense (Windows 10 / Electron) ─────────────
+// Override window.alert to automatically re-focus on Windows
 if (typeof window !== 'undefined') {
   const _origAlert = window.alert;
   window.alert = (msg) => {
@@ -66,8 +70,18 @@ if (typeof window !== 'undefined') {
 
 const toFileUrl = (p) => {
   if (!p) return '';
-  if (p.startsWith('data:') || p.startsWith('blob:') || p.startsWith('http')) return p;
+  if (p.startsWith('data:') || p.startsWith('blob:') || p.startsWith('http') || p.startsWith('file:')) return p;
   const s = p.replace(/\\/g, '/');
+  const driveMatch = s.match(/^([a-zA-Z]:)(.*)/);
+  if (driveMatch) {
+    const drive = driveMatch[1]; // e.g. "D:"
+    const rest = driveMatch[2];
+    const encodedRest = rest
+      .split('/')
+      .map(part => encodeURIComponent(part))
+      .join('/');
+    return `file:///${drive}${encodedRest}`;
+  }
   const encodedParts = s.split('/').map(part => encodeURIComponent(part));
   const encodedPath = encodedParts.join('/');
   return s.startsWith('/') ? `file://${encodedPath}` : `file:///${encodedPath}`;
@@ -121,13 +135,23 @@ export default function App() {
   const currentResults  = activeImagePath ? resultsMap[activeImagePath] : null;
 
   // Calibration State (Per-Image Mapping for Bulk 1-by-1 Calibration)
-  const [calibrationsMap, setCalibrationsMap] = useState({}); // { [imagePath]: { pxPerCm, dist_cm, pt1, pt2 } }
-  const [calibMode,       setCalibMode]       = useState('idle');
+  const [calibrationsMap, setCalibrationsMap] = useState({}); // { [imagePath]: { pxPerCm, dist_cm, pt1, pt2, mode, boxMetrics } }
+  const [calibMode,       setCalibMode]       = useState('idle'); // 'idle' | 'pt1' | 'pt2' | 'box_pt1' | 'box_pt2'
+  const [calibType,       setCalibType]       = useState('box');  // 'box' (default) | 'ruler'
   const [calibPt1,        setCalibPt1]        = useState(null);
   const [calibPt2,        setCalibPt2]        = useState(null);
   const [calibPreviewPt,  setCalibPreviewPt]  = useState(null);
   const [calibDist,       setCalibDist]       = useState('10');
   const [showDistInput,   setShowDistInput]   = useState(false);
+
+  // v1.8.0 Reference Box Calibration State
+  const [calibBoxPt1,        setCalibBoxPt1]        = useState(null);
+  const [calibBoxPt2,        setCalibBoxPt2]        = useState(null);
+  const [calibBoxPreviewPt,  setCalibBoxPreviewPt]  = useState(null);
+  const [calibBoxWidthCm,    setCalibBoxWidthCm]    = useState('5.0');
+  const [calibBoxHeightCm,   setCalibBoxHeightCm]   = useState('5.0');
+  const [showBoxDistInput,   setShowBoxDistInput]   = useState(false);
+  const [calibrationWizardStep, setCalibrationWizardStep] = useState(false);
 
   // Interactive Canvas Zoom State (0.5x to 4.0x)
   const [zoomScale, setZoomScale] = useState(1.0);
@@ -198,6 +222,18 @@ export default function App() {
   const [hoverCoords,    setHoverCoords]    = useState(null); // live hover preview for inherited radius
   const [drawingPts,     setDrawingPts]     = useState([]);   // for polygon mode
 
+  // v1.8.0 Physical Circle Radius Synchronization (Dynamic Camera Distance)
+  const [circleRadiusCm, setCircleRadiusCm] = useState(1.2); // synchronized physical radius in cm (e.g. 1.2 cm)
+  const activeRefRadius = activePxPerCm
+    ? computePhysicalCircleRadiusPx(circleRadiusCm, activePxPerCm)
+    : (circleRadius || 15);
+
+  // v1.8.0 Full Blocking Upload & Batch Processing State
+  const [isBatchLoading, setIsBatchLoading] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0, percent: 0, activeFile: '' });
+  const [batchErrors, setBatchErrors] = useState([]); // [ { file, error } ]
+  const batchAbortRef = useRef(false);
+
   // RAM state storing annotations per image: { [imagePath]: [ { id, type, cx, cy, radius, labelName, color, points: [{x, y}], star } ] }
   const [segmentations,  setSegmentations]  = useState({});
 
@@ -216,10 +252,17 @@ export default function App() {
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
-    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.7.1 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
+    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.8.0 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
   ]);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const terminalEndRef = useRef(null);
+
+  // Fallback Base64 Image Source (Recovery for IPC or web security restrictions)
+  const [imageFallbackSrc, setImageFallbackSrc] = useState(null);
+
+  useEffect(() => {
+    setImageFallbackSrc(null);
+  }, [activeImagePath, activePanel]);
 
   const addLog = useCallback((type, text) => {
     setTerminalLogs(prev => [
@@ -303,16 +346,6 @@ export default function App() {
 
   // Mutable ref for current menu action handlers (prevents re-subscribing IPC listeners)
   const menuHandlersRef = useRef({});
-  menuHandlersRef.current = {
-    setShowSettingsModal,
-    setShowAboutModal,
-    setShowMacGuideModal,
-    undoLastRoi,
-    handleBrowseSingle,
-    handleBrowseFolder,
-    handleOpenAnnotationSession,
-    openFolder,
-  };
 
   // ── Menu Bar Event IPC Listeners (Electron) ──────────────────────────────────
   useEffect(() => {
@@ -466,12 +499,106 @@ export default function App() {
     }
   };
 
+  // ── v1.8.0 Full Blocking Batch Ingestion Pipeline with Live Terminal & Error Recovery ─
+  const executeBatchIngestion = async (filesList, fMap = {}, folderName = '') => {
+    if (!filesList || filesList.length === 0) return;
+
+    batchAbortRef.current = false;
+    setIsBatchLoading(true);
+    setBatchErrors([]);
+    setBatchProgress({
+      current: 0,
+      total: filesList.length,
+      percent: 0,
+      activeFile: filesList[0]?.split(/[\\/]/).pop() || ''
+    });
+
+    addLog('info', `[BATCH INGESTION] Starting upload and radiometric verification of ${filesList.length} image(s)...`);
+
+    const newResultsMap = { ...resultsMap };
+    const encounteredErrors = [];
+
+    for (let i = 0; i < filesList.length; i++) {
+      if (batchAbortRef.current) {
+        addLog('warn', '[BATCH INGESTION] Upload aborted by user.');
+        return;
+      }
+
+      const filePathTarget = filesList[i];
+      const fileName = filePathTarget.split(/[\\/]/).pop();
+
+      setBatchProgress({
+        current: i + 1,
+        total: filesList.length,
+        percent: Math.round(((i + 1) / filesList.length) * 100),
+        activeFile: fileName
+      });
+
+      addLog('info', `[LOADING ${i + 1}/${filesList.length}] Decoding radiometric data for ${fileName}...`);
+
+      try {
+        if (!newResultsMap[filePathTarget]) {
+          const fileObj = fMap[filePathTarget] || fileObjMap[filePathTarget] || filePathTarget;
+          let res;
+          if (!window.electronAPI) {
+            const imgData = await loadThermalImageData(fileObj);
+            const stem = fileName.split('.')[0];
+            res = runClientThermalAnalysis(imgData.tempMatrix, imgData.width, imgData.height, stem, imgData.cleanImageDataUrl);
+          } else {
+            const outDir = filePathTarget + '_analysis';
+            res = await api.runAnalysis(filePathTarget, outDir);
+          }
+          newResultsMap[filePathTarget] = res;
+          addLog('stdout', `✓ [DECODED] ${fileName} (${res.shape?.[1] || 320}x${res.shape?.[0] || 240})`);
+        }
+      } catch (err) {
+        const errMsg = err?.message || String(err);
+        addLog('error', `✖ [FAILED] ${fileName}: ${errMsg}`);
+        encounteredErrors.push({ file: fileName, error: errMsg });
+      }
+    }
+
+    setResultsMap(newResultsMap);
+
+    if (encounteredErrors.length > 0) {
+      setBatchErrors(encounteredErrors);
+      addLog('warn', `[BATCH INGESTION] Ingestion finished with ${encounteredErrors.length} error(s). Review alert banner and retry.`);
+      // Screen remains blocked with Refresh and Back button clickable
+    } else {
+      setIsBatchLoading(false);
+      setCalibrationWizardStep(true);
+      addLog('success', `[BATCH INGESTION COMPLETE] All ${filesList.length} thermal images verified. Calibration step is now open.`);
+    }
+  };
+
+  const handleAbortBatchLoading = () => {
+    batchAbortRef.current = true;
+    setIsBatchLoading(false);
+    setBatchErrors([]);
+    setImageList([]);
+    setCurrentIndex(0);
+    setFolderPath(null);
+    setFilePath(null);
+    addLog('warn', '[BATCH INGESTION] Sequence upload canceled. Returned to initial screen.');
+  };
+
+  const handleRetryBatchLoading = () => {
+    if (imageList.length > 0) {
+      addLog('info', '[BATCH INGESTION] Retrying batch upload for current folder...');
+      executeBatchIngestion(imageList, fileObjMap, folderPath);
+    }
+  };
+
   const handleBrowseFolder = async () => {
     if (window.electronAPI && window.electronAPI.openFolderDialog) {
       const folder = await api.openFolderDialog();
       if (folder) {
         setFolderPath(folder);
         const files = await api.listFolderImages(folder);
+        if (!files || files.length === 0) {
+          alert('No thermal images (.jpg, .png, .tiff) found in the selected folder.');
+          return;
+        }
         setImageList(files);
         setCurrentIndex(0);
         setAppMode('bulk');
@@ -485,6 +612,8 @@ export default function App() {
         } catch (e) {
           console.error('Annotation check error:', e);
         }
+
+        executeBatchIngestion(files, {}, folder);
       }
     } else {
       if (folderInputRef.current) folderInputRef.current.click();
@@ -505,24 +634,35 @@ export default function App() {
     if (files.length === 0) return;
 
     const validExts = ['.jpg', '.jpeg', '.png', '.tiff', '.tif'];
-    const imgFiles = files.filter(f => validExts.some(ext => f.name.toLowerCase().endsWith(ext)));
+
+    // v1.8.0: Filter ONLY images residing directly in the top-level / main folder.
+    // HTML5 webkitdirectory recursively scans all subdirectories (such as _Result, _analysis),
+    // which must be strictly ignored to prevent ingesting result snapshots.
+    const imgFiles = files.filter(f => {
+      if (f.webkitRelativePath) {
+        const segments = f.webkitRelativePath.split(/[\\/]/).filter(Boolean);
+        if (segments.length > 2) return false; // File is in a subfolder, ignore!
+      }
+      const ext = f.name.substring(f.name.lastIndexOf('.')).toLowerCase();
+      return validExts.includes(ext);
+    });
 
     if (imgFiles.length === 0) {
-      alert('No thermal images (.jpg, .png, .tiff) found in the selected folder.');
+      alert('No thermal images (.jpg, .png, .tiff) found directly in the selected folder.');
       return;
     }
 
     imgFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
 
-    const folderName = imgFiles[0].webkitRelativePath ? imgFiles[0].webkitRelativePath.split('/')[0] : 'Thermal_Sequence';
+    const folderName = imgFiles[0].webkitRelativePath ? imgFiles[0].webkitRelativePath.split(/[\\/]/)[0] : 'Thermal_Sequence';
     setFolderPath(folderName);
 
     const fMap = {};
     const names = [];
     imgFiles.forEach(f => {
-      const key = f.webkitRelativePath || f.name;
-      fMap[key] = f;
-      names.push(key);
+      fMap[f.name] = f;
+      if (f.webkitRelativePath) fMap[f.webkitRelativePath] = f;
+      names.push(f.name);
     });
 
     setFileObjMap(prev => ({ ...prev, ...fMap }));
@@ -536,8 +676,11 @@ export default function App() {
       setPendingSession(null);
       setShowNeedImagesModal(false);
       alert(`✓ Successfully linked loaded annotations with ${names.length} images in "${folderName}"!`);
+      executeBatchIngestion(names, { ...fileObjMap, ...fMap }, folderName);
       return;
     }
+
+    executeBatchIngestion(names, { ...fileObjMap, ...fMap }, folderName);
 
     // Check if annotations_session.json exists in the uploaded folder
     const jsonFile = files.find(f => f.name === 'annotations_session.json');
@@ -621,6 +764,7 @@ export default function App() {
             applyLoadedSession(sessionJson, names);
           }
           alert(`✓ Unpacked ${names.length} images ${sessionJson ? 'and restored annotations session' : ''} from ${zipFile.name}!`);
+          executeBatchIngestion(names, { ...fileObjMap, ...fMap }, zipFile.name.replace(/\.[^/.]+$/, ''));
           return;
         }
       } catch (zipErr) {
@@ -630,7 +774,14 @@ export default function App() {
 
     if (files.length > 1) {
       const validExts = ['.jpg', '.jpeg', '.png', '.tiff', '.tif'];
-      const imgFiles = files.filter(f => validExts.some(ext => f.name.toLowerCase().endsWith(ext)));
+      const imgFiles = files.filter(f => {
+        if (f.webkitRelativePath) {
+          const segments = f.webkitRelativePath.split(/[\\/]/).filter(Boolean);
+          if (segments.length > 2) return false;
+        }
+        const ext = f.name.substring(f.name.lastIndexOf('.')).toLowerCase();
+        return validExts.includes(ext);
+      });
       if (imgFiles.length > 0) {
         imgFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
         const fMap = {};
@@ -650,6 +801,7 @@ export default function App() {
           setPendingSession(null);
           setShowNeedImagesModal(false);
         }
+        executeBatchIngestion(names, { ...fileObjMap, ...fMap }, 'Thermal_Sequence');
         return;
       }
     }
@@ -690,7 +842,7 @@ export default function App() {
     let isSubscribed = true;
 
     async function processAnalysisQueue() {
-      if (!activeImagePath) return;
+      if (isBatchLoading || !activeImagePath) return;
 
       // 1. Prioritize currently active image if not analyzed yet
       if (!resultsMap[activeImagePath] && !inFlightRef.current.has(activeImagePath)) {
@@ -703,7 +855,7 @@ export default function App() {
             // 100% Client-Side Pure JavaScript Engine
             const imgData = await loadThermalImageData(fileObj);
             const stem = activeImagePath.split(/[\\/]/).pop().split('.')[0];
-            res = runClientThermalAnalysis(imgData.tempMatrix, imgData.width, imgData.height, stem);
+            res = runClientThermalAnalysis(imgData.tempMatrix, imgData.width, imgData.height, stem, imgData.cleanImageDataUrl);
             setTerminalLogs(prev => [...prev.slice(-200), {
               id: Date.now() + Math.random(),
               type: 'info',
@@ -745,7 +897,7 @@ export default function App() {
             if (!window.electronAPI) {
               const imgData = await loadThermalImageData(fileObj);
               const stem = targetPath.split(/[\\/]/).pop().split('.')[0];
-              res = runClientThermalAnalysis(imgData.tempMatrix, imgData.width, imgData.height, stem);
+              res = runClientThermalAnalysis(imgData.tempMatrix, imgData.width, imgData.height, stem, imgData.cleanImageDataUrl);
             } else {
               const outDir = targetPath + '_analysis';
               res = await api.runAnalysis(targetPath, outDir);
@@ -786,17 +938,21 @@ export default function App() {
     }
   };
 
-  // ── Calibration Handlers (Per-Image Mapping) ─────────────────────────────────
+  // ── Calibration Handlers (Dual: Reference Box & Ruler Line) ─────────────────
   const resetCalib = () => {
     setCalibMode('idle');
     setCalibPt1(null);
     setCalibPt2(null);
+    setCalibPreviewPt(null);
     setShowDistInput(false);
   };
 
   const startCalib = () => {
     resetCalib();
+    resetCalibBox();
+    setCalibType('ruler');
     setCalibMode('pt1');
+    addLog('info', '[CALIBRATION] Ruler Mode: Click 1st point on image');
   };
 
   const confirmCalib = () => {
@@ -809,13 +965,131 @@ export default function App() {
     if (activeImagePath) {
       setCalibrationsMap(prev => ({
         ...prev,
-        [activeImagePath]: { pxPerCm: scale, dist_cm: cm, pt1: calibPt1, pt2: calibPt2 }
+        [activeImagePath]: { pxPerCm: scale, dist_cm: cm, pt1: calibPt1, pt2: calibPt2, mode: 'ruler' }
       }));
+      addLog('success', `[CALIBRATION] Calibrated ${activeImagePath.split(/[\\/]/).pop()} to ${scale.toFixed(2)} px/cm via Ruler.`);
     }
     setShowDistInput(false);
     setCalibMode('idle');
     setCalibPt1(null);
     setCalibPt2(null);
+  };
+
+  const resetCalibBox = () => {
+    setCalibMode('idle');
+    setCalibBoxPt1(null);
+    setCalibBoxPt2(null);
+    setCalibBoxPreviewPt(null);
+    setShowBoxDistInput(false);
+  };
+
+  const startCalibBox = () => {
+    resetCalib();
+    resetCalibBox();
+    setCalibType('box');
+    setCalibMode('box_pt1');
+    addLog('info', '[CALIBRATION] Reference Box Mode: Click first corner of reference box');
+  };
+
+  const confirmCalibBox = (applyToAll = false) => {
+    if (!calibBoxPt1 || !calibBoxPt2) return;
+    const wCm = parseFloat(calibBoxWidthCm) || 5.0;
+    const hCm = parseFloat(calibBoxHeightCm) || 5.0;
+    if (wCm <= 0 || hCm <= 0) {
+      alert('Reference Box dimensions must be > 0 cm');
+      return;
+    }
+
+    const scaleRes = computeReferenceBoxScale({
+      x1: calibBoxPt1.px, y1: calibBoxPt1.py,
+      x2: calibBoxPt2.px, y2: calibBoxPt2.py
+    }, wCm, hCm);
+
+    if (applyToAll && imageList.length > 0) {
+      const newMap = { ...calibrationsMap };
+      imageList.forEach(path => {
+        newMap[path] = {
+          pxPerCm: scaleRes.pxPerCm,
+          dist_cm: scaleRes.realWidthCm,
+          mode: 'box',
+          pt1: calibBoxPt1,
+          pt2: calibBoxPt2,
+          boxMetrics: scaleRes
+        };
+      });
+      setCalibrationsMap(newMap);
+      addLog('success', `[CALIBRATION] Applied box scale ${scaleRes.pxPerCm.toFixed(2)} px/cm across all ${imageList.length} images.`);
+    } else if (activeImagePath) {
+      setCalibrationsMap(prev => ({
+        ...prev,
+        [activeImagePath]: {
+          pxPerCm: scaleRes.pxPerCm,
+          dist_cm: scaleRes.realWidthCm,
+          mode: 'box',
+          pt1: calibBoxPt1,
+          pt2: calibBoxPt2,
+          boxMetrics: scaleRes
+        }
+      }));
+      addLog('success', `[CALIBRATION] Calibrated ${activeImagePath.split(/[\\/]/).pop()} to ${scaleRes.pxPerCm.toFixed(2)} px/cm (${wCm}x${hCm} cm box).`);
+    }
+
+    setShowBoxDistInput(false);
+    setCalibMode('idle');
+    setCalibBoxPt1(null);
+    setCalibBoxPt2(null);
+    setCalibBoxPreviewPt(null);
+  };
+
+  // ── v1.8.0 Physical Circle Radius Synchronization & 9-Grid Fallback Helpers ──
+  const updateAllCircleRadii = (newRadiusCm) => {
+    setSegmentations(prev => {
+      const updated = { ...prev };
+      Object.keys(updated).forEach(path => {
+        const scale = calibrationsMap[path]?.pxPerCm || activePxPerCm || 10.0;
+        const newPx = Math.max(3, Math.round(newRadiusCm * scale));
+        updated[path] = (updated[path] || []).map(r => {
+          if (r.type !== 'circle') return r;
+          const polyPoints = [];
+          for (let i = 0; i < 36; i++) {
+            const a = (i * 10 * Math.PI) / 180.0;
+            polyPoints.push({
+              x: r.cx + newPx * Math.cos(a),
+              y: r.cy + newPx * Math.sin(a),
+            });
+          }
+          return {
+            ...r,
+            radius: newPx,
+            radius_cm: newRadiusCm,
+            points: polyPoints
+          };
+        });
+      });
+      return updated;
+    });
+  };
+
+  const fitCircleTo1GridCell = () => {
+    // 1 grid cell: standard 0.5 cm span -> radius = 0.25 cm
+    const rCm = 0.25;
+    setCircleRadiusCm(rCm);
+    updateAllCircleRadii(rCm);
+    addLog('info', `[CIRCLE SYNC] Snapped physical circle radius to 1-Grid cell (${rCm} cm)`);
+  };
+
+  const fitCircleTo9GridBlock = () => {
+    // 3x3 block in 9-Grid: 1.5 cm span -> radius = 0.75 cm
+    const rCm = 0.75;
+    setCircleRadiusCm(rCm);
+    updateAllCircleRadii(rCm);
+    addLog('info', `[CIRCLE SYNC] Snapped physical circle radius to 3x3 (9-Grid) block (${rCm} cm)`);
+  };
+
+  const adjustCircleRadiusPercent = (deltaPct) => {
+    const newR = Math.max(0.1, Math.round(circleRadiusCm * (1 + deltaPct) * 100) / 100);
+    setCircleRadiusCm(newR);
+    updateAllCircleRadii(newR);
   };
 
   // ── Standalone 8-Point Star Measurement Tool ────────────────────────────────
@@ -916,6 +1190,21 @@ export default function App() {
       return;
     }
 
+    // v1.8.0 Reference Box Calibration Clicks
+    if (calibMode === 'box_pt1') {
+      setCalibBoxPt1(c);
+      setCalibMode('box_pt2');
+      setCalibBoxPreviewPt(c);
+      return;
+    }
+    if (calibMode === 'box_pt2') {
+      setCalibBoxPt2(c);
+      setCalibBoxPreviewPt(null);
+      setCalibMode('idle');
+      setShowBoxDistInput(true);
+      return;
+    }
+
     // Standalone Star Tool Placement
     if (starStep === 'place') {
       const dist_cm = parseFloat(starDist) || 2.0;
@@ -929,30 +1218,10 @@ export default function App() {
       return;
     }
 
-    // 1:1 Strict Circle Segmentation Mode (Default)
-    if (drawMode === 'circle' && !starStep) {
-      const existingCircles = (segmentations[activeImagePath] || []).filter(r => r.type === 'circle');
-      const refCircle = existingCircles.length > 0 ? existingCircles[0] : null;
-      const refRadius = refCircle ? refCircle.radius : null;
-
-      let centerPt = null;
-      let dist_px = null;
-
-      if (refRadius != null) {
-        // Subsequent labels automatically inherit the reference circle's radius! 1-click placement!
-        centerPt = c;
-        dist_px = refRadius;
-      } else {
-        // First circle on this image: 2-step placement (Center, then Radius)
-        if (!circleCenter) {
-          setCircleCenter(c);
-          setCircleRadius(15);
-          return;
-        } else {
-          centerPt = circleCenter;
-          dist_px = Math.max(4, Math.hypot(c.px - circleCenter.px, c.py - circleCenter.py));
-        }
-      }
+    // 1:1 Strict Circle Segmentation Mode (Default & Synchronized across sequence)
+    if (drawMode === 'circle' && !starStep && calibMode === 'idle') {
+      const centerPt = c;
+      const dist_px = activeRefRadius;
 
       // Generate 36 circular polygon vertices for universal rasterizer/masking compatibility
       const polyPoints = [];
@@ -970,6 +1239,7 @@ export default function App() {
         cx: centerPt.px,
         cy: centerPt.py,
         radius: dist_px,
+        radius_cm: circleRadiusCm,
         labelName: activeLabelObj.name,
         color: activeLabelObj.color,
         points: polyPoints,
@@ -986,9 +1256,6 @@ export default function App() {
         [activeImagePath]: [...(prev[activeImagePath] || []), newRoi]
       }));
 
-      setCircleCenter(null);
-      setCircleRadius(null);
-
       // Auto-advance active label to next label (e.g. t1 -> m1 -> m3)
       if (labels && labels.length > 0) {
         const currentIdx = labels.findIndex(l => l.id === activeLabelId);
@@ -1000,7 +1267,7 @@ export default function App() {
     }
 
     // Polygon Pen Tool Drawing Mode
-    if (drawMode === 'polygon' && !starStep) {
+    if (drawMode === 'polygon' && !starStep && calibMode === 'idle') {
       setDrawingPts(prev => [...prev, c]);
     }
   };
@@ -1014,18 +1281,14 @@ export default function App() {
       setCalibPreviewPt(effective);
     }
 
-    if (drawMode === 'circle') {
-      if (circleCenter) {
-        const r = Math.max(4, Math.hypot(c.px - circleCenter.px, c.py - circleCenter.py));
-        setCircleRadius(r);
-      } else {
-        const existingCircles = (segmentations[activeImagePath] || []).filter(r => r.type === 'circle');
-        if (existingCircles.length > 0) {
-          setHoverCoords(c);
-        } else if (hoverCoords) {
-          setHoverCoords(null);
-        }
-      }
+    if (calibMode === 'box_pt2' && calibBoxPt1) {
+      setCalibBoxPreviewPt(c);
+    }
+
+    if (drawMode === 'circle' && !starStep && calibMode === 'idle') {
+      setHoverCoords(c);
+    } else if (hoverCoords) {
+      setHoverCoords(null);
     }
   };
 
@@ -1799,14 +2062,43 @@ export default function App() {
   const showCsv = (p) => { if (p && window.electronAPI) api.showItemInFolder(p); };
 
   const cursor = (calibMode !== 'idle' || starStep === 'place' || drawMode) ? 'crosshair' : 'default';
-  const imgSrc = currentResults?.images?.[activePanel]
-    ? toFileUrl(currentResults.images[activePanel]) : null;
+  const currentImgRaw = currentResults?.images?.[activePanel];
+  const imgSrc = imageFallbackSrc || (currentImgRaw ? toFileUrl(currentImgRaw) : null);
+
+  const handleImageLoadError = useCallback(async (e) => {
+    const rawPath = currentResults?.images?.[activePanel];
+    const attemptedSrc = e?.target?.src || rawPath;
+    addLog('warn', `Image failed to display via URL: ${attemptedSrc}. Attempting Base64 IPC recovery...`);
+    if (rawPath && window.electronAPI && api.readImageBase64) {
+      try {
+        const b64 = await api.readImageBase64(rawPath);
+        if (b64) {
+          setImageFallbackSrc(b64);
+          addLog('info', `Successfully recovered image via Base64 IPC for panel: ${activePanel}`);
+          return;
+        }
+      } catch (err) {
+        addLog('error', `Base64 IPC recovery failed: ${err.message}`);
+      }
+    }
+    addLog('error', `Could not display image for "${activePanel}". File may be missing or inaccessible: ${rawPath}`);
+  }, [currentResults, activePanel, addLog]);
 
   const currentRois = segmentations[activeImagePath] || [];
-  const firstCircleRoi = currentRois.find(r => r.type === 'circle');
-  const activeRefRadius = firstCircleRoi ? firstCircleRoi.radius : null;
   const hasCircleRois = currentRois.some(r => r.type === 'circle');
   const hasPolygonRois = currentRois.some(r => r.type === 'polygon');
+
+  // Keep menu handlers up to date with the latest closure states
+  menuHandlersRef.current = {
+    setShowSettingsModal,
+    setShowAboutModal,
+    setShowMacGuideModal,
+    undoLastRoi,
+    handleBrowseSingle,
+    handleBrowseFolder,
+    handleOpenAnnotationSession,
+    openFolder,
+  };
 
   return (
     <div className="app">
@@ -1959,7 +2251,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.7.1 (Web & Desktop)</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.8.0 (Web & Desktop)</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -2104,12 +2396,127 @@ export default function App() {
         </div>
       )}
 
+      {/* v1.8.0 FULL BLOCKING BATCH INGESTION OVERLAY */}
+      {isBatchLoading && (
+        <div className="batch-loader-overlay">
+          <div className="batch-loader-topbar">
+            <button
+              className="btn-secondary"
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 14px' }}
+              onClick={handleAbortBatchLoading}
+            >
+              ← Back / Cancel
+            </button>
+            <div className="batch-loader-title">
+              <span>🌡</span>
+              <span>Sequence Batch Ingestion</span>
+            </div>
+            {batchErrors.length > 0 ? (
+              <button
+                className="btn-primary"
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 14px', background: 'var(--cyan)', color: '#000', fontWeight: '700' }}
+                onClick={handleRetryBatchLoading}
+              >
+                🔄 Refresh / Retry Ingestion
+              </button>
+            ) : (
+              <div style={{ width: '120px' }} />
+            )}
+          </div>
+
+          <div className="batch-loader-card">
+            <div className="batch-loader-spinner-wrapper">
+              <div className="spinner" style={{ width: '38px', height: '38px' }} />
+            </div>
+
+            <h3 className="batch-loader-status-text">
+              {batchErrors.length > 0
+                ? `⚠️ Batch Ingestion Encountered ${batchErrors.length} Issue(s)`
+                : `Ingesting & Decoding Thermal Sequence (${batchProgress.current} / ${batchProgress.total})`}
+            </h3>
+
+            {/* ERROR NOTIFICATION BANNER DISPLAYED DIRECTLY ABOVE PROGRESS BAR */}
+            {batchErrors.length > 0 && (
+              <div className="batch-loader-error-banner">
+                <div className="error-banner-header">
+                  <span>⚠️</span>
+                  <span><strong>Loading Alert:</strong> Some thermal files failed decoding.</span>
+                </div>
+                <ul className="error-banner-list">
+                  {batchErrors.map((err, idx) => (
+                    <li key={idx}>
+                      <code>{err.file}</code>: {err.error}
+                    </li>
+                  ))}
+                </ul>
+                <div className="error-banner-action">
+                  💡 Click <strong>Refresh / Retry Ingestion</strong> to re-attempt, or click <strong>Back</strong> in the top-left to cancel.
+                </div>
+              </div>
+            )}
+
+            {/* PROGRESS BAR */}
+            <div className="batch-progress-container">
+              <div className="batch-progress-fill" style={{ width: `${batchProgress.percent}%` }} />
+            </div>
+            <div className="batch-progress-meta">
+              <span>{batchProgress.activeFile ? `Processing: ${batchProgress.activeFile}` : 'Preparing files...'}</span>
+              <span>{batchProgress.percent}%</span>
+            </div>
+
+            {batchErrors.length > 0 && (
+              <div style={{ marginTop: '18px', display: 'flex', gap: '10px', justifyContent: 'center' }}>
+                <button
+                  className="btn-primary"
+                  style={{ background: 'var(--cyan)', color: '#000', fontWeight: '700' }}
+                  onClick={handleRetryBatchLoading}
+                >
+                  🔄 Refresh & Retry
+                </button>
+                <button className="btn-ghost" onClick={handleAbortBatchLoading}>
+                  ✕ Cancel & Go Back
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* DOCKED LIVE PROCESS TERMINAL AT BOTTOM */}
+          <div className="batch-loader-terminal">
+            <div className="terminal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+              <h4 className="card-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
+                💻 Live Ingestion Diagnostics
+                <span className="terminal-badge">{terminalLogs.length}</span>
+              </h4>
+              <button
+                className="btn-ghost btn-tiny"
+                onClick={() => {
+                  const text = terminalLogs.map(l => `[${l.timestamp}] [${l.type.toUpperCase()}] ${l.text}`).join('\n');
+                  navigator.clipboard.writeText(text).catch(() => {});
+                  alert('Terminal logs copied to clipboard!');
+                }}
+              >
+                📋 Copy Logs
+              </button>
+            </div>
+            <div className="terminal-logs" style={{ maxHeight: '140px', overflowY: 'auto' }}>
+              {terminalLogs.map(log => (
+                <div key={log.id} className={`terminal-log-line ${log.type}`}>
+                  <span className="log-time">[{log.timestamp}]</span>
+                  <span className="log-text">{log.text}</span>
+                </div>
+              ))}
+              <div ref={terminalEndRef} />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* HEADER */}
       <header className="app-header">
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.7.1' : 'v1.7.1'}</span>
+          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.8.0' : 'v1.8.0'}</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (
@@ -2159,6 +2566,28 @@ export default function App() {
           )}
         </div>
       </header>
+
+      {/* CALIBRATION WIZARD BANNER */}
+      {activeImagePath && calibrationWizardStep && (
+        <div className="calib-wizard-banner" style={{ margin: '8px 16px 0 16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '20px' }}>📏</span>
+            <div>
+              <strong style={{ color: 'var(--cyan)' }}>Step 1: Scale Calibration Required</strong>
+              <div style={{ fontSize: '11px', color: 'var(--text1)' }}>
+                Please calibrate pixel scale using the Reference Box (or Ruler) in the right sidebar before annotating ROIs.
+              </div>
+            </div>
+          </div>
+          <button
+            className="btn-primary btn-tiny"
+            style={{ background: 'var(--cyan)', color: '#000', fontWeight: '700', padding: '6px 14px' }}
+            onClick={() => setCalibrationWizardStep(false)}
+          >
+            ✓ Done & Start Annotating
+          </button>
+        </div>
+      )}
 
       {/* UPLOAD SCREEN */}
       {!activeImagePath && (
@@ -2371,7 +2800,8 @@ export default function App() {
                   <img ref={imgRef} src={imgSrc} alt={activePanel}
                        className="thermal-img" style={{cursor}} draggable={false}
                        onClick={handleImageClick}
-                       onMouseMove={handleImageMouseMove}/>
+                       onMouseMove={handleImageMouseMove}
+                       onError={handleImageLoadError}/>
                 )}
 
                 {/* SVG OVERLAYS */}
@@ -2390,6 +2820,41 @@ export default function App() {
                             x2={calibPreviewPt.pct.x} y2={calibPreviewPt.pct.y}
                             stroke="#00e5ff" strokeWidth="0.6" strokeDasharray="1.2 0.8"/>
                       <circle cx={calibPreviewPt.pct.x} cy={calibPreviewPt.pct.y} r="0.8" fill="#00e5ff"/>
+                    </g>
+                  )}
+
+                  {/* v1.8.0 Reference Box Live Preview while dragging / setting Point 2 */}
+                  {calibMode === 'box_pt2' && calibBoxPt1?.pct && calibBoxPreviewPt?.pct && (
+                    <g>
+                      <rect
+                        x={Math.min(calibBoxPt1.pct.x, calibBoxPreviewPt.pct.x)}
+                        y={Math.min(calibBoxPt1.pct.y, calibBoxPreviewPt.pct.y)}
+                        width={Math.abs(calibBoxPreviewPt.pct.x - calibBoxPt1.pct.x)}
+                        height={Math.abs(calibBoxPreviewPt.pct.y - calibBoxPt1.pct.y)}
+                        fill="rgba(0, 229, 255, 0.18)"
+                        stroke="#00e5ff"
+                        strokeWidth="0.6"
+                        strokeDasharray="1.5 1"
+                      />
+                      <circle cx={calibBoxPt1.pct.x} cy={calibBoxPt1.pct.y} r="0.8" fill="#00e5ff" />
+                      <circle cx={calibBoxPreviewPt.pct.x} cy={calibBoxPreviewPt.pct.y} r="0.8" fill="#00e5ff" />
+                    </g>
+                  )}
+
+                  {/* Reference Box Final Confirmation Rect */}
+                  {calibBoxPt1?.pct && calibBoxPt2?.pct && showBoxDistInput && (
+                    <g>
+                      <rect
+                        x={Math.min(calibBoxPt1.pct.x, calibBoxPt2.pct.x)}
+                        y={Math.min(calibBoxPt1.pct.y, calibBoxPt2.pct.y)}
+                        width={Math.abs(calibBoxPt2.pct.x - calibBoxPt1.pct.x)}
+                        height={Math.abs(calibBoxPt2.pct.y - calibBoxPt1.pct.y)}
+                        fill="rgba(0, 229, 255, 0.25)"
+                        stroke="#00e5ff"
+                        strokeWidth="0.8"
+                      />
+                      <circle cx={calibBoxPt1.pct.x} cy={calibBoxPt1.pct.y} r="1.0" fill="#00e5ff" />
+                      <circle cx={calibBoxPt2.pct.x} cy={calibBoxPt2.pct.y} r="1.0" fill="#00e5ff" />
                     </g>
                   )}
 
@@ -2524,6 +2989,8 @@ export default function App() {
                 {/* Calibration Dots */}
                 {calibPt1?.pct && <div className="ov-dot calib-dot" style={{left:`${calibPt1.pct.x}%`,top:`${calibPt1.pct.y}%`}}>1</div>}
                 {calibPt2?.pct && <div className="ov-dot calib-dot" style={{left:`${calibPt2.pct.x}%`,top:`${calibPt2.pct.y}%`}}>2</div>}
+                {calibBoxPt1?.pct && <div className="ov-dot calib-dot" style={{left:`${calibBoxPt1.pct.x}%`,top:`${calibBoxPt1.pct.y}%`}}>A</div>}
+                {calibBoxPt2?.pct && <div className="ov-dot calib-dot" style={{left:`${calibBoxPt2.pct.x}%`,top:`${calibBoxPt2.pct.y}%`}}>B</div>}
 
                 {/* Standalone Star Tool Dots */}
                 {starOverlay && (
@@ -2594,42 +3061,63 @@ export default function App() {
                     background: drawMode === 'circle' ? 'var(--bg3)' : 'transparent',
                     color: hasPolygonRois ? 'var(--text3)' : (drawMode === 'circle' ? 'var(--cyan)' : 'var(--text2)'),
                     fontWeight: drawMode === 'circle' ? '700' : 'normal',
-                    opacity: hasPolygonRois ? 0.35 : 1.0,
-                    cursor: hasPolygonRois ? 'not-allowed' : 'pointer',
+                    cursor: 'pointer',
                   }}
-                  onClick={() => { if (!hasPolygonRois) { setDrawMode('circle'); setDrawingPts([]); } }}
+                  onClick={() => { setDrawMode('circle'); setDrawingPts([]); }}
                 >
-                  ⭕ 1:1 Circle {hasCircleRois ? '🔒' : ''}
+                  ⭕ 1:1 Circle {drawMode === 'circle' ? '🔒' : ''}
                 </button>
                 <button
                   className={`btn-ghost btn-tiny ${drawMode === 'polygon' ? 'active' : ''}`}
-                  disabled={hasCircleRois}
-                  title={hasCircleRois ? 'Terkunci: Gambar ini sudah menggunakan Lingkaran' : 'Mode Polygon Pen'}
                   style={{
                     flex: 1,
                     background: drawMode === 'polygon' ? 'var(--bg3)' : 'transparent',
-                    color: hasCircleRois ? 'var(--text3)' : (drawMode === 'polygon' ? 'var(--accent2)' : 'var(--text2)'),
+                    color: drawMode === 'polygon' ? 'var(--accent2)' : 'var(--text2)',
                     fontWeight: drawMode === 'polygon' ? '700' : 'normal',
-                    opacity: hasCircleRois ? 0.35 : 1.0,
-                    cursor: hasCircleRois ? 'not-allowed' : 'pointer',
+                    cursor: 'pointer',
                   }}
-                  onClick={() => { if (!hasCircleRois) { setDrawMode('polygon'); setCircleCenter(null); setCircleRadius(null); } }}
+                  onClick={() => { setDrawMode('polygon'); setCircleCenter(null); setCircleRadius(null); }}
                 >
-                  ✏️ Pen Polygon {hasPolygonRois ? '🔒' : ''}
+                  ✏️ Pen Polygon {drawMode === 'polygon' ? '🔒' : ''}
                 </button>
               </div>
 
-              {/* DYNAMIC RADIUS INHERITANCE / MODE STATUS HINT */}
-              {activeRefRadius != null && drawMode === 'circle' ? (
-                <div style={{ fontSize: '11px', color: 'var(--cyan)', background: 'rgba(0, 229, 255, 0.08)', padding: '4px 8px', borderRadius: '4px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                  <span>🔒</span>
-                  <span>Ukuran radius terkunci: <b>{Math.round(activeRefRadius)}px</b> (sesuai label pertama). Klik 1x untuk menaruh <b>{activeLabelObj.name.toUpperCase()}</b>.</span>
+              {/* DYNAMIC RADIUS INHERITANCE / MODE STATUS HINT WITH 9-GRID FALLBACK */}
+              {drawMode === 'circle' ? (
+                <div className="radius-sync-controls" style={{ marginBottom: '10px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text0)' }}>
+                      🔒 Radius: <strong style={{ color: 'var(--cyan)' }}>{circleRadiusCm.toFixed(2)} cm</strong> ({Math.round(activeRefRadius)} px)
+                    </span>
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      <button className="btn-secondary btn-tiny" onClick={() => adjustCircleRadiusPercent(-0.05)} title="Decrease radius 5%">−</button>
+                      <button className="btn-secondary btn-tiny" onClick={() => adjustCircleRadiusPercent(0.05)} title="Increase radius 5%">+</button>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    <button
+                      className="btn-secondary btn-tiny"
+                      style={{ flex: 1, fontSize: '10px', padding: '3px 4px' }}
+                      onClick={fitCircleTo1GridCell}
+                      title="Fallback: Fit circle to 1 grid cell (0.25 cm radius)"
+                    >
+                      ⊞ 1-Cell Grid
+                    </button>
+                    <button
+                      className="btn-secondary btn-tiny"
+                      style={{ flex: 1, fontSize: '10px', padding: '3px 4px' }}
+                      onClick={fitCircleTo9GridBlock}
+                      title="Fallback: Fit circle to 3x3 block in 9-Grid (0.75 cm radius)"
+                    >
+                      ⊞ 9-Grid (3×3)
+                    </button>
+                  </div>
                 </div>
-              ) : hasPolygonRois ? (
+              ) : (
                 <div style={{ fontSize: '11px', color: 'var(--accent2)', background: 'rgba(255, 140, 0, 0.08)', padding: '4px 8px', borderRadius: '4px', marginBottom: '8px' }}>
-                  🔒 Mode Polygon aktif (Lingkaran terkunci). Hapus polygon untuk ganti mode.
+                  🔒 Mode Polygon aktif untuk seluruh sequence gambar.
                 </div>
-              ) : null}
+              )}
 
               <div className="label-list">
                 {labels.map(l => (
@@ -2763,46 +3251,137 @@ export default function App() {
               )}
             </div>
 
-            {/* CALIBRATION TOOL CARD (PER-IMAGE 1-BY-1 REQUIREMENT) */}
-            <div className="tool-card">
-              <h4 className="card-title">📏 Scale Calibration</h4>
+            {/* CALIBRATION TOOL CARD (DUAL: REFERENCE BOX & RULER) */}
+            <div className={`tool-card ${calibrationWizardStep ? 'wizard-active' : ''}`}
+                 style={calibrationWizardStep ? { border: '1px solid var(--cyan)', boxShadow: '0 0 14px rgba(0, 229, 255, 0.25)' } : {}}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <h4 className="card-title" style={{ margin: 0 }}>📏 Scale Calibration</h4>
+                {calibrationWizardStep && (
+                  <span style={{ fontSize: '10px', background: 'var(--cyan)', color: '#000', fontWeight: 'bold', padding: '2px 6px', borderRadius: '4px' }}>
+                    Step 1: Calibrate
+                  </span>
+                )}
+              </div>
+
+              {/* Calibration Mode Toggle: Reference Box vs Ruler */}
+              <div className="calib-type-toggle">
+                <button
+                  className={`calib-type-btn ${calibType === 'box' ? 'active' : ''}`}
+                  onClick={() => { setCalibType('box'); resetCalib(); resetCalibBox(); }}
+                >
+                  ⏹️ Reference Box
+                </button>
+                <button
+                  className={`calib-type-btn ${calibType === 'ruler' ? 'active' : ''}`}
+                  onClick={() => { setCalibType('ruler'); resetCalib(); resetCalibBox(); }}
+                >
+                  📏 Ruler Line
+                </button>
+              </div>
+
               <p className={`calib-status ${activePxPerCm ? 'ok' : 'none'}`}>
                 {activePxPerCm ? `✓ ${activePxPerCm.toFixed(2)} px/cm (Calibrated)` : '⚠️ This Image Not Calibrated'}
               </p>
+
               {appMode === 'bulk' && (
-                <div style={{ fontSize: '10px', color: 'var(--text2)', marginBottom: '6px' }}>
-                  Progress: <strong>{Object.keys(calibrationsMap).length} / {imageList.length}</strong> images calibrated
+                <div style={{ fontSize: '10px', color: 'var(--text2)', marginBottom: '8px' }}>
+                  Sequence Progress: <strong>{Object.keys(calibrationsMap).length} / {imageList.length}</strong> images calibrated
                 </div>
               )}
-              {calibMode === 'pt1' && (
-                <div style={{ fontSize: '11px', color: 'var(--accent2)', background: 'var(--bg0)', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border)', marginBottom: '8px' }}>
-                  📍 <strong>Step 1:</strong> Click 1st point on thermal image.
-                </div>
+
+              {calibType === 'box' ? (
+                <>
+                  {calibMode === 'box_pt1' && (
+                    <div style={{ fontSize: '11px', color: 'var(--accent2)', background: 'var(--bg0)', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border)', marginBottom: '8px' }}>
+                      📍 <strong>Step 1:</strong> Click 1st corner of reference box.
+                    </div>
+                  )}
+                  {calibMode === 'box_pt2' && (
+                    <div style={{ fontSize: '11px', color: 'var(--cyan)', background: 'var(--bg0)', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border)', marginBottom: '8px' }}>
+                      📍 <strong>Step 2:</strong> Click opposite corner of reference box.
+                    </div>
+                  )}
+                  <button className="btn-secondary w-full" onClick={startCalibBox}>
+                    {activePxPerCm ? '↺ Re-calibrate with Box' : 'Click 2 Corners on Box'}
+                  </button>
+
+                  {showBoxDistInput && (
+                    <div className="inline-form" style={{ marginTop: '10px' }}>
+                      <div style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
+                        <div style={{ flex: 1 }}>
+                          <label style={{ fontSize: '10px' }}>Width (cm):</label>
+                          <input
+                            className="field-input"
+                            type="text"
+                            inputMode="decimal"
+                            value={calibBoxWidthCm}
+                            onChange={e => setCalibBoxWidthCm(e.target.value.replace(',', '.'))}
+                          />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <label style={{ fontSize: '10px' }}>Height (cm):</label>
+                          <input
+                            className="field-input"
+                            type="text"
+                            inputMode="decimal"
+                            value={calibBoxHeightCm}
+                            onChange={e => setCalibBoxHeightCm(e.target.value.replace(',', '.'))}
+                          />
+                        </div>
+                      </div>
+                      <div className="inline-form-btns" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <button className="btn-primary w-full" onClick={() => confirmCalibBox(false)}>Confirm (This Image)</button>
+                        <button className="btn-secondary w-full" onClick={() => confirmCalibBox(true)} title="Apply if camera distance was fixed">Apply to All Images</button>
+                        <button className="btn-ghost w-full" onClick={resetCalibBox}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {calibMode === 'pt1' && (
+                    <div style={{ fontSize: '11px', color: 'var(--accent2)', background: 'var(--bg0)', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border)', marginBottom: '8px' }}>
+                      📍 <strong>Step 1:</strong> Click 1st point on thermal image.
+                    </div>
+                  )}
+                  {calibMode === 'pt2' && (
+                    <div style={{ fontSize: '11px', color: 'var(--cyan)', background: 'var(--bg0)', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border)', marginBottom: '8px' }}>
+                      📍 <strong>Step 2:</strong> Click 2nd point on image.<br/>
+                      ⌨️ <strong>Hold Shift</strong> to snap a straight line.
+                    </div>
+                  )}
+                  <button className="btn-secondary w-full" onClick={startCalib}>
+                    {activePxPerCm ? '↺ Re-calibrate with Ruler' : 'Click 2 Points on Ruler'}
+                  </button>
+                  {showDistInput && (
+                    <div className="inline-form" style={{ marginTop: '10px' }}>
+                      <label>Real distance (cm):</label>
+                      <input ref={calibInputRef}
+                             className="field-input"
+                             type="text"
+                             inputMode="decimal"
+                             placeholder="e.g. 10.0"
+                             value={calibDist}
+                             onChange={e => setCalibDist(e.target.value.replace(',', '.'))}
+                             onKeyDown={e => { if (e.key === 'Enter') confirmCalib(); if (e.key === 'Escape') resetCalib(); }}/>
+                      <div className="inline-form-btns">
+                        <button className="btn-primary" onClick={confirmCalib}>Confirm</button>
+                        <button className="btn-ghost"   onClick={resetCalib}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
-              {calibMode === 'pt2' && (
-                <div style={{ fontSize: '11px', color: 'var(--cyan)', background: 'var(--bg0)', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border)', marginBottom: '8px' }}>
-                  📍 <strong>Step 2:</strong> Click 2nd point on image.<br/>
-                  ⌨️ <strong>Hold Shift</strong> to snap a perfectly straight horizontal or vertical line.
-                </div>
-              )}
-              <button className="btn-secondary w-full" onClick={startCalib}>
-                {activePxPerCm ? '↺ Re-calibrate This Image' : 'Click 2 points on image'}
-              </button>
-              {showDistInput && (
-                <div className="inline-form">
-                  <label>Real distance (cm):</label>
-                  <input ref={calibInputRef}
-                         className="field-input"
-                         type="text"
-                         inputMode="decimal"
-                         placeholder="e.g. 10.0"
-                         value={calibDist}
-                         onChange={e=>setCalibDist(e.target.value.replace(',', '.'))}
-                         onKeyDown={e=>{if(e.key==='Enter')confirmCalib();if(e.key==='Escape')resetCalib();}}/>
-                  <div className="inline-form-btns">
-                    <button className="btn-primary" onClick={confirmCalib}>Confirm</button>
-                    <button className="btn-ghost"   onClick={resetCalib}>Cancel</button>
-                  </div>
+
+              {calibrationWizardStep && (
+                <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid var(--border)' }}>
+                  <button
+                    className="btn-primary w-full"
+                    style={{ background: 'var(--cyan)', color: '#000', fontWeight: '700' }}
+                    onClick={() => setCalibrationWizardStep(false)}
+                  >
+                    ✓ Done & Start Annotating
+                  </button>
                 </div>
               )}
             </div>

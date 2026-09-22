@@ -79,6 +79,65 @@ def load_temperature(filepath: str) -> np.ndarray:
     return raw.astype(np.float32)
 
 
+def clean_flir_accessories(temp: np.ndarray) -> np.ndarray:
+    """
+    Stroke-level FLIR OSD, logo, reticle, and colorbar inpainting.
+    Removes all camera UI accessories to yield a clean thermal matrix.
+    """
+    temp_work = temp.copy()
+    H, W = temp_work.shape
+    
+    is_celsius = float(temp_work.max()) < 100.0
+    if is_celsius:
+        mn, mx = float(temp_work.min()), float(temp_work.max())
+        norm_u8 = np.clip((temp_work - mn) / (mx - mn + 1e-6) * 255.0, 0, 255).astype(np.uint8)
+    else:
+        norm_u8 = np.clip(temp_work, 0, 255).astype(np.uint8)
+
+    osd_stroke_mask = np.zeros((H, W), dtype=bool)
+
+    # 1. Top-left temperature text
+    tl_box = np.zeros((H, W), dtype=bool)
+    tl_box[2:32, 2:85] = True
+    osd_stroke_mask |= tl_box & ((norm_u8 > 160) | (norm_u8 < 20))
+
+    # 2. Bottom-left FLIR logo
+    bl_box = np.zeros((H, W), dtype=bool)
+    bl_box[max(0, H - 45):H, 0:75] = True
+    osd_stroke_mask |= bl_box & ((norm_u8 > 160) | (norm_u8 < 20))
+
+    # 3. Top-right scale limit text
+    tr_box = np.zeros((H, W), dtype=bool)
+    tr_box[2:32, int(W * 0.83):int(W * 0.95)] = True
+    osd_stroke_mask |= tr_box & ((norm_u8 > 160) | (norm_u8 < 20))
+
+    # 4. Bottom-right scale limit text
+    br_box = np.zeros((H, W), dtype=bool)
+    br_box[max(0, H - 45):H, int(W * 0.83):int(W * 0.95)] = True
+    osd_stroke_mask |= br_box & ((norm_u8 > 160) | (norm_u8 < 20))
+
+    # 5. Center reticle/crosshair
+    c_box = np.zeros((H, W), dtype=bool)
+    c_box[int(H * 0.20):int(H * 0.80), int(W * 0.15):int(W * 0.85)] = True
+    osd_stroke_mask |= c_box & ((norm_u8 < 30) | (norm_u8 > 240))
+
+    # Inpaint detected strokes seamlessly
+    if np.any(osd_stroke_mask):
+        mask_d = cv2.dilate(osd_stroke_mask.astype(np.uint8), np.ones((5, 5), np.uint8))
+        inpainted_u8 = cv2.inpaint(norm_u8, mask_d, 7, cv2.INPAINT_TELEA)
+        if is_celsius:
+            temp_work = mn + (inpainted_u8.astype(np.float32) / 255.0) * (mx - mn)
+        else:
+            temp_work = inpainted_u8.astype(np.float32)
+
+    # 6. Replicate ambient thermal background for rightmost colorbar strip
+    cb_start = int(W * 0.95)
+    for c in range(cb_start, W):
+        temp_work[:, c] = temp_work[:, cb_start - 1]
+
+    return temp_work
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Compute gradients
 # ─────────────────────────────────────────────────────────────────────────────
@@ -699,6 +758,8 @@ def cmd_analyze(image_path: str, out_dir_str: str):
 
     log(f"Loading: {image_path}")
     temp = load_temperature(image_path)
+    # v1.8.0: Automatically clean all FLIR accessories on initial load
+    temp = clean_flir_accessories(temp)
     log(f"Shape {temp.shape}  range {temp.min():.1f}–{temp.max():.1f}")
 
     log("Computing gradients…")

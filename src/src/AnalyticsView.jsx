@@ -3,6 +3,22 @@ import React, { useState, useMemo } from 'react';
 import { ICA_PROTOCOL, getProtocolStep } from './protocol';
 import { COMPASS, BASE_ANGLES, generateThermalDirectionSvg, generateFullSequenceComparisonCanvas } from './thermalEngine';
 
+const toFileUrl = (p) => {
+  if (!p) return '';
+  if (p.startsWith('data:') || p.startsWith('blob:') || p.startsWith('http') || p.startsWith('file:')) return p;
+  const s = p.replace(/\\/g, '/');
+  const driveMatch = s.match(/^([a-zA-Z]:)(.*)/);
+  if (driveMatch) {
+    const drive = driveMatch[1];
+    const rest = driveMatch[2];
+    const encodedRest = rest.split('/').map(part => encodeURIComponent(part)).join('/');
+    return `file:///${drive}${encodedRest}`;
+  }
+  const encodedParts = s.split('/').map(part => encodeURIComponent(part));
+  const encodedPath = encodedParts.join('/');
+  return s.startsWith('/') ? `file://${encodedPath}` : `file:///${encodedPath}`;
+};
+
 export default function AnalyticsView({ 
   analyticsData, 
   onClose, 
@@ -666,7 +682,7 @@ export default function AnalyticsView({
                 const downloadImage = (dataSrc, fileName) => {
                   if (!dataSrc) return;
                   const a = document.createElement('a');
-                  a.href = dataSrc.startsWith('data:') ? dataSrc : `file://${dataSrc}`;
+                  a.href = toFileUrl(dataSrc);
                   a.download = fileName;
                   document.body.appendChild(a);
                   a.click();
@@ -716,7 +732,7 @@ export default function AnalyticsView({
                           )}
                         </div>
                         {p2d ? (
-                          <img src={p2d} alt="2D Quiver Map" style={{ maxWidth: '100%', height: 'auto', borderRadius: '4px', border: '1px solid var(--border)' }} />
+                          <img src={toFileUrl(p2d)} alt="2D Quiver Map" style={{ maxWidth: '100%', height: 'auto', borderRadius: '4px', border: '1px solid var(--border)' }} />
                         ) : (
                           <div style={{ padding: '40px 10px', color: 'var(--text2)', fontSize: '11px' }}>
                             2D Quiver map not generated for this step
@@ -737,7 +753,7 @@ export default function AnalyticsView({
                           )}
                         </div>
                         {p3d ? (
-                          <img src={p3d} alt="3D Surface Mesh" style={{ maxWidth: '100%', height: 'auto', borderRadius: '4px', border: '1px solid var(--border)' }} />
+                          <img src={toFileUrl(p3d)} alt="3D Surface Mesh" style={{ maxWidth: '100%', height: 'auto', borderRadius: '4px', border: '1px solid var(--border)' }} />
                         ) : (
                           <div style={{ padding: '40px 10px', color: 'var(--text2)', fontSize: '11px' }}>
                             3D Surface mesh not generated for this step

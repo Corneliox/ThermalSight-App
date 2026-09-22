@@ -92,6 +92,133 @@ function hsvToRgb(h, s, v) {
   return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
 }
 
+// ── FLIR Accessories & OSD Inpainting ─────────────────────────────────────────
+/**
+ * Automatically cleans all FLIR accessories (OSD temperature readouts, FLIR logo,
+ * scale limit text, colorbar, and reticle/crosshair) directly from RGBA image pixel buffer.
+ */
+export function cleanFlirAccessoriesRgba(data, W, H) {
+  const isOsd = new Uint8Array(W * H);
+
+  // 1. Identify candidate stroke pixels based on coordinate zones and extreme luminance
+  for (let r = 0; r < H; r++) {
+    const inTl = (r >= 2 && r <= 32);
+    const inBl = (r >= H - 45 && r < H);
+    const inTr = (r >= 2 && r <= 32);
+    const inBr = (r >= H - 45 && r < H);
+    const inCenter = (r >= Math.floor(H * 0.20) && r <= Math.floor(H * 0.80));
+
+    for (let c = 0; c < W; c++) {
+      const idx = (r * W + c) * 4;
+      const red = data[idx];
+      const grn = data[idx + 1];
+      const blu = data[idx + 2];
+      const lum = 0.299 * red + 0.587 * grn + 0.114 * blu;
+
+      const isTl = inTl && (c >= 2 && c <= 85);
+      const isBl = inBl && (c >= 0 && c <= 75);
+      const isTr = inTr && (c >= Math.floor(W * 0.83) && c < Math.floor(W * 0.95));
+      const isBr = inBr && (c >= Math.floor(W * 0.83) && c < Math.floor(W * 0.95));
+      const isCenterBox = inCenter && (c >= Math.floor(W * 0.15) && c <= Math.floor(W * 0.85));
+
+      if (isTl || isBl || isTr || isBr) {
+        if (lum > 160 || lum < 20) {
+          isOsd[r * W + c] = 1;
+        }
+      } else if (isCenterBox) {
+        if (lum < 30 || lum > 240) {
+          isOsd[r * W + c] = 1;
+        }
+      }
+    }
+  }
+
+  // 2. Dilate the stroke mask by 2 pixels to cover anti-aliased edge halos
+  const dilatedMask = new Uint8Array(W * H);
+  for (let r = 0; r < H; r++) {
+    for (let c = 0; c < W; c++) {
+      if (isOsd[r * W + c] === 1) {
+        const rMin = Math.max(0, r - 2);
+        const rMax = Math.min(H - 1, r + 2);
+        const cMin = Math.max(0, c - 2);
+        const cMax = Math.min(W - 1, c + 2);
+        for (let dr = rMin; dr <= rMax; dr++) {
+          for (let dc = cMin; dc <= cMax; dc++) {
+            dilatedMask[dr * W + dc] = 1;
+          }
+        }
+      }
+    }
+  }
+
+  // 3. Inpaint dilated mask using directional non-masked boundary interpolation
+  const cbStart = Math.floor(W * 0.95);
+  for (let r = 0; r < H; r++) {
+    for (let c = 0; c < cbStart; c++) {
+      if (dilatedMask[r * W + c] === 0) continue;
+
+      let cLeft = c - 1;
+      while (cLeft >= 0 && dilatedMask[r * W + cLeft] === 1) cLeft--;
+      let cRight = c + 1;
+      while (cRight < cbStart && dilatedMask[r * W + cRight] === 1) cRight++;
+
+      let rUp = r - 1;
+      while (rUp >= 0 && dilatedMask[rUp * W + c] === 1) rUp--;
+      let rDown = r + 1;
+      while (rDown < H && dilatedMask[rDown * W + c] === 1) rDown++;
+
+      let wTotal = 0;
+      let rSum = 0, gSum = 0, bSum = 0;
+
+      if (cLeft >= 0) {
+        const w = 1.0 / (c - cLeft);
+        const pIdx = (r * W + cLeft) * 4;
+        rSum += data[pIdx] * w; gSum += data[pIdx + 1] * w; bSum += data[pIdx + 2] * w;
+        wTotal += w;
+      }
+      if (cRight < cbStart) {
+        const w = 1.0 / (cRight - c);
+        const pIdx = (r * W + cRight) * 4;
+        rSum += data[pIdx] * w; gSum += data[pIdx + 1] * w; bSum += data[pIdx + 2] * w;
+        wTotal += w;
+      }
+      if (rUp >= 0) {
+        const w = 1.0 / (r - rUp);
+        const pIdx = (rUp * W + c) * 4;
+        rSum += data[pIdx] * w; gSum += data[pIdx + 1] * w; bSum += data[pIdx + 2] * w;
+        wTotal += w;
+      }
+      if (rDown < H) {
+        const w = 1.0 / (rDown - r);
+        const pIdx = (rDown * W + c) * 4;
+        rSum += data[pIdx] * w; gSum += data[pIdx + 1] * w; bSum += data[pIdx + 2] * w;
+        wTotal += w;
+      }
+
+      if (wTotal > 0) {
+        const curIdx = (r * W + c) * 4;
+        data[curIdx] = Math.round(rSum / wTotal);
+        data[curIdx + 1] = Math.round(gSum / wTotal);
+        data[curIdx + 2] = Math.round(bSum / wTotal);
+      }
+    }
+  }
+
+  // 4. Clean rightmost colorbar widget by replicating adjacent ambient thermal background
+  for (let r = 0; r < H; r++) {
+    const srcIdx = (r * W + (cbStart - 1)) * 4;
+    const rVal = data[srcIdx];
+    const gVal = data[srcIdx + 1];
+    const bVal = data[srcIdx + 2];
+    for (let c = cbStart; c < W; c++) {
+      const dstIdx = (r * W + c) * 4;
+      data[dstIdx] = rVal;
+      data[dstIdx + 1] = gVal;
+      data[dstIdx + 2] = bVal;
+    }
+  }
+}
+
 // ── Image Loader & Matrix Extractor ──────────────────────────────────────────
 export function loadThermalImageData(imageSource) {
   return new Promise((resolve, reject) => {
@@ -122,6 +249,11 @@ export function loadThermalImageData(imageSource) {
       const imgData = ctx.getImageData(0, 0, W, H);
       const data = imgData.data;
 
+      // v1.8.0: Automatically clean all FLIR accessories (OSD text, logo, colorbar, reticles)
+      cleanFlirAccessoriesRgba(data, W, H);
+      ctx.putImageData(imgData, 0, 0);
+      const cleanImageDataUrl = canvas.toDataURL('image/png');
+
       const tempMatrix = new Float32Array(W * H);
       let minVal = Infinity;
       let maxVal = -Infinity;
@@ -143,6 +275,7 @@ export function loadThermalImageData(imageSource) {
         width: W,
         height: H,
         tempMatrix,
+        cleanImageDataUrl,
         temp_min: minVal,
         temp_max: maxVal,
         temp_mean: sumVal / (W * H),
@@ -241,7 +374,7 @@ function renderToCanvas(W, H, renderFn) {
 }
 
 // ── Complete Thermal Analysis Pipeline ──────────────────────────────────────
-export function runClientThermalAnalysis(tempMatrix, W, H, stem = 'image') {
+export function runClientThermalAnalysis(tempMatrix, W, H, stem = 'image', cleanImageDataUrl = null) {
   // 1. Normalization
   let minT = Infinity, maxT = -Infinity;
   for (let i = 0; i < W * H; i++) {
@@ -275,7 +408,7 @@ export function runClientThermalAnalysis(tempMatrix, W, H, stem = 'image') {
       d[i * 4 + 3] = 255;
     }
   });
-  const originalUrl = origCanvas.toDataURL('image/png');
+  const originalUrl = cleanImageDataUrl || origCanvas.toDataURL('image/png');
 
   // ── Panel 2: Gradient Magnitude (Hot) ────────────────────────────────────
   const magCanvas = renderToCanvas(W, H, (d) => {
@@ -2670,4 +2803,65 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     metricsCsv,
     metricsData
   };
+}
+
+// ── v1.8.0 Architectural Upgrade: Scale & Physical Normalization Helpers ──────
+
+/**
+ * Compute pixel-to-cm calibration scale from a reference box / rectangle.
+ * @param {Object} box - { x1, y1, x2, y2 } or { px1, py1, px2, py2 }
+ * @param {number} realWidthCm - Real width of the reference card/box in cm (e.g. 5.0)
+ * @param {number} realHeightCm - Real height of the reference card/box in cm (e.g. 5.0)
+ * @returns {{ pxPerCm: number, pxPerCmX: number, pxPerCmY: number, widthPx: number, heightPx: number, realWidthCm: number, realHeightCm: number }}
+ */
+export function computeReferenceBoxScale(box, realWidthCm = 5.0, realHeightCm = 5.0) {
+  const x1 = box.x1 ?? box.px1 ?? 0;
+  const y1 = box.y1 ?? box.py1 ?? 0;
+  const x2 = box.x2 ?? box.px2 ?? 0;
+  const y2 = box.y2 ?? box.py2 ?? 0;
+  
+  const widthPx = Math.abs(x2 - x1);
+  const heightPx = Math.abs(y2 - y1);
+
+  const wCm = Math.max(0.001, parseFloat(realWidthCm) || 5.0);
+  const hCm = Math.max(0.001, parseFloat(realHeightCm) || wCm);
+
+  const pxPerCmX = widthPx / wCm;
+  const pxPerCmY = heightPx / hCm;
+  
+  // For isotropic sensor pixels, calculate weighted average to minimize noise:
+  const pxPerCm = (widthPx + heightPx) / (wCm + hCm);
+
+  return {
+    pxPerCm: Math.max(0.0001, pxPerCm),
+    pxPerCmX: Math.max(0.0001, pxPerCmX),
+    pxPerCmY: Math.max(0.0001, pxPerCmY),
+    widthPx,
+    heightPx,
+    realWidthCm: wCm,
+    realHeightCm: hCm
+  };
+}
+
+/**
+ * Compute physical normalized grid step spacing for an image given its scale.
+ * Ensures a grid cell physically covers the same real-world centimeters regardless of camera distance.
+ * @param {number} pxPerCm - Scale of the current image in px/cm
+ * @param {number} physicalStepCm - Desired physical step in cm (default 0.5 cm)
+ * @returns {number} Step size in sensor pixels
+ */
+export function computePhysicalGridStepPx(pxPerCm, physicalStepCm = 0.5) {
+  const scale = pxPerCm && pxPerCm > 0 ? pxPerCm : 10.0;
+  return Math.max(1, Math.round(physicalStepCm * scale));
+}
+
+/**
+ * Synchronize circle radius in pixels based on physical centimeters.
+ * @param {number} radiusCm - Radius in centimeters
+ * @param {number} pxPerCm - Image scale (px/cm)
+ * @returns {number} Radius in image pixels
+ */
+export function computePhysicalCircleRadiusPx(radiusCm, pxPerCm) {
+  const scale = pxPerCm && pxPerCm > 0 ? pxPerCm : 10.0;
+  return Math.max(2, (parseFloat(radiusCm) || 1.0) * scale);
 }

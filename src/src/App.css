@@ -971,3 +971,183 @@ input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
   color: #ff5252;
   font-weight: 700;
 }
+
+/* ── v1.8.0 BATCH BLOCKING LOADER OVERLAY ─────────────────────────────────── */
+.batch-loader-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 11, 14, 0.94);
+  backdrop-filter: blur(12px);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 24px 32px;
+  overflow: hidden;
+}
+
+.batch-loader-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.batch-loader-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text0);
+  letter-spacing: 0.05em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.batch-loader-card {
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+  border-radius: 12px;
+  padding: 32px;
+  max-width: 640px;
+  width: 100%;
+  margin: auto;
+  text-align: center;
+}
+
+.batch-loader-spinner-wrapper {
+  margin-bottom: 18px;
+  display: flex;
+  justify-content: center;
+}
+
+.batch-loader-status-text {
+  font-size: 16px;
+  color: var(--text0);
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+/* Error notification banner placed directly above progress bar */
+.batch-loader-error-banner {
+  background: rgba(255, 82, 82, 0.12);
+  border: 1px solid var(--red);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 18px;
+  text-align: left;
+  animation: fadeIn 0.2s ease-in;
+}
+
+.error-banner-header {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--red);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.error-banner-list {
+  font-size: 11px;
+  color: var(--text1);
+  padding-left: 18px;
+  margin: 4px 0 8px;
+  max-height: 90px;
+  overflow-y: auto;
+}
+
+.error-banner-list li {
+  margin-bottom: 3px;
+}
+
+.error-banner-action {
+  font-size: 11px;
+  color: var(--accent2);
+}
+
+.batch-progress-container {
+  width: 100%;
+  height: 10px;
+  background: var(--bg3);
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  position: relative;
+}
+
+.batch-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #00e5ff, #00b4d8, #ff6b35);
+  transition: width 0.15s ease-out;
+}
+
+.batch-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text2);
+  margin-top: 8px;
+  font-family: var(--font-mono);
+}
+
+.batch-loader-terminal {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  background: var(--bg0);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+}
+
+/* ── CALIBRATION WIZARD & REFERENCE BOX STYLING ── */
+.calib-wizard-banner {
+  background: linear-gradient(90deg, rgba(0, 229, 255, 0.15), rgba(255, 107, 53, 0.15));
+  border: 1px solid var(--cyan);
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.calib-type-toggle {
+  display: flex;
+  background: var(--bg0);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+  margin-bottom: 10px;
+}
+
+.calib-type-btn {
+  flex: 1;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border: none;
+  background: transparent;
+  color: var(--text1);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.calib-type-btn.active {
+  background: var(--cyan);
+  color: #0b0c10;
+}
+
+.radius-sync-controls {
+  background: var(--bg0);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  margin-top: 8px;
+}
