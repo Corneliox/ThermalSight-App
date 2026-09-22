@@ -3,6 +3,7 @@
 [![Version](https://img.shields.io/badge/stable%20version-1.8.0-brightgreen.svg)](https://github.com/Corneliox/ThermalSight-App/releases/tag/v1.8.0)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Web-brightgreen.svg)]()
 [![Web App](https://img.shields.io/badge/Live%20Demo-Firebase%20Hosting-orange.svg)](https://thermalsight-web-2026.web.app)
+[![GitHub Pages](https://img.shields.io/badge/GitHub%20Pages-Live%20Mirror-blue.svg)](https://corneliox.github.io/ThermalSight-App/)
 [![License](https://img.shields.io/badge/license-MIT-purple.svg)]()
 
 > [!NOTE]
@@ -18,7 +19,9 @@
 
 Available as both an offline desktop application (**Electron + Python backend**) and a zero-install, 100% client-side web application (**React + HTML5 Canvas engine**).
 
-🌐 **Live Web Application**: [https://thermalsight-web-2026.web.app](https://thermalsight-web-2026.web.app)
+🌐 **Live Web Application**:
+- **Primary (Firebase Hosting)**: [https://thermalsight-web-2026.web.app](https://thermalsight-web-2026.web.app)
+- **Mirror (GitHub Pages)**: [https://corneliox.github.io/ThermalSight-App/](https://corneliox.github.io/ThermalSight-App/)
 
 ---
 
