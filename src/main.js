@@ -140,6 +140,26 @@ function createWindow() {
   mainWindow.setTitle('ThermalSight');
   createApplicationMenu();
 
+  // Navigation lockdown: strictly prevent loading remote external web pages in main window
+  mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
+    try {
+      const parsed = new URL(navigationUrl);
+      if (parsed.protocol !== 'file:' && !navigationUrl.startsWith('http://localhost:5173')) {
+        event.preventDefault();
+        shell.openExternal(navigationUrl);
+      }
+    } catch {
+      event.preventDefault();
+    }
+  });
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+      shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
   if (app.isPackaged) {
     mainWindow.loadFile(path.join(__dirname, 'dist/index.html'));
   } else {
@@ -611,15 +631,25 @@ ipcMain.handle('open-ppg-workbench', async (_event, sessionJsonPath, activeImage
   }
 
   const pyExe = process.platform === 'win32' ? 'python' : 'python3';
+  sendLogToRenderer('info', `[PPG LAB] Launching: ${pyExe} "${workbenchScript}"`);
   try {
     const child = spawn(pyExe, args, {
       detached: true,
-      stdio: 'ignore'
+      stdio: 'pipe'
+    });
+    child.on('error', (err) => {
+      console.error('Failed to launch PPG Workbench:', err);
+      sendLogToRenderer('error', `[PPG LAB ERROR] Could not start Python process (${pyExe}): ${err.message}. Please verify Python is installed in PATH.`);
+    });
+    child.stderr?.on('data', (d) => {
+      const msg = d.toString().trim();
+      if (msg) sendLogToRenderer('warning', `[PPG Lab] ${msg}`);
     });
     child.unref();
     return { status: 'ok' };
   } catch (err) {
     console.error('Failed to launch PPG Workbench:', err);
+    sendLogToRenderer('error', `[PPG LAB ERROR] ${err.message}`);
     return { error: err.message };
   }
 });

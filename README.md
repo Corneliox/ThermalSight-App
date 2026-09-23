@@ -1,14 +1,16 @@
 # 🌡 ThermalSight
 
-[![Version](https://img.shields.io/badge/stable%20version-1.8.0-brightgreen.svg)](https://github.com/Corneliox/ThermalSight-App/releases/tag/v1.8.0)
+[![Version](https://img.shields.io/badge/stable%20version-1.8.1-brightgreen.svg)](https://github.com/Corneliox/ThermalSight-App/releases/tag/v1.8.1)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Web-brightgreen.svg)]()
 [![Web App](https://img.shields.io/badge/Live%20Demo-Firebase%20Hosting-orange.svg)](https://thermalsight-web-2026.web.app)
 [![GitHub Pages](https://img.shields.io/badge/GitHub%20Pages-Live%20Mirror-blue.svg)](https://corneliox.github.io/ThermalSight-App/)
 [![License](https://img.shields.io/badge/license-MIT-purple.svg)]()
 
 > [!NOTE]
-> **Production Stable Milestone: v1.8.0**  
-> The current official and verified stable production release is **ThermalSight v1.8.0**. Features include:
+> **Production Stable Milestone: v1.8.1**  
+> The current official and verified stable production release is **ThermalSight v1.8.1**. Features and hotfixes include:
+> - **Corrected PGA Compass Vectors in PPG Lab**: Fixed vertical Cartesian coordinate mapping (`-sobel_y`) to eliminate 180° direction reversal in exported Excel summaries.
+> - **Cross-Platform Directory Opener**: Safe opening of result folders across Windows, macOS, and Linux without `os.startfile` crashes.
 > - **In-App Multilingual Interactive Workflow Guide**: 3-perspective architecture and operating guide available in English (`EN` - default), Indonesian (`ID`), and Traditional Chinese (`繁中`).
 > - **Pure Radiometric Sensor Loading ("Mode Mula-mula")**: Artificial inpainting bypassed; 16-bit radiometric sensor metadata decoded directly via FLIR Planck parameters with zero visual OSD stamp artifacts.
 > - **Standardized 9×9 Grid ROI Windows**: ROI circle dimensions locked to exactly 9×9 grid cells ($r = 4.5$ cells) for uniform, reproducible thermal flux quantification.

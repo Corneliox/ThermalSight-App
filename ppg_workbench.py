@@ -1,5 +1,5 @@
 """
-ThermalSight PPG & PGA Interactive Workbench (v1.8.0)
+ThermalSight PPG & PGA Interactive Workbench (v1.8.1)
 Standalone companion tool for:
 1. Multi-image session carousel (Next / Prev / Dropdown navigation)
 2. Interactive foot mask paint & erase brush
@@ -17,9 +17,12 @@ Standalone companion tool for:
 
 import os
 import sys
+import re
 import json
 import shutil
 import argparse
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 import numpy as np
 import cv2
@@ -46,7 +49,7 @@ except ImportError:
 class PPGWorkbenchApp:
     def __init__(self, root, session_arg=None, image_arg=None):
         self.root = root
-        self.root.title("ThermalSight — PPG & PGA Interactive Research Workbench v1.8.0")
+        self.root.title("ThermalSight — PPG & PGA Interactive Research Workbench v1.8.1")
         self.root.geometry("1560x960")
         self.root.minsize(1220, 780)
         self.root.configure(bg="#F1F5F9")
@@ -961,7 +964,7 @@ class PPGWorkbenchApp:
         # 2. Build or update session dictionary
         if not self.session_data:
             self.session_data = {
-                "exportedAt": "2026-09-23T11:00:00.000Z",
+                "exportedAt": datetime.now(timezone.utc).isoformat(),
                 "folderPath": str(Path(self.image_path).parent) if self.image_path else "",
                 "labels": [
                     {"id": "m1", "name": "m1", "color": "#ff4444"},
@@ -1007,7 +1010,8 @@ class PPGWorkbenchApp:
 
             # 4. Burn to new active result directory if loaded from backup/result folder
             active_img_dir = Path(self.image_path).parent if self.image_path else target_file.parent
-            new_result_dir = active_img_dir.parent / f"{active_img_dir.name}_result"
+            clean_stem = re.sub(r'_[rR]esult$', '', active_img_dir.name)
+            new_result_dir = active_img_dir.parent / f"{clean_stem}_result"
             if "_result" in str(target_file).lower() or active_img_dir.name != target_file.parent.name:
                 try:
                     new_result_dir.mkdir(parents=True, exist_ok=True)
@@ -1042,7 +1046,8 @@ class PPGWorkbenchApp:
             return
 
         active_img_dir = Path(self.image_path).parent if self.image_path else Path(self.image_list[0]).parent
-        result_dir = active_img_dir.parent / f"{active_img_dir.name}_result"
+        clean_stem = re.sub(r'_[rR]esult$', '', active_img_dir.name)
+        result_dir = active_img_dir.parent / f"{clean_stem}_result"
         result_dir.mkdir(parents=True, exist_ok=True)
 
         detailed_rows = []
@@ -1176,7 +1181,10 @@ class PPGWorkbenchApp:
                 sobel_x = cv2.Sobel(grid_smooth, cv2.CV_64F, 1, 0, ksize=3) / 8.0
                 sobel_y = cv2.Sobel(grid_smooth, cv2.CV_64F, 0, 1, ksize=3) / 8.0
                 grad_mag = np.sqrt(sobel_x**2 + sobel_y**2)
-                grad_angles = np.degrees(np.arctan2(sobel_y, sobel_x)) % 360.0
+                # In digital image matrix, row index y increases downwards (+Y = South / Heel).
+                # To match standard Cartesian coordinates where +90° is North (Distal / Toes),
+                # invert the vertical gradient component: -sobel_y.
+                grad_angles = np.degrees(np.arctan2(-sobel_y, sobel_x)) % 360.0
 
                 # Map ROIs
                 mapped_rois = []
@@ -1383,7 +1391,15 @@ class PPGWorkbenchApp:
             f"Would you like to open the result folder now?"
         )
         if messagebox.askyesno("Recomputation Complete", summary_msg):
-            os.startfile(str(result_dir))
+            try:
+                if sys.platform == "win32":
+                    os.startfile(str(result_dir))
+                elif sys.platform == "darwin":
+                    subprocess.run(["open", str(result_dir)], check=False)
+                else:
+                    subprocess.run(["xdg-open", str(result_dir)], check=False)
+            except Exception as e:
+                print(f"Could not open folder automatically: {e}")
 
     # ──────── U-NET DATASET EXPORTER ────────
     def export_unet_dataset(self):
