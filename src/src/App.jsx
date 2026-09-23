@@ -2083,6 +2083,25 @@ export default function App() {
     }
   };
 
+  const handleLaunchPpgWorkbench = async () => {
+    if (!window.electronAPI || !window.electronAPI.openPpgWorkbench) {
+      alert('PPG/PGA Lab is available in Desktop mode.');
+      return;
+    }
+    try {
+      let sessionCandidate = null;
+      if (loadedSessionPath) {
+        sessionCandidate = loadedSessionPath;
+      } else if (folderPath) {
+        sessionCandidate = `${folderPath}_result/annotations_session.json`;
+      }
+      const activeImg = activeImagePath || (imageList && imageList[currentIndex]);
+      await window.electronAPI.openPpgWorkbench(sessionCandidate, activeImg);
+    } catch (err) {
+      alert(`Could not launch PPG/PGA Lab:\n${err.message || err}`);
+    }
+  };
+
   // ── macOS Gatekeeper & Permission Handlers ────────────────────────────────────
   const handleRunMacFix = async () => {
     if (!api.runMacPermissionFix) return;
@@ -2622,6 +2641,16 @@ export default function App() {
           <button className="btn-ghost" title="Open Saved Annotation Session (annotations_session.json)" onClick={handleOpenAnnotationSession}>
             📂 Load Session
           </button>
+          {window.electronAPI && (
+            <button
+              className="btn-ghost"
+              style={{ color: '#38bdf8', borderColor: '#0284c7', background: 'rgba(2, 132, 199, 0.12)', fontWeight: '600' }}
+              title="Launch Standalone PPG & PGA Interactive Research Lab"
+              onClick={handleLaunchPpgWorkbench}
+            >
+              🔬 PPG/PGA Lab
+            </button>
+          )}
           <button className="btn-ghost" title="Workflow Architecture & Operating Guide" onClick={() => setShowWorkflowModal(true)}>
             🗺️ Workflow
           </button>

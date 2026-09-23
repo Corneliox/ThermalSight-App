@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openAnnotationDialog: () => ipcRenderer.invoke('open-annotation-dialog'),
   loadAnnotationFile: (filePath) => ipcRenderer.invoke('load-annotation-file', filePath),
   checkExistingAnnotation: (folderPath) => ipcRenderer.invoke('check-existing-annotation', folderPath),
+  openPpgWorkbench: (sessionJsonPath, activeImagePath) => ipcRenderer.invoke('open-ppg-workbench', sessionJsonPath, activeImagePath),
 
   // macOS Permission & Diagnostics APIs
   getPlatformInfo: () => ipcRenderer.invoke('get-platform-info'),

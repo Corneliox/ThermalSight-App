@@ -596,6 +596,28 @@ ipcMain.handle('check-existing-annotation', async (_event, folderPath) => {
     }
   }
   return null;
+ipcMain.handle('open-ppg-workbench', async (_event, sessionJsonPath, activeImagePath) => {
+  const workbenchScript = path.join(__dirname, '..', 'ppg_workbench.py');
+  const args = [workbenchScript];
+  if (sessionJsonPath && fs.existsSync(sessionJsonPath)) {
+    args.push('--session', sessionJsonPath);
+  }
+  if (activeImagePath && fs.existsSync(activeImagePath)) {
+    args.push('--image', activeImagePath);
+  }
+
+  const pyExe = process.platform === 'win32' ? 'python' : 'python3';
+  try {
+    const child = spawn(pyExe, args, {
+      detached: true,
+      stdio: 'ignore'
+    });
+    child.unref();
+    return { status: 'ok' };
+  } catch (err) {
+    console.error('Failed to launch PPG Workbench:', err);
+    return { error: err.message };
+  }
 });
 
 // ── IPC: Draft recovery session file operations ────────────────────────────────

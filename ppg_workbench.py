@@ -6,17 +6,24 @@ Standalone companion tool for:
 3. Interactive ROI landmark repositioning (drag & drop T1, M1, M2)
 4. Smart directory resolution & path burning (with 'Image not Found' guard)
 5. Non-destructive JSON saving (auto .bak + compact mask polygon storage)
-6. Export U-Net paired dataset (480x640 images + binary masks for deep learning)
-7. Publication Figure 1 (0.2 pt ultra-fine contours + Step=1 quiver vectors)
+6. Export U-Net paired dataset (images + binary masks for deep learning)
+7. Targeted incremental pipeline recomputation (⚡ Recompute All Metrics)
+8. Concise Executive Statistical Output:
+   - PPP_PPG_PGA_Statistical_Summary.xlsx (2 Sheets: Detailed & Executive Wide)
+   - PPP_PPG_PGA_Statistical_Summary.csv
+   - PPP_PPG_PGA_Wide_Summary.csv
+9. Publication Figure 1 (0.2 pt ultra-fine contours + Step=1 100% quiver vectors)
 """
 
 import os
 import sys
 import json
 import shutil
+import argparse
 from pathlib import Path
 import numpy as np
 import cv2
+import pandas as pd
 import matplotlib
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
@@ -37,10 +44,10 @@ except ImportError:
         return flyr.unpack(p).celsius.astype(np.float32)
 
 class PPGWorkbenchApp:
-    def __init__(self, root):
+    def __init__(self, root, session_arg=None, image_arg=None):
         self.root = root
         self.root.title("ThermalSight — PPG & PGA Interactive Research Workbench v1.8.0")
-        self.root.geometry("1540x960")
+        self.root.geometry("1560x960")
         self.root.minsize(1220, 780)
         self.root.configure(bg="#F1F5F9")
 
@@ -85,7 +92,16 @@ class PPGWorkbenchApp:
 
         self.setup_ui()
         self.bind_shortcuts()
-        self.load_default_sample()
+
+        # Handle command-line arguments or load default
+        if session_arg and Path(session_arg).exists():
+            self.load_json_file(session_arg)
+            if image_arg and Path(image_arg).exists():
+                self.load_image_file(image_arg)
+        elif image_arg and Path(image_arg).exists():
+            self.load_image_file(image_arg)
+        else:
+            self.load_default_sample()
 
     def setup_ui(self):
         # 1. Top Primary Toolbar
@@ -121,19 +137,24 @@ class PPGWorkbenchApp:
         self.lbl_nav_status = tk.Label(nav_bar, text="No Images Loaded", font=("Arial", 9, "bold"), fg="#38BDF8", bg="#1E293B")
         self.lbl_nav_status.pack(side=tk.LEFT, padx=12, pady=6)
 
-        self.combo_images = ttk.Combobox(nav_bar, state="readonly", width=38)
+        self.combo_images = ttk.Combobox(nav_bar, state="readonly", width=36)
         self.combo_images.pack(side=tk.LEFT, padx=6, pady=6)
         self.combo_images.bind("<<ComboboxSelected>>", self.on_image_selected_from_combo)
 
+        # Actions on Right Side of Nav Bar
+        btn_recompute = tk.Button(nav_bar, text="⚡ Recompute & Export All Metrics", font=("Arial", 9, "bold"), bg="#7C3AED", fg="white",
+                                  activebackground="#6D28D9", relief="flat", padx=10, pady=3, command=self.recompute_and_export_all_metrics)
+        btn_recompute.pack(side=tk.RIGHT, padx=15, pady=6)
+
         btn_export_unet = tk.Button(nav_bar, text="🤖 Export U-Net Dataset", font=("Arial", 9, "bold"), bg="#059669", fg="white",
                                     activebackground="#047857", relief="flat", padx=10, pady=3, command=self.export_unet_dataset)
-        btn_export_unet.pack(side=tk.RIGHT, padx=15, pady=6)
+        btn_export_unet.pack(side=tk.RIGHT, padx=6, pady=6)
 
-        btn_save_json = tk.Button(nav_bar, text="💾 Save Annotations to JSON", font=("Arial", 9, "bold"), bg="#D97706", fg="white",
+        btn_save_json = tk.Button(nav_bar, text="💾 Save to JSON", font=("Arial", 9, "bold"), bg="#D97706", fg="white",
                                   activebackground="#B45309", relief="flat", padx=10, pady=3, command=self.save_annotations_to_json)
         btn_save_json.pack(side=tk.RIGHT, padx=6, pady=6)
 
-        # 3. Main Workspace Layout: Sidebar on Left, Canvas on Right
+        # 3. Main Workspace Layout: Sidebar on Left, Matplotlib Canvas on Right
         main_container = tk.Frame(self.root, bg="#F1F5F9")
         main_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
@@ -170,7 +191,7 @@ class PPGWorkbenchApp:
         self.canvas.mpl_connect("motion_notify_event", self.on_canvas_motion)
         self.canvas.mpl_connect("button_release_event", self.on_canvas_release)
 
-        # Toolbar
+        # Matplotlib Toolbar
         toolbar_frame = tk.Frame(display_frame, bg="#FFFFFF")
         toolbar_frame.pack(side=tk.BOTTOM, fill=tk.X)
         self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
@@ -310,7 +331,11 @@ class PPGWorkbenchApp:
         chk_dots.pack(anchor="w", padx=14, pady=(0, 8))
 
         # 6. EXPORT ACTIONS
-        section_header("6. Publication Figure Export")
+        section_header("6. Publication Figure & Metrics Export")
+        btn_recompute_side = tk.Button(p, text="⚡ Recompute All Metrics & Export Excel", font=("Arial", 10, "bold"),
+                                       bg="#7C3AED", fg="white", relief="flat", padx=10, pady=8, command=self.recompute_and_export_all_metrics)
+        btn_recompute_side.pack(fill=tk.X, padx=14, pady=(2, 6))
+
         btn_export_png = tk.Button(p, text="📷 Save Figure 1 (300 DPI PNG)", font=("Arial", 9, "bold"),
                                    bg="#0284C7", fg="white", relief="flat", padx=10, pady=6, command=self.export_highres_png)
         btn_export_png.pack(fill=tk.X, padx=14, pady=(2, 4))
@@ -403,7 +428,6 @@ class PPGWorkbenchApp:
         return deduped, burned_segs
 
     def load_default_sample(self):
-        # Look for default bas session
         sample_json = CURRENT_DIR / "example" / "bas_result" / "annotations_session.json"
         if not sample_json.exists():
             sample_json = CURRENT_DIR / "example" / "bas_Result_v0" / "annotations_session.json"
@@ -421,7 +445,6 @@ class PPGWorkbenchApp:
             filetypes=[("Thermal Images", "*.jpg *.jpeg *.png *.tiff"), ("All Files", "*.*")]
         )
         if file_path:
-            # Build list of sibling images in the same folder
             p = Path(file_path)
             siblings = sorted([str(f.resolve()) for f in p.parent.glob("*.jpg")])
             if siblings:
@@ -447,8 +470,7 @@ class PPGWorkbenchApp:
             resolved_images, burned_segs = self.resolve_image_paths_from_json(path_str, data)
             
             if not resolved_images:
-                # Per user request: "apabila direktori tidak dapat ditemukan makakan error lalu kembali ke awal errornya 'Image not Found'"
-                messagebox.showerror("Image not Found", f"Image not Found\n\nCould not resolve the referenced thermal images in:\n{path_str}")
+                messagebox.showerror("Image not Found", f"Image not Found\n\nCould not resolve referenced thermal images in:\n{path_str}")
                 return
 
             self.session_json_path = Path(path_str)
@@ -461,7 +483,7 @@ class PPGWorkbenchApp:
             self.combo_images['values'] = [Path(x).name for x in self.image_list]
             self.update_nav_ui()
 
-            # Load first image in the session
+            # Load first image in session
             self.load_image_file(self.image_list[0])
 
         except Exception as e:
@@ -477,7 +499,6 @@ class PPGWorkbenchApp:
             # Extract ROIs from session data or companion JSON
             self.rois_data = []
             if self.session_data and "segmentations" in self.session_data:
-                # Check exact path or basename
                 seg_map = self.session_data["segmentations"]
                 if self.image_path in seg_map:
                     self.rois_data = seg_map[self.image_path]
@@ -489,7 +510,6 @@ class PPGWorkbenchApp:
                             break
 
             if not self.rois_data:
-                # Fallback to companion json
                 json_candidate = Path(path_str).with_suffix(".json")
                 if json_candidate.exists():
                     try:
@@ -580,7 +600,6 @@ class PPGWorkbenchApp:
         morph_k = int(self.scale_morph.get())
 
         if saved_polys:
-            # Reconstruct mask from saved ground-truth polygon
             full_mask = np.zeros_like(self.foot_patch_raw, dtype=np.uint8)
             for poly in saved_polys:
                 pts_local = []
@@ -593,7 +612,6 @@ class PPGWorkbenchApp:
                     cv2.fillPoly(full_mask, [pts_arr], 1)
             clean_mask = (full_mask > 0)
         else:
-            # Auto-segmentation
             bg_map = np.full_like(self.foot_patch_raw, bg_val)
             bg_map[int(H * 0.75):, :] = bg_val + 1.2
             binary_cand = (self.foot_patch_raw > bg_map).astype(np.uint8)
@@ -695,7 +713,6 @@ class PPGWorkbenchApp:
         # ROI Dragging
         if mode == "adjust_roi" and self.is_dragging_roi and self.selected_roi is not None:
             gx, gy = event.xdata, event.ydata
-            # Convert grid coords back to full image pixel coords
             orig_x = self.offset_x + self.xmin + (gx - 0.5) / self.n_cols * self.cw
             orig_y = self.ymin + (gy - 0.5) / self.n_rows * self.ch
 
@@ -846,7 +863,6 @@ class PPGWorkbenchApp:
         # Map and Render ROIs with interactive drag handles
         mapped_rois = self.get_mapped_rois()
         for name, gx, gy, r_rad, roi_obj in mapped_rois:
-            # Highlight selected ROI during drag
             is_sel = (roi_obj is self.selected_roi)
             c_color = "#F59E0B" if is_sel else "red"
             ring_color = "#FBBF24" if is_sel else "#00e5ff"
@@ -882,7 +898,6 @@ class PPGWorkbenchApp:
     def get_mapped_rois(self):
         mapped = []
         if not self.rois_data:
-            # Generate default T1, M1, M2 if none exist
             if self.foot_side == "RightFoot":
                 defs = [("T1", 0.61, 0.16), ("M1", 0.61, 0.33), ("M2", 0.44, 0.33)]
             else:
@@ -1008,10 +1023,372 @@ class PPGWorkbenchApp:
         except Exception as e:
             messagebox.showerror("Save Error", f"Could not save JSON file:\n{e}")
 
+    # ──────── TARGETED PIPELINE RECOMPUTATION & STATISTICAL EXCEL EXPORT ────────
+    def recompute_and_export_all_metrics(self):
+        """
+        Targeted incremental recomputation across all images in the session.
+        Generates:
+        1. Multi-sheet Excel workbook: PPP_PPG_PGA_Statistical_Summary.xlsx (via openpyxl)
+           - Sheet 1: 'Detailed_ROIs' (Long format, 1 row per ROI)
+           - Sheet 2: 'Executive_Summary' (Wide format, 1 row per Image/Subject)
+        2. Universal CSV files:
+           - PPP_PPG_PGA_Statistical_Summary.csv (Long format)
+           - PPP_PPG_PGA_Wide_Summary.csv (Wide format)
+        3. Updated 300 DPI Publication Figure 1 for every image (0.2 pt hairline, Step=1 100% nodes)
+        4. Saves updated annotations_session.json to result directory
+        """
+        if not self.image_list:
+            messagebox.showwarning("No Images", "Please load a session JSON or image folder first.")
+            return
+
+        active_img_dir = Path(self.image_path).parent if self.image_path else Path(self.image_list[0]).parent
+        result_dir = active_img_dir.parent / f"{active_img_dir.name}_result"
+        result_dir.mkdir(parents=True, exist_ok=True)
+
+        detailed_rows = []
+        bg_val = float(self.scale_bg_thresh.get())
+        morph_k = int(self.scale_morph.get())
+        lw = float(self.scale_lw.get())
+        n_levels = int(self.scale_levels.get())
+        cmap_name = self.combo_cmap.get()
+        step = int(self.var_step.get())
+        a_scale = float(self.scale_arrow_len.get())
+        show_dots = self.var_show_dots.get()
+
+        compass_labels = [
+            (337.5, 360.0, "E (Lateral)", "E (Medial)"),
+            (0.0, 22.5, "E (Lateral)", "E (Medial)"),
+            (22.5, 67.5, "NE (Anterolateral)", "NE (Anteromedial)"),
+            (67.5, 112.5, "N (Distal / Toes)", "N (Distal / Toes)"),
+            (112.5, 157.5, "NW (Anteromedial)", "NW (Anterolateral)"),
+            (157.5, 202.5, "W (Medial)", "W (Lateral)"),
+            (202.5, 247.5, "SW (Posteromedial)", "SW (Posterolateral)"),
+            (247.5, 292.5, "S (Proximal / Heel)", "S (Proximal / Heel)"),
+            (292.5, 337.5, "SE (Posterolateral)", "SE (Posteromedial)"),
+        ]
+
+        def get_compass_dir(deg, is_right):
+            deg = deg % 360.0
+            for low, high, right_lbl, left_lbl in compass_labels:
+                if low <= deg < high:
+                    return right_lbl if is_right else left_lbl
+            return "N"
+
+        for img_p in self.image_list:
+            stem = Path(img_p).stem
+            try:
+                temp_raw = load_temperature(img_p)
+                H, W = temp_raw.shape
+
+                # Retrieve ROIs for this image
+                rois = []
+                if self.session_data and "segmentations" in self.session_data:
+                    seg_map = self.session_data["segmentations"]
+                    if img_p in seg_map:
+                        rois = seg_map[img_p]
+                    else:
+                        for k, v in seg_map.items():
+                            if Path(k).name == Path(img_p).name:
+                                rois = v
+                                break
+                if not rois and self.image_path == img_p:
+                    rois = self.rois_data
+
+                # Foot side detection
+                xs = [r.get("cx", (r.get("points") or [{}])[0].get("x", W / 2)) for r in rois if isinstance(r, dict)]
+                avg_x = float(np.mean(xs)) if xs else (W * 0.28)
+                col_prof = np.mean(temp_raw, axis=0)
+                c_start, c_end = int(W * 0.35), int(W * 0.65)
+                valley_idx = int(np.argmin(col_prof[c_start:c_end])) + c_start
+
+                if avg_x < valley_idx:
+                    foot_patch = temp_raw[:, :valley_idx].copy()
+                    off_x = 0
+                    is_right = True
+                else:
+                    foot_patch = temp_raw[:, valley_idx:].copy()
+                    off_x = valley_idx
+                    is_right = False
+
+                # Retrieve or compute mask
+                saved_polys = None
+                if self.session_data and "foot_masks" in self.session_data:
+                    fm = self.session_data["foot_masks"]
+                    if img_p in fm:
+                        saved_polys = fm[img_p]
+                    else:
+                        for k, val in fm.items():
+                            if Path(k).name == Path(img_p).name:
+                                saved_polys = val
+                                break
+
+                if saved_polys:
+                    full_m = np.zeros_like(foot_patch, dtype=np.uint8)
+                    for poly in saved_polys:
+                        pts_local = [[int(round(pt[0] - off_x)), int(round(pt[1]))] for pt in poly]
+                        if len(pts_local) >= 3:
+                            pts_arr = np.array(pts_local, dtype=np.int32).reshape((-1, 1, 2))
+                            cv2.fillPoly(full_m, [pts_arr], 1)
+                    clean_mask = (full_m > 0)
+                elif self.image_path == img_p and self.mask_crop_u8 is not None:
+                    clean_mask = np.zeros_like(foot_patch, dtype=bool)
+                    clean_mask[self.ymin:self.ymin+self.ch, self.xmin:self.xmin+self.cw] = (self.mask_crop_u8 > 0)
+                else:
+                    bg_map = np.full_like(foot_patch, bg_val)
+                    bg_map[int(H * 0.75):, :] = bg_val + 1.2
+                    binary_cand = (foot_patch > bg_map).astype(np.uint8)
+                    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_cand)
+                    if num_labels > 1:
+                        lg_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+                        clean_mask = (labels == lg_idx)
+                    else:
+                        clean_mask = (foot_patch > bg_map)
+                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (morph_k, morph_k))
+                    clean_mask = cv2.morphologyEx(clean_mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
+                    clean_mask = cv2.morphologyEx(clean_mask, cv2.MORPH_OPEN, kernel).astype(bool)
+
+                ys, xs_mask = np.where(clean_mask)
+                pad = 4
+                if len(ys) > 50:
+                    ymin = max(0, int(np.min(ys)) - pad)
+                    ymax = min(H - 1, int(np.max(ys)) + pad)
+                    xmin = max(0, int(np.min(xs_mask)) - pad)
+                    xmax = min(foot_patch.shape[1] - 1, int(np.max(xs_mask)) + pad)
+                    foot_crop = foot_patch[ymin:ymax+1, xmin:xmax+1].copy()
+                    mask_crop_u8 = clean_mask[ymin:ymax+1, xmin:xmax+1].astype(np.uint8)
+                else:
+                    ymin, ymax, xmin, xmax = 0, H - 1, 0, foot_patch.shape[1] - 1
+                    foot_crop = foot_patch.copy()
+                    mask_crop_u8 = np.ones_like(foot_crop, dtype=np.uint8)
+
+                ch, cw = foot_crop.shape
+                aspect = float(cw) / float(max(1, ch))
+                n_rows = 104
+                n_cols = max(20, int(round(n_rows * aspect)))
+
+                # Inpaint & Gradients
+                mask_dense = cv2.resize(mask_crop_u8, (n_cols, n_rows), interpolation=cv2.INTER_NEAREST).astype(bool)
+                mask_inv = (mask_crop_u8 == 0).astype(np.uint8)
+                crop_inp = cv2.inpaint(np.clip(foot_crop, 0, 255).astype(np.uint8), mask_inv, 7, cv2.INPAINT_TELEA).astype(np.float32)
+                grid_inp = cv2.resize(crop_inp, (n_cols, n_rows), interpolation=cv2.INTER_AREA)
+                grid_smooth = cv2.GaussianBlur(grid_inp, (7, 7), 1.8)
+
+                sobel_x = cv2.Sobel(grid_smooth, cv2.CV_64F, 1, 0, ksize=3) / 8.0
+                sobel_y = cv2.Sobel(grid_smooth, cv2.CV_64F, 0, 1, ksize=3) / 8.0
+                grad_mag = np.sqrt(sobel_x**2 + sobel_y**2)
+                grad_angles = np.degrees(np.arctan2(sobel_y, sobel_x)) % 360.0
+
+                # Map ROIs
+                mapped_rois = []
+                if not rois:
+                    if is_right:
+                        defs = [("T1", 0.61, 0.16), ("M1", 0.61, 0.33), ("M2", 0.44, 0.33)]
+                    else:
+                        defs = [("T1", 0.39, 0.16), ("M1", 0.39, 0.33), ("M2", 0.56, 0.33)]
+                    for name, fx, fy in defs:
+                        mapped_rois.append((name, fx * n_cols + 0.5, fy * n_rows + 0.5, 4.5))
+                else:
+                    for r in rois:
+                        if not isinstance(r, dict):
+                            continue
+                        name = str(r.get("labelName", r.get("name", "ROI"))).upper()
+                        rcx = float(r.get("cx", (r.get("points") or [{}])[0].get("x", 0))) - off_x - xmin
+                        rcy = float(r.get("cy", (r.get("points") or [{}])[0].get("y", 0))) - ymin
+                        gx = (rcx / cw) * n_cols + 0.5
+                        gy = (rcy / ch) * n_rows + 0.5
+                        r_rad = 4.5
+                        mapped_rois.append((name, gx, gy, r_rad))
+
+                # Extract 9x9 zone statistics for each ROI
+                for name, gx, gy, r_rad in mapped_rois:
+                    gx_min = max(0, int(round(gx - r_rad)))
+                    gx_max = min(n_cols, int(round(gx + r_rad)) + 1)
+                    gy_min = max(0, int(round(gy - r_rad)))
+                    gy_max = min(n_rows, int(round(gy + r_rad)) + 1)
+
+                    roi_temps = grid_smooth[gy_min:gy_max, gx_min:gx_max]
+                    roi_mags = grad_mag[gy_min:gy_max, gx_min:gx_max]
+                    roi_angs = grad_angles[gy_min:gy_max, gx_min:gx_max]
+
+                    if roi_temps.size > 0:
+                        ppp_mean = float(np.mean(roi_temps))
+                        ppp_peak = float(np.max(roi_temps))
+                        ppp_min = float(np.min(roi_temps))
+                        ppp_std = float(np.std(roi_temps))
+
+                        ppg_mean = float(np.mean(roi_mags))
+                        ppg_peak = float(np.max(roi_mags))
+                        ppg_std = float(np.std(roi_mags))
+
+                        ang_rads = np.radians(roi_angs.flatten())
+                        C_sum = np.sum(np.cos(ang_rads))
+                        S_sum = np.sum(np.sin(ang_rads))
+                        N_pts = len(ang_rads)
+                        mean_ang = float(np.degrees(np.arctan2(S_sum, C_sum))) % 360.0
+                        R_len = np.sqrt(C_sum**2 + S_sum**2) / max(1, N_pts)
+                        coherence_pct = float(R_len * 100.0)
+                        compass_dir = get_compass_dir(mean_ang, is_right)
+                    else:
+                        ppp_mean = ppp_peak = ppp_min = ppp_std = 0.0
+                        ppg_mean = ppg_peak = ppg_std = 0.0
+                        mean_ang = coherence_pct = 0.0
+                        compass_dir = "N"
+
+                    detailed_rows.append({
+                        "Image_Name": stem,
+                        "Foot_Side": "Right" if is_right else "Left",
+                        "ROI": name,
+                        "PPP_Mean_Temp_C": round(ppp_mean, 2),
+                        "PPP_Peak_Temp_C": round(ppp_peak, 2),
+                        "PPP_Min_Temp_C": round(ppp_min, 2),
+                        "PPP_Std_Temp_C": round(ppp_std, 2),
+                        "PPG_Mean_Grad": round(ppg_mean, 3),
+                        "PPG_Peak_Grad": round(ppg_peak, 3),
+                        "PPG_Std_Grad": round(ppg_std, 3),
+                        "PGA_Mean_Angle_Deg": round(mean_ang, 1),
+                        "PGA_Direction_Compass": compass_dir,
+                        "PGA_Coherence_Pct": round(coherence_pct, 1)
+                    })
+
+                # Render & save 300 DPI Fig 1 (0.2 pt hairline, Step=1)
+                fig_out, (fax1, fax2) = plt.subplots(1, 2, figsize=(11, 8.5), dpi=300, facecolor="white")
+                fig_out.subplots_adjust(left=0.04, right=0.96, top=0.92, bottom=0.06, wspace=0.12)
+
+                # Panel A
+                fax1.set_facecolor("#000000")
+                x_e = np.arange(0.5, n_cols + 1.5, 1)
+                y_e = np.arange(0.5, n_rows + 1.5, 1)
+                Xe, Ye = np.meshgrid(x_e, y_e)
+                g_disp = cv2.resize(foot_crop, (n_cols, n_rows), interpolation=cv2.INTER_AREA)
+                g_disp[~mask_dense] = 23.5
+                fax1.pcolormesh(Xe, Ye, g_disp, cmap="inferno", vmin=23.5, vmax=np.max(g_disp),
+                                edgecolors="#111111", linewidth=0.20, shading="flat")
+                fax1.set_xlim(0.5, n_cols + 0.5)
+                fax1.set_ylim(n_rows + 0.5, 0.5)
+                fax1.set_aspect("equal")
+                fax1.tick_params(colors="black", labelsize=8)
+                fax1.set_title(f"(A)\n\nPPP (Thermal Intensity)\n{stem}", fontsize=11, fontweight="bold", pad=8)
+
+                # Panel B
+                fax2.set_facecolor("white")
+                fax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), mask_dense.astype(np.uint8),
+                             levels=[0.5], colors="#94A3B8", linewidths=0.6, linestyles="--")
+                g_contour = grid_smooth.astype(np.float64)
+                g_contour[~mask_dense] = np.nan
+                internals = g_contour[mask_dense & np.isfinite(g_contour)]
+                if len(internals) > 10:
+                    pmin = float(np.percentile(internals, 4))
+                    pmax = float(np.percentile(internals, 98))
+                    fax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), g_contour,
+                                 levels=np.linspace(pmin, pmax, n_levels), cmap=cmap_name, linewidths=lw, alpha=0.92)
+
+                yq, xq = np.mgrid[1:n_rows+1:step, 1:n_cols+1:step]
+                f_sub = mask_dense[::step, ::step]
+                m_sub = grad_mag[::step, ::step]
+                u_sub = sobel_x[::step, ::step]
+                v_sub = sobel_y[::step, ::step]
+                nrm = np.sqrt(u_sub**2 + v_sub**2) + 1e-6
+                is_arr = f_sub & (m_sub >= 0.012)
+                is_d = f_sub & (m_sub < 0.012)
+                u_p = ((u_sub / nrm) * a_scale)[is_arr]
+                v_p = ((v_sub / nrm) * a_scale)[is_arr]
+
+                if show_dots:
+                    fax2.plot(xq[is_d], yq[is_d], "o", color="#0b4db7", markersize=0.9 if step == 1 else 1.8, alpha=0.45, zorder=6)
+
+                fax2.quiver(xq[is_arr], yq[is_arr], u_p, v_p, color="#0b4db7", angles="xy", scale_units="xy", scale=1.0,
+                            width=0.0020 if step == 1 else 0.0034, headwidth=2.5 if step == 1 else 3.2,
+                            headlength=3.0 if step == 1 else 3.8, alpha=0.90, zorder=8)
+
+                for name, gx, gy, r_rad in mapped_rois:
+                    fax1.add_patch(Circle((gx, gy), r_rad, edgecolor="#00e5ff", facecolor="none", lw=1.8, zorder=10))
+                    fax1.add_patch(Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=1.2, zorder=11))
+                    fax1.plot(gx, gy, "o", color="red", markeredgecolor="white", markeredgewidth=0.8, markersize=4.0, zorder=12)
+                    ty1 = 5.5 if gy < n_rows * 0.55 else -4.5
+                    fax1.text(gx, gy + ty1, name, color="white", fontsize=11, fontweight="bold", ha="center", va="center", zorder=15,
+                              bbox=dict(boxstyle="round,pad=0.15", facecolor="#000000", alpha=0.65, edgecolor="none"))
+
+                    fax2.add_patch(Circle((gx, gy), r_rad, edgecolor="red", facecolor="none", lw=1.6, zorder=10))
+                    fax2.add_patch(Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=0.9, linestyle=":", zorder=11) )
+                    fax2.plot(gx, gy, "o", color="red", markersize=3.8, zorder=12)
+                    ty2 = 5.5 if gy < n_rows * 0.55 else -4.5
+                    fax2.text(gx, gy + ty2, name, color="black", fontsize=11, fontweight="bold", ha="center", va="center", zorder=15)
+
+                fax2.set_xlim(0.5, n_cols + 0.5)
+                fax2.set_ylim(n_rows + 0.5, 0.5)
+                fax2.set_aspect("equal")
+                fax2.tick_params(colors="black", labelsize=8)
+                fax2.set_title(f"(B)\n\nPPG & PGA (Hairline {lw}pt, Step {step})\n{stem}", fontsize=11, fontweight="bold", pad=8)
+
+                fig_path = result_dir / f"Fig1_PPGPGA_{stem}.png"
+                fig_out.savefig(str(fig_path), dpi=300, bbox_inches="tight", facecolor="white")
+                plt.close(fig_out)
+
+            except Exception as e:
+                print(f"Error processing {stem}: {e}")
+
+        # Build Long & Wide DataFrames
+        df_long = pd.DataFrame(detailed_rows)
+
+        # Build wide format
+        wide_rows = {}
+        for row in detailed_rows:
+            key = (row["Image_Name"], row["Foot_Side"])
+            if key not in wide_rows:
+                wide_rows[key] = {"Image_Name": row["Image_Name"], "Foot_Side": row["Foot_Side"]}
+            roi = row["ROI"]
+            wide_rows[key][f"{roi}_PPP_Mean_C"] = row["PPP_Mean_Temp_C"]
+            wide_rows[key][f"{roi}_PPP_Peak_C"] = row["PPP_Peak_Temp_C"]
+            wide_rows[key][f"{roi}_PPG_Mean_Grad"] = row["PPG_Mean_Grad"]
+            wide_rows[key][f"{roi}_PPG_Peak_Grad"] = row["PPG_Peak_Grad"]
+            wide_rows[key][f"{roi}_PGA_Angle_Deg"] = row["PGA_Mean_Angle_Deg"]
+            wide_rows[key][f"{roi}_PGA_Direction"] = row["PGA_Direction_Compass"]
+            wide_rows[key][f"{roi}_PGA_Coherence_Pct"] = row["PGA_Coherence_Pct"]
+
+        df_wide = pd.DataFrame(list(wide_rows.values()))
+
+        # 1. Save Multi-Sheet Excel Workbook (via openpyxl)
+        excel_path = result_dir / "PPP_PPG_PGA_Statistical_Summary.xlsx"
+        try:
+            with pd.ExcelWriter(str(excel_path), engine="openpyxl") as writer:
+                df_long.to_excel(writer, sheet_name="Detailed_ROIs", index=False)
+                df_wide.to_excel(writer, sheet_name="Executive_Summary", index=False)
+            has_excel = True
+        except Exception as e:
+            print(f"Excel writer notice: {e}")
+            has_excel = False
+
+        # 2. Save Universal CSVs (UTF-8 with BOM for Excel compatibility)
+        csv_long_path = result_dir / "PPP_PPG_PGA_Statistical_Summary.csv"
+        csv_wide_path = result_dir / "PPP_PPG_PGA_Wide_Summary.csv"
+        df_long.to_csv(str(csv_long_path), index=False, encoding="utf-8-sig")
+        df_wide.to_csv(str(csv_wide_path), index=False, encoding="utf-8-sig")
+
+        # 3. Save updated session JSON to result directory
+        json_target = result_dir / "annotations_session.json"
+        with open(json_target, "w", encoding="utf-8") as f:
+            json.dump(self.session_data, f, indent=2)
+
+        # Show success message with option to open folder
+        summary_msg = (
+            f"✓ Complete Targeted Recomputation Successful!\n\n"
+            f"Processed: {len(self.image_list)} images\n"
+            f"📁 Result Folder: {result_dir.name}\n\n"
+            f"Outputs Generated:\n"
+            f"• 📊 PPP_PPG_PGA_Statistical_Summary.xlsx (2 Sheets: Detailed & Executive)\n"
+            f"• 📄 PPP_PPG_PGA_Statistical_Summary.csv (Long Format)\n"
+            f"• 📄 PPP_PPG_PGA_Wide_Summary.csv (Wide Format)\n"
+            f"• 🖼️ Fig1_PPGPGA_*.png (0.2 pt Hairline, Step=1 100% Nodes)\n"
+            f"• 📋 annotations_session.json (Burned Paths & Foot Mask Polygons)\n\n"
+            f"Would you like to open the result folder now?"
+        )
+        if messagebox.askyesno("Recomputation Complete", summary_msg):
+            os.startfile(str(result_dir))
+
     # ──────── U-NET DATASET EXPORTER ────────
     def export_unet_dataset(self):
         """
-        Exports pairs of normalized thermal images and full-resolution 480x640 binary masks
+        Exports pairs of normalized thermal images and full-resolution binary masks
         ready for PyTorch / TensorFlow U-Net training.
         """
         if not self.image_list:
@@ -1045,11 +1422,10 @@ class PPGWorkbenchApp:
                     norm_img = np.zeros_like(temp, dtype=np.uint8)
                 cv2.imwrite(str(img_out / f"{stem}.png"), norm_img)
 
-                # 2. Binary ground-truth mask (480x640, 0 and 255)
+                # 2. Binary ground-truth mask (0 and 255)
                 full_mask = np.zeros((H, W), dtype=np.uint8)
 
                 if self.image_path == img_p and self.mask_crop_u8 is not None:
-                    # Current active mask
                     full_mask[self.ymin:self.ymin+self.ch, self.offset_x+self.xmin:self.offset_x+self.xmin+self.cw] = (self.mask_crop_u8 > 0) * 255
                 elif self.session_data and "foot_masks" in self.session_data and img_p in self.session_data["foot_masks"]:
                     polys = self.session_data["foot_masks"][img_p]
@@ -1057,7 +1433,6 @@ class PPGWorkbenchApp:
                         pts = np.array(poly, dtype=np.int32).reshape((-1, 1, 2))
                         cv2.fillPoly(full_mask, [pts], 255)
                 else:
-                    # Auto segmentation mask
                     foot_cand = (temp > bg_val).astype(np.uint8)
                     num_l, lbls, stats, _ = cv2.connectedComponentsWithStats(foot_cand)
                     if num_l > 1:
@@ -1075,7 +1450,7 @@ class PPGWorkbenchApp:
                             f"✓ Successfully exported {exported_count} paired images & binary masks!\n\n"
                             f"📁 Images: {img_out}\n"
                             f"📁 Masks: {mask_out}\n\n"
-                            f"Format: 1:1 original FLIR dimensions ({W}x{H})\nTarget: 0 (background) & 255 (plantar foot)\nReady for PyTorch / MONAI U-Net training.")
+                            f"Target: 0 (background) & 255 (plantar foot)\nReady for PyTorch / MONAI U-Net training.")
 
     # ──────── PUBLICATION EXPORT ────────
     def export_highres_png(self):
@@ -1099,6 +1474,11 @@ class PPGWorkbenchApp:
             messagebox.showinfo("Export Successful", f"Saved vector PDF:\n{out_file}")
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="ThermalSight PPG/PGA Interactive Workbench")
+    parser.add_argument("--session", type=str, default=None, help="Path to annotations_session.json")
+    parser.add_argument("--image", type=str, default=None, help="Path to active thermal image")
+    args, _ = parser.parse_known_args()
+
     root = tk.Tk()
-    app = PPGWorkbenchApp(root)
+    app = PPGWorkbenchApp(root, session_arg=args.session, image_arg=args.image)
     root.mainloop()
