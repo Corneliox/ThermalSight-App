@@ -26,6 +26,14 @@
       {
         "from": "../backend/analyzer.py",
         "to": "backend/analyzer.py"
+      },
+      {
+        "from": "../ppg_workbench.py",
+        "to": "ppg_workbench.py"
+      },
+      {
+        "from": "../run_workbench.bat",
+        "to": "run_workbench.bat"
       }
     ],
     "mac": {
