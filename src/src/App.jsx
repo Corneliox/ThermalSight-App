@@ -1905,7 +1905,13 @@ export default function App() {
     }
 
     let activeFiles = currentFiles || imageList;
-    if ((!activeFiles || activeFiles.length === 0) && sessionData.segmentations) {
+    if (sessionData.resolvedImagePaths && sessionData.resolvedImagePaths.length > 0) {
+      setImageList(sessionData.resolvedImagePaths);
+      if (sessionData.folderPath) setFolderPath(sessionData.folderPath);
+      setCurrentIndex(0);
+      setAppMode(sessionData.resolvedImagePaths.length > 1 ? 'bulk' : 'single');
+      activeFiles = sessionData.resolvedImagePaths;
+    } else if ((!activeFiles || activeFiles.length === 0) && sessionData.segmentations) {
       const segKeys = Object.keys(sessionData.segmentations);
       if (segKeys.length > 0) {
         setImageList(segKeys);
@@ -2053,8 +2059,22 @@ export default function App() {
           return;
         }
 
+        if (sessionData.notFound || sessionData.error === 'Image not Found') {
+          alert('Image not Found');
+          return;
+        }
+
+        if (sessionData.error) {
+          alert(`Failed to load annotation session:\n${sessionData.error}`);
+          return;
+        }
+
         await applyLoadedSession(sessionData);
-        alert(`Loaded annotation session successfully from:\n${filePath}`);
+        let msg = `Loaded annotation session successfully from:\n${filePath}`;
+        if (sessionData.burnedCopiedTo) {
+          msg += `\n\n✓ Note: Automatically burned new image paths and copied session to new result directory:\n${sessionData.burnedCopiedTo}`;
+        }
+        alert(msg);
       } catch (err) {
         alert(`Failed to load annotation session:\n${err.message || err}`);
       }

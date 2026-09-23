@@ -474,6 +474,103 @@ ipcMain.handle('load-annotation-file', async (_event, filePath) => {
   if (!filePath || !fs.existsSync(filePath)) return null;
   try {
     const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    const jsonDir = path.dirname(filePath);
+    const parentDir = path.dirname(jsonDir);
+
+    // Resolve images referenced in session
+    if (data.segmentations && typeof data.segmentations === 'object') {
+      const segKeys = Object.keys(data.segmentations);
+      const imgExts = ['.jpg', '.jpeg', '.png', '.tiff', '.tif'];
+      const baseNames = segKeys
+        .map(k => path.basename(k))
+        .filter(b => imgExts.some(ext => b.toLowerCase().endsWith(ext)));
+
+      if (baseNames.length > 0) {
+        // Collect candidate directories to search
+        const candidateDirs = [];
+        if (data.folderPath && fs.existsSync(data.folderPath)) {
+          candidateDirs.push(data.folderPath);
+        }
+        if (fs.existsSync(jsonDir)) {
+          candidateDirs.push(jsonDir);
+        }
+        if (fs.existsSync(parentDir)) {
+          candidateDirs.push(parentDir);
+          try {
+            const subdirs = fs.readdirSync(parentDir, { withFileTypes: true })
+              .filter(d => d.isDirectory())
+              .map(d => path.join(parentDir, d.name));
+            candidateDirs.push(...subdirs);
+          } catch {}
+        }
+
+        // Check if original keys are already valid
+        let resolvedDir = null;
+        let originalValidCount = 0;
+        for (const k of segKeys) {
+          if (fs.existsSync(k)) originalValidCount++;
+        }
+        if (originalValidCount > 0 && originalValidCount >= Math.min(baseNames.length, 1)) {
+          resolvedDir = path.dirname(segKeys[0]);
+        } else {
+          // Find best candidate directory containing the images
+          let bestCount = 0;
+          for (const cand of candidateDirs) {
+            let matches = 0;
+            for (const b of baseNames) {
+              if (fs.existsSync(path.join(cand, b))) matches++;
+            }
+            if (matches > bestCount) {
+              bestCount = matches;
+              resolvedDir = cand;
+            }
+          }
+        }
+
+        // If directory or images cannot be found anywhere, return "Image not Found"
+        if (!resolvedDir) {
+          return { error: 'Image not Found', notFound: true, loadedFilePath: filePath };
+        }
+
+        // Re-map / burn segmentations with resolved absolute paths
+        const burnedSegs = {};
+        const burnedImages = [];
+        for (const oldKey of segKeys) {
+          const b = path.basename(oldKey);
+          const newPath = path.join(resolvedDir, b);
+          if (fs.existsSync(newPath)) {
+            burnedSegs[newPath] = data.segmentations[oldKey];
+            burnedImages.push(newPath);
+          } else {
+            burnedSegs[newPath] = data.segmentations[oldKey];
+          }
+        }
+
+        data.segmentations = burnedSegs;
+        data.folderPath = resolvedDir;
+        data.resolvedImagePaths = burnedImages;
+
+        // If JSON was loaded from a previous result or backup folder, prepare target new result folder
+        const isResultDir = /[\\/][^\\/]+_[rR]esult/i.test(jsonDir);
+        const newResultDir = path.join(path.dirname(resolvedDir), path.basename(resolvedDir) + '_result');
+        if (isResultDir && jsonDir.toLowerCase() !== newResultDir.toLowerCase()) {
+          try {
+            if (!fs.existsSync(newResultDir)) {
+              fs.mkdirSync(newResultDir, { recursive: true });
+            }
+            const newJsonTarget = path.join(newResultDir, 'annotations_session.json');
+            if (fs.existsSync(newJsonTarget) && !fs.existsSync(newJsonTarget + '.bak')) {
+              fs.copyFileSync(newJsonTarget, newJsonTarget + '.bak');
+            }
+            fs.writeFileSync(newJsonTarget, JSON.stringify({ ...data, folderPath: resolvedDir, segmentations: burnedSegs }, null, 2), 'utf-8');
+            data.burnedCopiedTo = newJsonTarget;
+          } catch (copyErr) {
+            console.warn('Could not auto-copy burned JSON to new result folder:', copyErr);
+          }
+        }
+      }
+    }
+
     return { ...data, loadedFilePath: filePath };
   } catch (e) {
     return { error: e.message };
