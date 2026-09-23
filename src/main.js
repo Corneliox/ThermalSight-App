@@ -596,8 +596,12 @@ ipcMain.handle('check-existing-annotation', async (_event, folderPath) => {
     }
   }
   return null;
+});
+
 ipcMain.handle('open-ppg-workbench', async (_event, sessionJsonPath, activeImagePath) => {
-  const workbenchScript = path.join(__dirname, '..', 'ppg_workbench.py');
+  const workbenchScript = app.isPackaged
+    ? path.join(process.resourcesPath, 'ppg_workbench.py')
+    : path.join(__dirname, '..', 'ppg_workbench.py');
   const args = [workbenchScript];
   if (sessionJsonPath && fs.existsSync(sessionJsonPath)) {
     args.push('--session', sessionJsonPath);
