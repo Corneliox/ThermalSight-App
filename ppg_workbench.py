@@ -1,6 +1,7 @@
 """
 ThermalSight PPG & PGA Interactive Workbench (v1.8.0)
-Standalone companion tool for interactive foot segmentation and live PPG & PGA parameter tuning.
+Standalone companion tool for interactive foot segmentation (Manual Brush Add/Remove)
+and live PPG & PGA parameter tuning.
 """
 
 import os
@@ -32,7 +33,7 @@ class PPGWorkbenchApp:
     def __init__(self, root):
         self.root = root
         self.root.title("ThermalSight — PPG & PGA Interactive Research Workbench v1.8.0")
-        self.root.geometry("1480x920")
+        self.root.geometry("1500x940")
         self.root.minsize(1200, 750)
         self.root.configure(bg="#F1F5F9")
 
@@ -44,7 +45,11 @@ class PPGWorkbenchApp:
         
         # Computed state (cached)
         self.foot_crop = None
-        self.clean_mask = None
+        self.mask_crop = None
+        self.mask_crop_u8 = None
+        self.mask_history = []
+        self.is_mouse_down = False
+        
         self.grid_dense = None
         self.mask_dense = None
         self.grid_smooth = None
@@ -59,6 +64,7 @@ class PPGWorkbenchApp:
         self.xmin = 0
         self.cw = 1
         self.ch = 1
+        self.foot_side = "RightFoot"
 
         self.setup_ui()
         self.load_default_sample()
@@ -87,7 +93,7 @@ class PPGWorkbenchApp:
         main_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         # Left control panel (scrollable)
-        sidebar_frame = tk.Frame(main_container, bg="#FFFFFF", width=380, highlightbackground="#CBD5E1", highlightthickness=1)
+        sidebar_frame = tk.Frame(main_container, bg="#FFFFFF", width=390, highlightbackground="#CBD5E1", highlightthickness=1)
         sidebar_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
         sidebar_frame.pack_propagate(False)
 
@@ -96,7 +102,7 @@ class PPGWorkbenchApp:
         self.scroll_content = tk.Frame(canvas_sidebar, bg="#FFFFFF")
 
         self.scroll_content.bind("<Configure>", lambda e: canvas_sidebar.configure(scrollregion=canvas_sidebar.bbox("all")))
-        canvas_sidebar.create_window((0, 0), window=self.scroll_content, anchor="nw", width=360)
+        canvas_sidebar.create_window((0, 0), window=self.scroll_content, anchor="nw", width=370)
         canvas_sidebar.configure(yscrollcommand=scrollbar.set)
 
         canvas_sidebar.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -113,6 +119,11 @@ class PPGWorkbenchApp:
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=display_frame)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Connect mouse events for manual mask brush editing
+        self.canvas.mpl_connect("button_press_event", self.on_canvas_press)
+        self.canvas.mpl_connect("motion_notify_event", self.on_canvas_motion)
+        self.canvas.mpl_connect("button_release_event", self.on_canvas_release)
 
         # Matplotlib toolbar
         toolbar_frame = tk.Frame(display_frame, bg="#FFFFFF")
@@ -131,30 +142,68 @@ class PPGWorkbenchApp:
 
         # 1. FILE & STATUS
         section_header("1. Active Session")
-        self.lbl_file = tk.Label(p, text="No file loaded", font=("Arial", 9), fg="#64748B", bg="#FFFFFF", wraplength=340, justify="left")
+        self.lbl_file = tk.Label(p, text="No file loaded", font=("Arial", 9), fg="#64748B", bg="#FFFFFF", wraplength=350, justify="left")
         self.lbl_file.pack(anchor="w", padx=14, pady=2)
 
-        # 2. FOOT SEGMENTATION
-        section_header("2. Foot Isolation & Masking")
+        # 2. FOOT SEGMENTATION & BRUSH
+        section_header("2. Foot Isolation & Mask Editor")
         
-        lbl_bg = tk.Label(p, text="Background Temp Cutoff (°C):", font=("Arial", 9, "bold"), fg="#334155", bg="#FFFFFF")
+        lbl_bg = tk.Label(p, text="Auto Background Cutoff (°C):", font=("Arial", 9, "bold"), fg="#334155", bg="#FFFFFF")
         lbl_bg.pack(anchor="w", padx=14)
         self.scale_bg_thresh = tk.Scale(p, from_=22.0, to_=31.0, resolution=0.1, orient=tk.HORIZONTAL, bg="#FFFFFF",
                                         highlightthickness=0, command=lambda v: self.on_segmentation_change())
         self.scale_bg_thresh.set(26.5)
         self.scale_bg_thresh.pack(fill=tk.X, padx=14, pady=(0, 6))
 
-        lbl_morph = tk.Label(p, text="Morphology Clean Kernel:", font=("Arial", 9), fg="#334155", bg="#FFFFFF")
+        lbl_morph = tk.Label(p, text="Auto Morphology Clean:", font=("Arial", 9), fg="#334155", bg="#FFFFFF")
         lbl_morph.pack(anchor="w", padx=14)
         self.scale_morph = tk.Scale(p, from_=3, to_=15, resolution=2, orient=tk.HORIZONTAL, bg="#FFFFFF",
                                     highlightthickness=0, command=lambda v: self.on_segmentation_change())
         self.scale_morph.set(7)
         self.scale_morph.pack(fill=tk.X, padx=14, pady=(0, 6))
 
-        self.var_show_mask = tk.BooleanVar(value=False)
-        chk_mask = tk.Checkbutton(p, text="Show Foot Mask Overlay (Green)", variable=self.var_show_mask, font=("Arial", 9),
-                                  bg="#FFFFFF", activebackground="#FFFFFF", command=self.update_plot)
+        self.var_show_mask = tk.BooleanVar(value=True)
+        chk_mask = tk.Checkbutton(p, text="Show Foot Mask Overlay (Green)", variable=self.var_show_mask, font=("Arial", 9, "bold"),
+                                  fg="#0284C7", bg="#FFFFFF", activebackground="#FFFFFF", command=self.update_plot)
         chk_mask.pack(anchor="w", padx=14, pady=(0, 8))
+
+        # Manual Mask Brush Editor Controls
+        box_brush = tk.LabelFrame(p, text=" Interactive Mask Brush ", font=("Arial", 9, "bold"), fg="#0F172A", bg="#F8FAFC", padx=8, pady=8)
+        box_brush.pack(fill=tk.X, padx=12, pady=(0, 10))
+
+        self.brush_mode = tk.StringVar(value="pan")
+        r_pan = tk.Radiobutton(box_brush, text="🔍 Inspect / Pan-Zoom", variable=self.brush_mode, value="pan",
+                               font=("Arial", 9), bg="#F8FAFC", activebackground="#F8FAFC", command=self.on_brush_mode_change)
+        r_pan.pack(anchor="w")
+
+        r_add = tk.Radiobutton(box_brush, text="🖌️ Paint Mask (Add Foot Area)", variable=self.brush_mode, value="paint",
+                               font=("Arial", 9, "bold"), fg="#16A34A", bg="#F8FAFC", activebackground="#F8FAFC", command=self.on_brush_mode_change)
+        r_add.pack(anchor="w")
+
+        r_erase = tk.Radiobutton(box_brush, text="🧹 Erase Mask (Remove Blanket/Noise)", variable=self.brush_mode, value="erase",
+                                 font=("Arial", 9, "bold"), fg="#DC2626", bg="#F8FAFC", activebackground="#F8FAFC", command=self.on_brush_mode_change)
+        r_erase.pack(anchor="w")
+
+        lbl_bsize = tk.Label(box_brush, text="Brush Radius (Cells):", font=("Arial", 8), fg="#475569", bg="#F8FAFC")
+        lbl_bsize.pack(anchor="w", pady=(4, 0))
+        self.scale_brush_size = tk.Scale(box_brush, from_=1.0, to_=12.0, resolution=0.5, orient=tk.HORIZONTAL, bg="#F8FAFC", highlightthickness=0)
+        self.scale_brush_size.set(3.5)
+        self.scale_brush_size.pack(fill=tk.X, pady=(0, 6))
+
+        frame_brush_btns = tk.Frame(box_brush, bg="#F8FAFC")
+        frame_brush_btns.pack(fill=tk.X)
+
+        btn_undo = tk.Button(frame_brush_btns, text="↩️ Undo", font=("Arial", 8, "bold"), bg="#E2E8F0", fg="#1E293B",
+                             relief="flat", padx=6, pady=3, command=self.undo_mask_stroke)
+        btn_undo.pack(side=tk.LEFT, padx=(0, 4))
+
+        btn_reset_mask = tk.Button(frame_brush_btns, text="🔄 Reset Auto", font=("Arial", 8), bg="#E2E8F0", fg="#1E293B",
+                                   relief="flat", padx=6, pady=3, command=self.on_segmentation_change)
+        btn_reset_mask.pack(side=tk.LEFT, padx=4)
+
+        btn_clear_mask = tk.Button(frame_brush_btns, text="🗑️ Clear All", font=("Arial", 8), bg="#FEE2E2", fg="#991B1B",
+                                   relief="flat", padx=6, pady=3, command=self.clear_all_mask)
+        btn_clear_mask.pack(side=tk.RIGHT)
 
         # 3. TOPOGRAPHY & CONTOURS
         section_header("3. Contour Line Topography")
@@ -216,6 +265,17 @@ class PPGWorkbenchApp:
                                    bg="#475569", fg="white", relief="flat", padx=10, pady=6, command=self.export_pdf)
         btn_export_pdf.pack(fill=tk.X, padx=14, pady=(0, 16))
 
+    def on_brush_mode_change(self):
+        mode = self.brush_mode.get()
+        if mode in ["paint", "erase"]:
+            self.var_show_mask.set(True)
+            if hasattr(self, "toolbar") and getattr(self.toolbar, "mode", ""):
+                if "zoom" in self.toolbar.mode:
+                    self.toolbar.zoom()
+                elif "pan" in self.toolbar.mode:
+                    self.toolbar.pan()
+        self.update_plot()
+
     def load_default_sample(self):
         sample_path = CURRENT_DIR / "example" / "bas" / "FLIR0201.jpg"
         if sample_path.exists():
@@ -260,7 +320,6 @@ class PPGWorkbenchApp:
             with open(path_str, "r") as f:
                 data = json.load(f)
             self.json_path = path_str
-            # Handle list or object format
             if isinstance(data, list):
                 self.rois_data = data
             elif isinstance(data, dict):
@@ -277,7 +336,6 @@ class PPGWorkbenchApp:
         H, W = self.temp_raw.shape
         temp_work = self.temp_raw.copy()
 
-        # Determine Foot Side
         xs = [r.get("cx", (r.get("points") or [{}])[0].get("x", W / 2)) for r in self.rois_data if isinstance(r, dict)]
         avg_x = float(np.mean(xs)) if xs else (W * 0.28)
         col_prof = np.mean(temp_work, axis=0)
@@ -293,26 +351,25 @@ class PPGWorkbenchApp:
             self.offset_x = valley_idx
             self.foot_side = "LeftFoot"
 
-        # Apply user threshold
         bg_val = float(self.scale_bg_thresh.get())
         morph_k = int(self.scale_morph.get())
 
         bg_map = np.full_like(self.foot_patch_raw, bg_val)
-        bg_map[int(H * 0.75):, :] = bg_val + 1.2  # Heel elevation
+        bg_map[int(H * 0.75):, :] = bg_val + 1.2
         binary_cand = (self.foot_patch_raw > bg_map).astype(np.uint8)
 
         num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_cand)
         if num_labels > 1:
             largest_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-            self.clean_mask = (labels == largest_idx)
+            clean_mask = (labels == largest_idx)
         else:
-            self.clean_mask = (self.foot_patch_raw > bg_map)
+            clean_mask = (self.foot_patch_raw > bg_map)
 
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (morph_k, morph_k))
-        self.clean_mask = cv2.morphologyEx(self.clean_mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
-        self.clean_mask = cv2.morphologyEx(self.clean_mask, cv2.MORPH_OPEN, kernel).astype(bool)
+        clean_mask = cv2.morphologyEx(clean_mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
+        clean_mask = cv2.morphologyEx(clean_mask, cv2.MORPH_OPEN, kernel).astype(bool)
 
-        ys, xs_mask = np.where(self.clean_mask)
+        ys, xs_mask = np.where(clean_mask)
         pad = 4
         if len(ys) > 50:
             self.ymin = max(0, int(np.min(ys)) - pad)
@@ -320,7 +377,7 @@ class PPGWorkbenchApp:
             self.xmin = max(0, int(np.min(xs_mask)) - pad)
             self.xmax = min(self.foot_patch_raw.shape[1] - 1, int(np.max(xs_mask)) + pad)
             self.foot_crop = self.foot_patch_raw[self.ymin:self.ymax+1, self.xmin:self.xmax+1].copy()
-            self.mask_crop = self.clean_mask[self.ymin:self.ymax+1, self.xmin:self.xmax+1]
+            self.mask_crop = clean_mask[self.ymin:self.ymax+1, self.xmin:self.xmax+1]
         else:
             self.ymin, self.ymax, self.xmin, self.xmax = 0, H - 1, 0, self.foot_patch_raw.shape[1] - 1
             self.foot_crop = self.foot_patch_raw.copy()
@@ -331,10 +388,19 @@ class PPGWorkbenchApp:
         self.n_rows = 104
         self.n_cols = max(20, int(round(self.n_rows * aspect)))
 
-        self.mask_dense = cv2.resize(self.mask_crop.astype(np.uint8), (self.n_cols, self.n_rows), interpolation=cv2.INTER_NEAREST).astype(bool)
+        self.mask_crop_u8 = self.mask_crop.astype(np.uint8)
+        self.mask_history = [self.mask_crop_u8.copy()]
+
+        self.recompute_gradients_from_mask()
+
+    def recompute_gradients_from_mask(self):
+        if self.foot_crop is None or self.mask_crop_u8 is None:
+            return
+
+        self.mask_dense = cv2.resize(self.mask_crop_u8, (self.n_cols, self.n_rows), interpolation=cv2.INTER_NEAREST).astype(bool)
 
         # Inward Inpainting to eliminate boundary cliff
-        mask_inv = (~self.mask_crop).astype(np.uint8)
+        mask_inv = (self.mask_crop_u8 == 0).astype(np.uint8)
         crop_inpainted = cv2.inpaint(np.clip(self.foot_crop, 0, 255).astype(np.uint8), mask_inv, 7, cv2.INPAINT_TELEA).astype(np.float32)
         grid_inpainted = cv2.resize(crop_inpainted, (self.n_cols, self.n_rows), interpolation=cv2.INTER_AREA)
 
@@ -351,14 +417,77 @@ class PPGWorkbenchApp:
         self.compute_segmentation_and_gradients()
         self.update_plot()
 
+    # ──────── INTERACTIVE BRUSH MOUSE EVENTS ────────
+    def on_canvas_press(self, event):
+        mode = self.brush_mode.get()
+        if mode not in ["paint", "erase"] or event.inaxes not in [self.ax1, self.ax2]:
+            return
+        if event.button == 1:
+            self.is_mouse_down = True
+            # Save history state for undo
+            if self.mask_crop_u8 is not None:
+                self.mask_history.append(self.mask_crop_u8.copy())
+                if len(self.mask_history) > 15:
+                    self.mask_history.pop(0)
+            self.apply_brush_stroke(event.xdata, event.ydata)
+
+    def on_canvas_motion(self, event):
+        if not self.is_mouse_down:
+            return
+        mode = self.brush_mode.get()
+        if mode in ["paint", "erase"] and event.inaxes in [self.ax1, self.ax2]:
+            self.apply_brush_stroke(event.xdata, event.ydata, interactive=True)
+
+    def on_canvas_release(self, event):
+        if self.is_mouse_down:
+            self.is_mouse_down = False
+            self.recompute_gradients_from_mask()
+            self.update_plot()
+
+    def apply_brush_stroke(self, gx, gy, interactive=False):
+        if gx is None or gy is None or self.mask_crop_u8 is None:
+            return
+        # Map grid coords (1 to n_cols) to foot_crop image pixel coords
+        px = int(np.clip((gx - 0.5) / self.n_cols * self.cw, 0, self.cw - 1))
+        py = int(np.clip((gy - 0.5) / self.n_rows * self.ch, 0, self.ch - 1))
+
+        r_grid = float(self.scale_brush_size.get())
+        r_px = max(1, int(r_grid / self.n_cols * self.cw))
+        val = 1 if self.brush_mode.get() == "paint" else 0
+
+        cv2.circle(self.mask_crop_u8, (px, py), r_px, val, -1)
+
+        if interactive:
+            # Quick mask overlay update during mouse drag
+            self.mask_dense = cv2.resize(self.mask_crop_u8, (self.n_cols, self.n_rows), interpolation=cv2.INTER_NEAREST).astype(bool)
+            self.update_plot()
+
+    def undo_mask_stroke(self):
+        if len(self.mask_history) > 1:
+            self.mask_history.pop()  # Remove current
+            self.mask_crop_u8 = self.mask_history[-1].copy()
+            self.recompute_gradients_from_mask()
+            self.update_plot()
+        elif len(self.mask_history) == 1:
+            self.mask_crop_u8 = self.mask_history[0].copy()
+            self.recompute_gradients_from_mask()
+            self.update_plot()
+
+    def clear_all_mask(self):
+        if self.mask_crop_u8 is not None:
+            self.mask_history.append(self.mask_crop_u8.copy())
+            self.mask_crop_u8.fill(0)
+            self.recompute_gradients_from_mask()
+            self.update_plot()
+
+    # ──────── PLOT RENDERING ────────
     def update_plot(self):
-        if self.foot_crop is None:
+        if self.foot_crop is None or self.mask_dense is None:
             return
 
         self.ax1.clear()
         self.ax2.clear()
 
-        # Extract parameters
         lw = float(self.scale_lw.get())
         n_levels = int(self.scale_levels.get())
         cmap_name = self.combo_cmap.get()
@@ -381,14 +510,16 @@ class PPGWorkbenchApp:
 
         if show_mask_overlay:
             mask_rgba = np.zeros((self.n_rows, self.n_cols, 4), dtype=np.float32)
-            mask_rgba[self.mask_dense] = [0.0, 1.0, 0.2, 0.28]  # Translucent green
+            mask_rgba[self.mask_dense] = [0.0, 1.0, 0.2, 0.32]  # Translucent bright green
             self.ax1.imshow(mask_rgba, extent=[0.5, self.n_cols + 0.5, self.n_rows + 0.5, 0.5], zorder=5)
 
         self.ax1.set_xlim(0.5, self.n_cols + 0.5)
         self.ax1.set_ylim(self.n_rows + 0.5, 0.5)
         self.ax1.set_aspect("equal")
         self.ax1.tick_params(colors="black", labelsize=8)
-        self.ax1.set_title("(A)\n\nPPP (Thermal Intensity)", fontsize=13, fontweight="bold", pad=8)
+
+        mode_desc = f" | Brush: {self.brush_mode.get().upper()}" if self.brush_mode.get() != 'pan' else ""
+        self.ax1.set_title(f"(A)\n\nPPP (Thermal Intensity){mode_desc}", fontsize=12, fontweight="bold", pad=8)
 
         # ──────── PANEL B: PPG & PGA ────────
         self.ax2.set_facecolor("white")
@@ -458,9 +589,9 @@ class PPGWorkbenchApp:
         self.ax2.set_ylim(self.n_rows + 0.5, 0.5)
         self.ax2.set_aspect("equal")
         self.ax2.tick_params(colors="black", labelsize=8)
-        self.ax2.set_title(f"(B)\n\nPPG & PGA (Hairline {lw}pt, Step {step})", fontsize=13, fontweight="bold", pad=8)
+        self.ax2.set_title(f"(B)\n\nPPG & PGA (Hairline {lw}pt, Step {step})", fontsize=12, fontweight="bold", pad=8)
 
-        self.canvas.draw()
+        self.canvas.draw_idle()
 
     def get_mapped_rois(self):
         mapped = []
@@ -472,13 +603,12 @@ class PPGWorkbenchApp:
             rcy = float(r.get("cy", (r.get("points") or [{}])[0].get("y", 0))) - self.ymin
             gx = (rcx / self.cw) * self.n_cols + 0.5
             gy = (rcy / self.ch) * self.n_rows + 0.5
-            r_final = 4.5  # Standardized 9x9 grid cells window
+            r_final = 4.5
             gx = float(np.clip(gx, r_final + 0.5, self.n_cols - r_final + 0.5))
             gy = float(np.clip(gy, r_final + 0.5, self.n_rows - r_final + 0.5))
             mapped.append((name, gx, gy, r_final))
 
         if not mapped:
-            # Default landmarks
             if self.foot_side == "RightFoot":
                 mapped = [("T1", 0.61 * self.n_cols, 0.16 * self.n_rows, 4.5),
                           ("M1", 0.61 * self.n_cols, 0.33 * self.n_rows, 4.5),
