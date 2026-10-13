@@ -16,6 +16,10 @@ build/
 bin/
 out/
 release/
+src/release/
+*.exe
+*.AppImage
+*.dmg
 analyzer.spec
 *.spec
 
@@ -89,3 +93,5 @@ scratch/
 *_Result*/
 *.jpg_Result/
 *.jpg_Result*/
+example/1803/
+*.pptx

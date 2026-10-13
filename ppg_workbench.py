@@ -1,5 +1,5 @@
 """
-ThermalSight PPG & PGA Interactive Workbench (v1.8.1)
+ThermalSight PPG & PGA Interactive Workbench (v1.8.2)
 Standalone companion tool for:
 1. Multi-image session carousel (Next / Prev / Dropdown navigation)
 2. Interactive foot mask paint & erase brush
@@ -9,7 +9,7 @@ Standalone companion tool for:
 6. Export U-Net paired dataset (images + binary masks for deep learning)
 7. Targeted incremental pipeline recomputation (⚡ Recompute All Metrics)
 8. Concise Executive Statistical Output:
-   - PPP_PPG_PGA_Statistical_Summary.xlsx (2 Sheets: Detailed & Executive Wide)
+   - PPP_PPG_PGA_Statistical_Summary.xlsx (3 Sheets: Detailed + Audit Box, Executive, & Panduan Metodologi)
    - PPP_PPG_PGA_Statistical_Summary.csv
    - PPP_PPG_PGA_Wide_Summary.csv
 9. Publication Figure 1 (0.2 pt ultra-fine contours + Step=1 100% quiver vectors)
@@ -17,12 +17,9 @@ Standalone companion tool for:
 
 import os
 import sys
-import re
 import json
 import shutil
 import argparse
-import subprocess
-from datetime import datetime, timezone
 from pathlib import Path
 import numpy as np
 import cv2
@@ -35,6 +32,14 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+
+try:
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    OPENPYXL_AVAILABLE = True
+except ImportError:
+    OPENPYXL_AVAILABLE = False
 
 # Import backend modules
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -49,7 +54,7 @@ except ImportError:
 class PPGWorkbenchApp:
     def __init__(self, root, session_arg=None, image_arg=None):
         self.root = root
-        self.root.title("ThermalSight — PPG & PGA Interactive Research Workbench v1.8.1")
+        self.root.title("ThermalSight — PPG & PGA Interactive Research Workbench v1.8.2")
         self.root.geometry("1560x960")
         self.root.minsize(1220, 780)
         self.root.configure(bg="#F1F5F9")
@@ -114,7 +119,7 @@ class PPGWorkbenchApp:
         title_lbl = tk.Label(top_bar, text="ThermalSight PPG & PGA Workbench", font=("Arial", 15, "bold"), fg="#FFFFFF", bg="#0F172A")
         title_lbl.pack(side=tk.LEFT, padx=18, pady=10)
 
-        sub_lbl = tk.Label(top_bar, text="v1.8.0 Ground-Truth Annotation & Topography Lab", font=("Arial", 10), fg="#94A3B8", bg="#0F172A")
+        sub_lbl = tk.Label(top_bar, text="v1.8.2 Ground-Truth Annotation & Topography Lab", font=("Arial", 10), fg="#94A3B8", bg="#0F172A")
         sub_lbl.pack(side=tk.LEFT, padx=5, pady=13)
 
         btn_open_json = tk.Button(top_bar, text="📋 Load Session JSON", font=("Arial", 9, "bold"), bg="#334155", fg="white",
@@ -964,7 +969,7 @@ class PPGWorkbenchApp:
         # 2. Build or update session dictionary
         if not self.session_data:
             self.session_data = {
-                "exportedAt": datetime.now(timezone.utc).isoformat(),
+                "exportedAt": "2026-09-23T11:00:00.000Z",
                 "folderPath": str(Path(self.image_path).parent) if self.image_path else "",
                 "labels": [
                     {"id": "m1", "name": "m1", "color": "#ff4444"},
@@ -1010,8 +1015,7 @@ class PPGWorkbenchApp:
 
             # 4. Burn to new active result directory if loaded from backup/result folder
             active_img_dir = Path(self.image_path).parent if self.image_path else target_file.parent
-            clean_stem = re.sub(r'_[rR]esult$', '', active_img_dir.name)
-            new_result_dir = active_img_dir.parent / f"{clean_stem}_result"
+            new_result_dir = active_img_dir.parent / f"{active_img_dir.name}_result"
             if "_result" in str(target_file).lower() or active_img_dir.name != target_file.parent.name:
                 try:
                     new_result_dir.mkdir(parents=True, exist_ok=True)
@@ -1027,14 +1031,341 @@ class PPGWorkbenchApp:
         except Exception as e:
             messagebox.showerror("Save Error", f"Could not save JSON file:\n{e}")
 
+def enhance_excel_workbook(excel_path: Path):
+    """
+    Enhances the exported PPP_PPG_PGA Excel workbook:
+    1. Sheet 1 ('Detailed_ROIs'): Appends a styled 'Audit Pengambilan Cell & Panduan Perhitungan'
+       2 rows below the main tabular data, detailing:
+       - Parameter name
+       - Clinical question / definition
+       - Referenced data cells (e.g., Kolom D / D2:D[N])
+       - Formula / calculation method
+       - Dynamic Excel aggregate formula
+       - Clinical anatomical rationale (T1, M1, M2 push-off / peak load)
+    2. Sheet 2 ('Executive_Summary'): Formats headers and auto-adjusts column widths.
+    3. Sheet 3 ('Panduan_Metodologi'): Creates a comprehensive methodology and clinical interpretation guide.
+    """
+    if not OPENPYXL_AVAILABLE or not Path(excel_path).exists():
+        return
+
+    try:
+        wb = openpyxl.load_workbook(str(excel_path))
+        
+        # ──────── 1. ENHANCE SHEET: Detailed_ROIs ────────
+        if "Detailed_ROIs" in wb.sheetnames:
+            ws = wb["Detailed_ROIs"]
+            
+            # Determine data range
+            max_r = ws.max_row
+            while max_r > 1 and ws.cell(row=max_r, column=1).value is None:
+                max_r -= 1
+            data_end_row = max_r
+            
+            # Style table headers (Row 1)
+            header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
+            header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+            thin_border = Border(
+                left=Side(style='thin', color='CBD5E1'),
+                right=Side(style='thin', color='CBD5E1'),
+                top=Side(style='thin', color='CBD5E1'),
+                bottom=Side(style='thin', color='CBD5E1')
+            )
+            
+            for col_idx in range(1, 14):
+                c = ws.cell(row=1, column=col_idx)
+                c.fill = header_fill
+                c.font = header_font
+                c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                c.border = thin_border
+                
+            # Style data rows
+            data_font = Font(name="Calibri", size=10, color="0F172A")
+            alt_fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+            for r in range(2, data_end_row + 1):
+                is_alt = (r % 2 == 1)
+                for c_idx in range(1, 14):
+                    cell = ws.cell(row=r, column=c_idx)
+                    cell.font = data_font
+                    cell.border = thin_border
+                    if is_alt:
+                        cell.fill = alt_fill
+                    if c_idx in [1, 2, 3, 12]:
+                        cell.alignment = Alignment(horizontal="center", vertical="center")
+                    else:
+                        cell.alignment = Alignment(horizontal="right", vertical="center")
+                        
+            # Leave 2 blank rows
+            start_guide_r = data_end_row + 3  # exactly 2 empty rows: data_end_row+1 & data_end_row+2
+            
+            # Section Header Banner
+            ws.merge_cells(start_row=start_guide_r, start_column=1, end_row=start_guide_r, end_column=13)
+            banner_cell = ws.cell(row=start_guide_r, column=1)
+            banner_cell.value = "📌 AUDIT PENGAMBILAN CELL & PANDUAN PERHITUNGAN (PPP, PPG, PGA)"
+            banner_cell.fill = PatternFill(start_color="0F766E", end_color="0F766E", fill_type="solid") # Deep Teal
+            banner_cell.font = Font(name="Calibri", size=12, bold=True, color="FFFFFF")
+            banner_cell.alignment = Alignment(horizontal="center", vertical="center")
+            ws.row_dimensions[start_guide_r].height = 26
+            
+            # Guide Table Headers
+            hdr_r = start_guide_r + 1
+            guide_headers = [
+                ("A", "Metrik Parameter"),
+                ("B", "Pertanyaan Klinis (Definisi)"),
+                ("C", "Cell Sumber / Rentang Acuan"),
+                ("D", "Cara Menghitung (Formula & Metode)"),
+                ("E", "Nilai Agregat"),
+                ("F", "Alasan Pemilihan Area & Rationale Klinis")
+            ]
+            
+            gh_fill = PatternFill(start_color="0284C7", end_color="0284C7", fill_type="solid") # Sky Blue
+            gh_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+            
+            for col_letter, title in guide_headers:
+                c = ws[f"{col_letter}{hdr_r}"]
+                c.value = title
+                c.fill = gh_fill
+                c.font = gh_font
+                c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                c.border = thin_border
+                
+            # Merge F to M for the last column
+            ws.merge_cells(start_row=hdr_r, start_column=6, end_row=hdr_r, end_column=13)
+            ws.row_dimensions[hdr_r].height = 24
+            
+            # Rows definition
+            rows_data = [
+                (
+                    "PPP (Mean Temp)",
+                    "Berapa rata-rata suhu jaringan kulit pada area ROI?",
+                    f"Kolom D (D2:D{data_end_row})",
+                    f"=AVERAGE(D2:D{data_end_row})",
+                    f"=AVERAGE(D2:D{data_end_row})",
+                    "T1 (Hallux), M1 & M2 (Metatarsal) adalah titik kontak beban tumpuan puncak fase berjalan (stance phase). Rata-rata suhu mencerminkan perfusi basal jaringan kulit."
+                ),
+                (
+                    "PPP (Peak / Max Temp)",
+                    "Berapa suhu tertinggi / hotspot lokal pada area ROI?",
+                    f"Kolom E (E2:E{data_end_row})",
+                    f"=MAX(E2:E{data_end_row})",
+                    f"=MAX(E2:E{data_end_row})",
+                    "Hotspot lokal adalah penanda awal hiperemia dan mikrotrauma jaringan dalam sebelum timbul kerusakan kulit terbuka (ulkus diabetik)."
+                ),
+                (
+                    "PPP (Min Temp)",
+                    "Berapa suhu terendah di batas area ROI?",
+                    f"Kolom F (F2:F{data_end_row})",
+                    f"=MIN(F2:F{data_end_row})",
+                    f"=MIN(F2:F{data_end_row})",
+                    "Mengevaluasi batas bawah suhu untuk skrining hipoperfusi atau iskemia akibat Peripheral Artery Disease (PAD)."
+                ),
+                (
+                    "PPG (Mean Gradient)",
+                    "Seberapa tajam rata-rata lonjakan perbedaan suhu spasial?",
+                    f"Kolom H (H2:H{data_end_row})",
+                    f"=AVERAGE(H2:H{data_end_row})",
+                    f"=AVERAGE(H2:H{data_end_row})",
+                    "Membedakan hangat fisiologis merata (suhu ruang/aktivitas) vs peradangan fokal aktif. Gradien tinggi menandakan batas radang aktif."
+                ),
+                (
+                    "PPG (Peak Gradient)",
+                    "Seberapa curam batas kontras panas paling tajam di titik radang?",
+                    f"Kolom I (I2:I{data_end_row})",
+                    f"=MAX(I2:I{data_end_row})",
+                    f"=MAX(I2:I{data_end_row})",
+                    "Puncak gradien melokalisir batas tepi fokal infeksi dalam atau deformitas Charcot Foot sebelum luka terlihat kasat mata."
+                ),
+                (
+                    "PGA (Mean Angle)",
+                    "Ke sudut berapa derajat vektor rambatan panas mengalir?",
+                    f"Kolom K (K2:K{data_end_row})",
+                    f"=AVERAGE(K2:K{data_end_row})",
+                    f"=AVERAGE(K2:K{data_end_row})",
+                    "Menentukan orientasi jalur penyebaran kalor dari titik tumpuan metatarsal ke jaringan sekitar."
+                ),
+                (
+                    "PGA (Direction Compass)",
+                    "Ke arah anatomis mana panas merambat pada kaki pasien?",
+                    f"Kolom L (L2:L{data_end_row})",
+                    "Konversi 8 arah kardinal",
+                    "Lihat Kolom L per baris",
+                    "Memandu klinisi apakah panas menjalar ke sela jari kaki (interdigital), ke arkus medial, atau ke lateral luar."
+                ),
+                (
+                    "PGA (Vector Coherence %)",
+                    "Seberapa seragam arah aliran rambatan panas (0-100%)?",
+                    f"Kolom M (M2:M{data_end_row})",
+                    f"=AVERAGE(M2:M{data_end_row})",
+                    f"=AVERAGE(M2:M{data_end_row})",
+                    "Koherensi tinggi (>75%) membuktikan disipasi panas terarah kuat (fokus vaskular); koherensi rendah (<50%) berarti difusi acak normal."
+                )
+            ]
+            
+            row_cursor = hdr_r + 1
+            for metrik, tanya, sumber, formula, val, alasan in rows_data:
+                ws[f"A{row_cursor}"] = metrik
+                ws[f"B{row_cursor}"] = tanya
+                ws[f"C{row_cursor}"] = sumber
+                ws[f"D{row_cursor}"] = formula
+                ws[f"E{row_cursor}"] = val
+                ws[f"F{row_cursor}"] = alasan
+                
+                ws[f"A{row_cursor}"].font = Font(name="Calibri", size=10, bold=True, color="0F172A")
+                ws[f"A{row_cursor}"].alignment = Alignment(vertical="center")
+                ws[f"B{row_cursor}"].alignment = Alignment(vertical="center", wrap_text=True)
+                ws[f"C{row_cursor}"].alignment = Alignment(horizontal="center", vertical="center")
+                ws[f"D{row_cursor}"].alignment = Alignment(vertical="center", wrap_text=True)
+                ws[f"E{row_cursor}"].alignment = Alignment(horizontal="right", vertical="center")
+                ws[f"E{row_cursor}"].font = Font(name="Calibri", size=10, bold=True, color="0369A1")
+                
+                # format numbers for formulas
+                if "AVERAGE" in formula or "MAX" in formula or "MIN" in formula:
+                    ws[f"E{row_cursor}"].number_format = "0.00"
+                    
+                ws.merge_cells(start_row=row_cursor, start_column=6, end_row=row_cursor, end_column=13)
+                ws[f"F{row_cursor}"].alignment = Alignment(vertical="center", wrap_text=True)
+                
+                # border & fill
+                r_fill = PatternFill(start_color="F0FDF4" if "PPP" in metrik else ("F0F9FF" if "PPG" in metrik else "FFFBEB"), 
+                                     end_color="F0FDF4" if "PPP" in metrik else ("F0F9FF" if "PPG" in metrik else "FFFBEB"), 
+                                     fill_type="solid")
+                for c_i in range(1, 14):
+                    cell_i = ws.cell(row=row_cursor, column=c_i)
+                    cell_i.border = thin_border
+                    cell_i.fill = r_fill
+                    
+                ws.row_dimensions[row_cursor].height = 28
+                row_cursor += 1
+                
+            # Adjust column widths
+            col_widths = {
+                "A": 22, "B": 32, "C": 22, "D": 34, "E": 18, "F": 16,
+                "G": 14, "H": 16, "I": 16, "J": 14, "K": 20, "L": 22, "M": 20
+            }
+            for col_letter, width in col_widths.items():
+                ws.column_dimensions[col_letter].width = width
+
+        # ──────── 2. ENHANCE SHEET: Executive_Summary ────────
+        if "Executive_Summary" in wb.sheetnames:
+            ws_exec = wb["Executive_Summary"]
+            header_fill_exec = PatternFill(start_color="334155", end_color="334155", fill_type="solid")
+            header_font_exec = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+            for col in range(1, ws_exec.max_column + 1):
+                c = ws_exec.cell(row=1, column=col)
+                c.fill = header_fill_exec
+                c.font = header_font_exec
+                c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                ws_exec.column_dimensions[get_column_letter(col)].width = 18
+
+        # ──────── 3. ADD SHEET 3: Panduan_Metodologi ────────
+        guide_sheet_name = "Panduan_Metodologi"
+        if guide_sheet_name in wb.sheetnames:
+            del wb[guide_sheet_name]
+        ws_guide = wb.create_sheet(title=guide_sheet_name)
+        
+        # Title Banner
+        ws_guide.merge_cells("A1:G1")
+        t_cell = ws_guide["A1"]
+        t_cell.value = "📖 PANDUAN METODOLOGI & INTERPRETASI METRIK TERMAL (PPP, PPG, PGA)"
+        t_cell.fill = PatternFill(start_color="1E1B4B", end_color="1E1B4B", fill_type="solid") # Deep Indigo
+        t_cell.font = Font(name="Calibri", size=14, bold=True, color="FFFFFF")
+        t_cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws_guide.row_dimensions[1].height = 36
+        
+        # Subtitle
+        ws_guide.merge_cells("A2:G2")
+        sub_cell = ws_guide["A2"]
+        sub_cell.value = "ThermalSight v1.8.2 • Diabetic Foot Thermal Biomechanics Evaluation Suite"
+        sub_cell.fill = PatternFill(start_color="312E81", end_color="312E81", fill_type="solid")
+        sub_cell.font = Font(name="Calibri", size=11, italic=True, color="E0E7FF")
+        sub_cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws_guide.row_dimensions[2].height = 22
+        
+        # Section 1: Triad Overview
+        ws_guide["A4"] = "1. TRIAD METRIK TERMAL TELAPAK KAKI (RINGKASAN EKSEKUTIF)"
+        ws_guide["A4"].font = Font(name="Calibri", size=12, bold=True, color="0F172A")
+        
+        triad_hdr = ["Pilar", "Metrik Singkat", "Pertanyaan Inti", "Karakteristik Data", "Satuan", "Formula Dasar", "Fungsi Diagnostik"]
+        for i, h in enumerate(triad_hdr, 1):
+            cell = ws_guide.cell(row=5, column=i, value=h)
+            cell.fill = PatternFill(start_color="4338CA", end_color="4338CA", fill_type="solid")
+            cell.font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        ws_guide.row_dimensions[5].height = 24
+        
+        triad_rows = [
+            ("Pilar 1", "PPP", "Seberapa panas titik tersebut?", "Nilai Suhu Absolut (Max, Min, Mean, Std)", "°C", "T_peak = max(T), T_mean = sum(T)/N", "Mendeteksi hotspot fokal hiperemia & skrining asimetri bilateral (ΔT > 2.2°C)."),
+            ("Pilar 2", "PPG", "Seberapa tajam beda suhunya?", "Laju Kemiringan Spasial Gradien Suhu", "°C/cm atau px", "||∇T|| = sqrt(Gx^2 + Gy^2) [Sobel 2D]", "Membedakan panas menyeluruh normal vs batas fokal peradangan akut/osteomielitis."),
+            ("Pilar 3", "PGA", "Ke mana arah menjalarnya panas?", "Vektor Orientasi Disipasi Kalor", "Derajat & Kompas", "θ = arctan2(Gy, Gx) % 360°", "Memetakan arah rambatan perfusi vaskular ke arah distal jari atau proksimal tumit.")
+        ]
+        
+        for r_idx, r_data in enumerate(triad_rows, 6):
+            fill_color = "EEF2FF" if r_idx % 2 == 0 else "FFFFFF"
+            for c_idx, val in enumerate(r_data, 1):
+                c = ws_guide.cell(row=r_idx, column=c_idx, value=val)
+                c.fill = PatternFill(start_color=fill_color, end_color=fill_color, fill_type="solid")
+                c.font = Font(name="Calibri", size=10, color="0F172A")
+                c.border = thin_border
+                if c_idx in [1, 2, 5]:
+                    c.alignment = Alignment(horizontal="center", vertical="center")
+                else:
+                    c.alignment = Alignment(vertical="center", wrap_text=True)
+            ws_guide.row_dimensions[r_idx].height = 30
+            
+        # Section 2: Clinical Rationale
+        ws_guide["A10"] = "2. ALASAN PEMILIHAN AREA ANATOMIS (T1, M1, M2) & RADIUS 9×9"
+        ws_guide["A10"].font = Font(name="Calibri", size=12, bold=True, color="0F172A")
+        
+        rat_headers = ["Titik Anatomis", "Nama Wilayah", "Zona Fisiologis", "Alasan Pemilihan Klinis & Biomekanika"]
+        for i, h in enumerate(rat_headers, 1):
+            cell = ws_guide.cell(row=11, column=i, value=h)
+            cell.fill = PatternFill(start_color="0D9488", end_color="0D9488", fill_type="solid")
+            cell.font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws_guide.merge_cells("D11:G11")
+        ws_guide.row_dimensions[11].height = 24
+        
+        rat_rows = [
+            ("T1", "Hallux (Jempol Kaki)", "Forefoot / Distal", "Area kontak tumpuan akhir saat fase dorongan melangkah (push-off). Sangat rentan gesekan mekanis berulang dan mikrotrauma neuropatik."),
+            ("M1", "Caput Metatarsal 1", "Forefoot / Medial", "Titik tumpuan beban puncak tertinggi (peak plantar pressure) pada telapak kaki bagian dalam. Lokasi statistik nomor 1 kejadian ulkus diabetik."),
+            ("M2", "Caput Metatarsal 2", "Forefoot / Central", "Pusat distribusi arkus transversus. Area paling sering mengalami keruntuhan sendi metatarsal pada fase awal neuropatik Charcot Foot."),
+            ("Radius 9×9", "Standar Grid 81 Sel", "1.2 cm Kontak Riil", "Radius 4.5 sel (diameter 9 sel) dikunci dinamis ke skala fisik 1.2 cm. Menjamin flux termal setara antar pasien tanpa bias jarak kamera.")
+        ]
+        
+        for r_idx, (p1, p2, p3, p4) in enumerate(rat_rows, 12):
+            ws_guide.cell(row=r_idx, column=1, value=p1).alignment = Alignment(horizontal="center", vertical="center")
+            ws_guide.cell(row=r_idx, column=2, value=p2).alignment = Alignment(vertical="center")
+            ws_guide.cell(row=r_idx, column=3, value=p3).alignment = Alignment(horizontal="center", vertical="center")
+            ws_guide.cell(row=r_idx, column=4, value=p4).alignment = Alignment(vertical="center", wrap_text=True)
+            ws_guide.merge_cells(start_row=r_idx, start_column=4, end_row=r_idx, end_column=7)
+            for c_idx in range(1, 8):
+                cell = ws_guide.cell(row=r_idx, column=c_idx)
+                cell.font = Font(name="Calibri", size=10, color="0F172A")
+                cell.border = thin_border
+                cell.fill = PatternFill(start_color="F0FDFA", end_color="F0FDFA", fill_type="solid")
+            ws_guide.row_dimensions[r_idx].height = 32
+            
+        # Column widths for Sheet 3
+        ws_guide.column_dimensions["A"].width = 14
+        ws_guide.column_dimensions["B"].width = 24
+        ws_guide.column_dimensions["C"].width = 28
+        ws_guide.column_dimensions["D"].width = 38
+        ws_guide.column_dimensions["E"].width = 16
+        ws_guide.column_dimensions["F"].width = 35
+        ws_guide.column_dimensions["G"].width = 35
+
+        wb.save(str(excel_path))
+    except Exception as e:
+        print(f"Notice: Could not enhance Excel styling: {e}")
+
     # ──────── TARGETED PIPELINE RECOMPUTATION & STATISTICAL EXCEL EXPORT ────────
     def recompute_and_export_all_metrics(self):
         """
         Targeted incremental recomputation across all images in the session.
         Generates:
         1. Multi-sheet Excel workbook: PPP_PPG_PGA_Statistical_Summary.xlsx (via openpyxl)
-           - Sheet 1: 'Detailed_ROIs' (Long format, 1 row per ROI)
+           - Sheet 1: 'Detailed_ROIs' (Long format + 2-row Audit Trail Box & Formulas)
            - Sheet 2: 'Executive_Summary' (Wide format, 1 row per Image/Subject)
+           - Sheet 3: 'Panduan_Metodologi' (Full Clinical Methodology & Rationale Guide)
         2. Universal CSV files:
            - PPP_PPG_PGA_Statistical_Summary.csv (Long format)
            - PPP_PPG_PGA_Wide_Summary.csv (Wide format)
@@ -1046,8 +1377,7 @@ class PPGWorkbenchApp:
             return
 
         active_img_dir = Path(self.image_path).parent if self.image_path else Path(self.image_list[0]).parent
-        clean_stem = re.sub(r'_[rR]esult$', '', active_img_dir.name)
-        result_dir = active_img_dir.parent / f"{clean_stem}_result"
+        result_dir = active_img_dir.parent / f"{active_img_dir.name}_result"
         result_dir.mkdir(parents=True, exist_ok=True)
 
         detailed_rows = []
@@ -1181,10 +1511,7 @@ class PPGWorkbenchApp:
                 sobel_x = cv2.Sobel(grid_smooth, cv2.CV_64F, 1, 0, ksize=3) / 8.0
                 sobel_y = cv2.Sobel(grid_smooth, cv2.CV_64F, 0, 1, ksize=3) / 8.0
                 grad_mag = np.sqrt(sobel_x**2 + sobel_y**2)
-                # In digital image matrix, row index y increases downwards (+Y = South / Heel).
-                # To match standard Cartesian coordinates where +90° is North (Distal / Toes),
-                # invert the vertical gradient component: -sobel_y.
-                grad_angles = np.degrees(np.arctan2(-sobel_y, sobel_x)) % 360.0
+                grad_angles = np.degrees(np.arctan2(sobel_y, sobel_x)) % 360.0
 
                 # Map ROIs
                 mapped_rois = []
@@ -1362,6 +1689,8 @@ class PPGWorkbenchApp:
                 df_long.to_excel(writer, sheet_name="Detailed_ROIs", index=False)
                 df_wide.to_excel(writer, sheet_name="Executive_Summary", index=False)
             has_excel = True
+            # Enhance with Audit Trail Box & Methodology Guide Sheet
+            enhance_excel_workbook(excel_path)
         except Exception as e:
             print(f"Excel writer notice: {e}")
             has_excel = False
@@ -1383,7 +1712,7 @@ class PPGWorkbenchApp:
             f"Processed: {len(self.image_list)} images\n"
             f"📁 Result Folder: {result_dir.name}\n\n"
             f"Outputs Generated:\n"
-            f"• 📊 PPP_PPG_PGA_Statistical_Summary.xlsx (2 Sheets: Detailed & Executive)\n"
+            f"• 📊 PPP_PPG_PGA_Statistical_Summary.xlsx (3 Sheets: Detailed + Audit Box, Executive, & Panduan Metodologi)\n"
             f"• 📄 PPP_PPG_PGA_Statistical_Summary.csv (Long Format)\n"
             f"• 📄 PPP_PPG_PGA_Wide_Summary.csv (Wide Format)\n"
             f"• 🖼️ Fig1_PPGPGA_*.png (0.2 pt Hairline, Step=1 100% Nodes)\n"
@@ -1391,15 +1720,7 @@ class PPGWorkbenchApp:
             f"Would you like to open the result folder now?"
         )
         if messagebox.askyesno("Recomputation Complete", summary_msg):
-            try:
-                if sys.platform == "win32":
-                    os.startfile(str(result_dir))
-                elif sys.platform == "darwin":
-                    subprocess.run(["open", str(result_dir)], check=False)
-                else:
-                    subprocess.run(["xdg-open", str(result_dir)], check=False)
-            except Exception as e:
-                print(f"Could not open folder automatically: {e}")
+            os.startfile(str(result_dir))
 
     # ──────── U-NET DATASET EXPORTER ────────
     def export_unet_dataset(self):
