@@ -425,6 +425,12 @@ class PPGWorkbenchApp:
         self.ch = 1
         self.foot_side = "RightFoot"
 
+        # ROI Label Visibility Filter State
+        self.show_all_labels_var = tk.BooleanVar(value=True)
+        self.label_check_vars = {}
+        self.available_labels = []
+        self.frame_label_checkboxes = None
+
         self.setup_ui()
         self.bind_shortcuts()
 
@@ -597,20 +603,51 @@ class PPGWorkbenchApp:
                                    relief="flat", padx=6, pady=3, command=self.clear_all_mask)
         btn_clear_mask.pack(side=tk.RIGHT)
 
-        # 3. SEGMENTATION THRESHOLDS
-        section_header("3. Auto Segmentation Parameters")
+        # 3. ROI LABEL VISIBILITY & FOCUS FILTER
+        section_header("3. ROI Label Visibility & Focus Filter")
+        box_filter = tk.LabelFrame(p, text=" Selective Label Display ", font=("Arial", 9, "bold"), fg="#0F172A", bg="#F8FAFC", padx=8, pady=8)
+        box_filter.pack(fill=tk.X, padx=12, pady=(0, 10))
+
+        chk_all = tk.Checkbutton(box_filter, text="Show All Labels (Default)", variable=self.show_all_labels_var,
+                                 font=("Arial", 9, "bold"), fg="#0284C7", bg="#F8FAFC", activebackground="#F8FAFC",
+                                 command=self.on_toggle_show_all_labels)
+        chk_all.pack(anchor="w", pady=(0, 4))
+
+        lbl_filter_hint = tk.Label(box_filter, text="Toggle specific landmarks below:", font=("Arial", 8), fg="#64748B", bg="#F8FAFC")
+        lbl_filter_hint.pack(anchor="w", pady=(0, 4))
+
+        self.frame_label_checkboxes = tk.Frame(box_filter, bg="#F8FAFC")
+        self.frame_label_checkboxes.pack(fill=tk.X, pady=(0, 6))
+
+        frame_lbl_btns = tk.Frame(box_filter, bg="#F8FAFC")
+        frame_lbl_btns.pack(fill=tk.X)
+
+        btn_sel_all = tk.Button(frame_lbl_btns, text="All", font=("Arial", 8), bg="#E2E8F0", fg="#1E293B",
+                                relief="flat", padx=6, pady=2, command=self.select_all_labels)
+        btn_sel_all.pack(side=tk.LEFT, padx=(0, 4))
+
+        btn_sel_none = tk.Button(frame_lbl_btns, text="Clear", font=("Arial", 8), bg="#E2E8F0", fg="#1E293B",
+                                 relief="flat", padx=6, pady=2, command=self.clear_all_labels)
+        btn_sel_none.pack(side=tk.LEFT, padx=4)
+
+        btn_solo = tk.Button(frame_lbl_btns, text="Solo Focus", font=("Arial", 8, "bold"), bg="#FEF3C7", fg="#B45309",
+                             relief="flat", padx=6, pady=2, command=self.solo_selected_label)
+        btn_solo.pack(side=tk.RIGHT)
+
+        # 4. SEGMENTATION THRESHOLDS
+        section_header("4. Auto Segmentation Parameters")
         lbl_bg = tk.Label(p, text="Auto Background Cutoff (°C):", font=("Arial", 8, "bold"), fg="#334155", bg="#FFFFFF")
         lbl_bg.pack(anchor="w", padx=14)
-        self.scale_bg_thresh = tk.Scale(p, from_=22.0, to_=31.0, resolution=0.1, orient=tk.HORIZONTAL, bg="#FFFFFF",
+        self.scale_bg_thresh = tk.Scale(p, from_=22.0, to_=35.0, resolution=0.1, orient=tk.HORIZONTAL, bg="#FFFFFF",
                                         highlightthickness=0, command=lambda v: self.on_segmentation_change())
-        self.scale_bg_thresh.set(26.5)
+        self.scale_bg_thresh.set(31.0)  # User preferred: 31.0°C
         self.scale_bg_thresh.pack(fill=tk.X, padx=14, pady=(0, 4))
 
         lbl_morph = tk.Label(p, text="Morphology Kernel Size:", font=("Arial", 8), fg="#334155", bg="#FFFFFF")
         lbl_morph.pack(anchor="w", padx=14)
         self.scale_morph = tk.Scale(p, from_=3, to_=15, resolution=2, orient=tk.HORIZONTAL, bg="#FFFFFF",
                                     highlightthickness=0, command=lambda v: self.on_segmentation_change())
-        self.scale_morph.set(7)
+        self.scale_morph.set(7)  # User preferred: 7
         self.scale_morph.pack(fill=tk.X, padx=14, pady=(0, 6))
 
         self.var_show_mask = tk.BooleanVar(value=True)
@@ -618,32 +655,32 @@ class PPGWorkbenchApp:
                                   fg="#0284C7", bg="#FFFFFF", activebackground="#FFFFFF", command=self.update_plot)
         chk_mask.pack(anchor="w", padx=14, pady=(0, 8))
 
-        # 4. CONTOUR TOPOGRAPHY
-        section_header("4. Contour Line Topography")
+        # 5. CONTOUR TOPOGRAPHY
+        section_header("5. Contour Line Topography")
         lbl_lw = tk.Label(p, text="Contour Linewidth (pt):", font=("Arial", 8, "bold"), fg="#334155", bg="#FFFFFF")
         lbl_lw.pack(anchor="w", padx=14)
-        self.scale_lw = tk.Scale(p, from_=0.10, to_=1.20, resolution=0.05, orient=tk.HORIZONTAL, bg="#FFFFFF",
+        self.scale_lw = tk.Scale(p, from_=0.10, to_=2.50, resolution=0.05, orient=tk.HORIZONTAL, bg="#FFFFFF",
                                  highlightthickness=0, command=lambda v: self.update_plot())
-        self.scale_lw.set(0.20)  # Default: 0.2 pt ultra-fine
+        self.scale_lw.set(1.20)  # User preferred: 1.2 pt
         self.scale_lw.pack(fill=tk.X, padx=14, pady=(0, 4))
 
         lbl_levels = tk.Label(p, text="Contour Levels (Density):", font=("Arial", 8), fg="#334155", bg="#FFFFFF")
         lbl_levels.pack(anchor="w", padx=14)
-        self.scale_levels = tk.Scale(p, from_=10, to_=30, resolution=1, orient=tk.HORIZONTAL, bg="#FFFFFF",
+        self.scale_levels = tk.Scale(p, from_=5, to_=30, resolution=1, orient=tk.HORIZONTAL, bg="#FFFFFF",
                                      highlightthickness=0, command=lambda v: self.update_plot())
-        self.scale_levels.set(18)
+        self.scale_levels.set(11)  # User preferred: 11
         self.scale_levels.pack(fill=tk.X, padx=14, pady=(0, 4))
 
         lbl_cmap = tk.Label(p, text="Contour Colormap:", font=("Arial", 8), fg="#334155", bg="#FFFFFF")
         lbl_cmap.pack(anchor="w", padx=14)
         self.combo_cmap = ttk.Combobox(p, values=["turbo", "jet", "rainbow", "inferno", "magma", "viridis", "coolwarm"], state="readonly")
-        self.combo_cmap.set("turbo")
+        self.combo_cmap.set("turbo")  # User preferred: turbo
         self.combo_cmap.bind("<<ComboboxSelected>>", lambda e: self.update_plot())
         self.combo_cmap.pack(fill=tk.X, padx=14, pady=(0, 8))
 
-        # 5. QUIVER VECTOR FLOW
-        section_header("5. Quiver Vector Field (1:1 Grid)")
-        self.var_step = tk.IntVar(value=1)
+        # 6. QUIVER VECTOR FLOW
+        section_header("6. Quiver Vector Field (1:1 Grid)")
+        self.var_step = tk.IntVar(value=1)  # User preferred: Step 1 (1:1 Full Grid)
         lbl_step = tk.Label(p, text="Grid Sampling Density:", font=("Arial", 8, "bold"), fg="#334155", bg="#FFFFFF")
         lbl_step.pack(anchor="w", padx=14)
         r_step1 = tk.Radiobutton(p, text="Step = 1 (1:1 Full Grid, ~2,300 Nodes)", variable=self.var_step, value=1,
@@ -655,9 +692,9 @@ class PPGWorkbenchApp:
 
         lbl_ascale = tk.Label(p, text="Arrow Length Scale:", font=("Arial", 8), fg="#334155", bg="#FFFFFF")
         lbl_ascale.pack(anchor="w", padx=14)
-        self.scale_arrow_len = tk.Scale(p, from_=0.3, to_=1.8, resolution=0.05, orient=tk.HORIZONTAL, bg="#FFFFFF",
+        self.scale_arrow_len = tk.Scale(p, from_=0.3, to_=2.5, resolution=0.05, orient=tk.HORIZONTAL, bg="#FFFFFF",
                                         highlightthickness=0, command=lambda v: self.update_plot())
-        self.scale_arrow_len.set(0.72)
+        self.scale_arrow_len.set(1.05)  # User preferred: 1.05
         self.scale_arrow_len.pack(fill=tk.X, padx=14, pady=(0, 4))
 
         self.var_show_dots = tk.BooleanVar(value=True)
@@ -665,8 +702,8 @@ class PPGWorkbenchApp:
                                   font=("Arial", 8), bg="#FFFFFF", activebackground="#FFFFFF", command=self.update_plot)
         chk_dots.pack(anchor="w", padx=14, pady=(0, 8))
 
-        # 6. EXPORT ACTIONS
-        section_header("6. Publication Figure & Metrics Export")
+        # 7. EXPORT ACTIONS
+        section_header("7. Publication Figure & Metrics Export")
         btn_recompute_side = tk.Button(p, text="⚡ Recompute All Metrics & Export Excel", font=("Arial", 10, "bold"),
                                        bg="#7C3AED", fg="white", relief="flat", padx=10, pady=8, command=self.recompute_and_export_all_metrics)
         btn_recompute_side.pack(fill=tk.X, padx=14, pady=(2, 6))
@@ -690,6 +727,90 @@ class PPGWorkbenchApp:
                 elif "pan" in self.toolbar.mode:
                     self.toolbar.pan()
         self.update_plot()
+
+    # ──────── ROI LABEL VISIBILITY & SELECTIVE FOCUS ────────
+    def refresh_label_filter_ui(self):
+        if not self.frame_label_checkboxes:
+            return
+
+        for widget in self.frame_label_checkboxes.winfo_children():
+            widget.destroy()
+
+        labels_found = []
+        if self.rois_data:
+            for r in self.rois_data:
+                if isinstance(r, dict):
+                    name = str(r.get("labelName", r.get("name", "ROI"))).upper()
+                    if name not in labels_found:
+                        labels_found.append(name)
+        if not labels_found:
+            labels_found = ["T1", "M1", "M2"]
+
+        order_key = {"T1": 0, "M1": 1, "M2": 2, "M3": 3, "M4": 4, "M5": 5, "HEEL": 6}
+        labels_found.sort(key=lambda x: (order_key.get(x, 99), x))
+        self.available_labels = labels_found
+
+        for lbl in self.available_labels:
+            if lbl not in self.label_check_vars:
+                self.label_check_vars[lbl] = tk.BooleanVar(value=True)
+
+            color = "#DC2626" if lbl == "M1" else ("#0284C7" if lbl == "M2" else ("#16A34A" if lbl == "T1" else "#475569"))
+            chk = tk.Checkbutton(
+                self.frame_label_checkboxes,
+                text=f"● {lbl}",
+                variable=self.label_check_vars[lbl],
+                font=("Arial", 9, "bold"),
+                fg=color,
+                bg="#F8FAFC",
+                activebackground="#F8FAFC",
+                command=self.on_individual_label_toggle
+            )
+            chk.pack(anchor="w", pady=1)
+
+    def on_toggle_show_all_labels(self):
+        val = self.show_all_labels_var.get()
+        if val:
+            for var in self.label_check_vars.values():
+                var.set(True)
+        self.update_plot()
+
+    def on_individual_label_toggle(self):
+        all_checked = all(var.get() for var in self.label_check_vars.values()) if self.label_check_vars else True
+        self.show_all_labels_var.set(all_checked)
+        self.update_plot()
+
+    def select_all_labels(self):
+        self.show_all_labels_var.set(True)
+        for var in self.label_check_vars.values():
+            var.set(True)
+        self.update_plot()
+
+    def clear_all_labels(self):
+        self.show_all_labels_var.set(False)
+        for var in self.label_check_vars.values():
+            var.set(False)
+        self.update_plot()
+
+    def solo_selected_label(self):
+        target = None
+        if self.selected_roi:
+            target = str(self.selected_roi.get("labelName", self.selected_roi.get("name", "ROI"))).upper()
+        elif self.available_labels:
+            target = self.available_labels[0]
+
+        if target:
+            self.show_all_labels_var.set(False)
+            for k, var in self.label_check_vars.items():
+                var.set(k == target)
+            self.update_plot()
+
+    def is_label_visible(self, label_name):
+        lbl = str(label_name).upper()
+        if self.show_all_labels_var.get():
+            return True
+        if lbl in self.label_check_vars:
+            return self.label_check_vars[lbl].get()
+        return True
 
     # ──────── SMART DIRECTORY & IMAGE RESOLUTION ────────
     def resolve_image_paths_from_json(self, json_path_str, data):
@@ -855,6 +976,7 @@ class PPGWorkbenchApp:
                         pass
 
             self.compute_segmentation_and_gradients()
+            self.refresh_label_filter_ui()
             self.update_plot()
             self.update_nav_ui()
         except Exception as e:
@@ -1018,7 +1140,7 @@ class PPGWorkbenchApp:
 
         if mode == "adjust_roi" and event.button == 1:
             gx, gy = event.xdata, event.ydata
-            mapped = self.get_mapped_rois()
+            mapped = self.get_mapped_rois(filtered=True)
             best_roi = None
             min_dist = float('inf')
             for name, rgx, rgy, r_rad, roi_obj in mapped:
@@ -1196,7 +1318,7 @@ class PPGWorkbenchApp:
                         width=qw, headwidth=hw, headlength=hl, alpha=0.90, zorder=8)
 
         # Map and Render ROIs with interactive drag handles
-        mapped_rois = self.get_mapped_rois()
+        mapped_rois = self.get_mapped_rois(filtered=True)
         for name, gx, gy, r_rad, roi_obj in mapped_rois:
             is_sel = (roi_obj is self.selected_roi)
             c_color = "#F59E0B" if is_sel else "red"
@@ -1230,7 +1352,7 @@ class PPGWorkbenchApp:
 
         self.canvas.draw_idle()
 
-    def get_mapped_rois(self):
+    def get_mapped_rois(self, filtered=False):
         mapped = []
         if not self.rois_data:
             if self.foot_side == "RightFoot":
@@ -1257,6 +1379,8 @@ class PPGWorkbenchApp:
             if not isinstance(r, dict):
                 continue
             name = str(r.get("labelName", r.get("name", "ROI"))).upper()
+            if filtered and not self.is_label_visible(name):
+                continue
             rcx = float(r.get("cx", (r.get("points") or [{}])[0].get("x", 0))) - self.offset_x - self.xmin
             rcy = float(r.get("cy", (r.get("points") or [{}])[0].get("y", 0))) - self.ymin
             gx = (rcx / self.cw) * self.n_cols + 0.5
@@ -1639,6 +1763,8 @@ class PPGWorkbenchApp:
                             headlength=3.0 if step == 1 else 3.8, alpha=0.90, zorder=8)
 
                 for name, gx, gy, r_rad in mapped_rois:
+                    if not self.is_label_visible(name):
+                        continue
                     fax1.add_patch(Circle((gx, gy), r_rad, edgecolor="#00e5ff", facecolor="none", lw=1.8, zorder=10))
                     fax1.add_patch(Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=1.2, zorder=11))
                     fax1.plot(gx, gy, "o", color="red", markeredgecolor="white", markeredgewidth=0.8, markersize=4.0, zorder=12)
