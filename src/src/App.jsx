@@ -120,6 +120,7 @@ export default function App() {
   const [imageList,      setImageList]      = useState([]);
   const [currentIndex,   setCurrentIndex]   = useState(0);
   const [filePath,       setFilePath]       = useState(null);
+  const [loadedSessionPath, setLoadedSessionPath] = useState(null);
   const [fileObjMap,     setFileObjMap]     = useState({}); // { [path]: File | Blob }
   const [isProcessing,   setIsProcessing]   = useState(null);
   const [resultsMap,     setResultsMap]     = useState({}); // { [path]: results }
@@ -1806,6 +1807,7 @@ export default function App() {
       if (window.electronAPI && api.exportResultPackage) {
         await api.exportResultPackage(resultDir, exportFilesMap);
         await api.saveMasterJson(resultDir, masterData);
+        setLoadedSessionPath(`${resultDir}/annotations_session.json`);
         if (api.exportPpgSummary) {
           try {
             await api.exportPpgSummary(resultDir);
@@ -1903,6 +1905,10 @@ export default function App() {
   // ── Restore / Apply Loaded Annotation Session ─────────────────────────────────
   const applyLoadedSession = async (sessionData, currentFiles = null) => {
     if (!sessionData) return;
+
+    if (sessionData.loadedFilePath) {
+      setLoadedSessionPath(sessionData.loadedFilePath);
+    }
 
     if (sessionData.labels && Array.isArray(sessionData.labels)) {
       setLabels(sessionData.labels);
@@ -2079,6 +2085,7 @@ export default function App() {
         }
 
         await applyLoadedSession(sessionData);
+        setLoadedSessionPath(sessionData.burnedCopiedTo || filePath);
         let msg = `Loaded annotation session successfully from:\n${filePath}`;
         if (sessionData.burnedCopiedTo) {
           msg += `\n\n✓ Note: Automatically burned new image paths and copied session to new result directory:\n${sessionData.burnedCopiedTo}`;
@@ -2102,13 +2109,11 @@ export default function App() {
       return;
     }
     try {
-      let sessionCandidate = null;
-      if (loadedSessionPath) {
-        sessionCandidate = loadedSessionPath;
-      } else if (folderPath) {
+      let sessionCandidate = loadedSessionPath || null;
+      if (!sessionCandidate && folderPath) {
         sessionCandidate = `${folderPath}_result/annotations_session.json`;
       }
-      const activeImg = activeImagePath || (imageList && imageList[currentIndex]);
+      const activeImg = activeImagePath || (imageList && imageList[currentIndex]) || null;
       await window.electronAPI.openPpgWorkbench(sessionCandidate, activeImg);
       addLog('info', '🔬 PPG/PGA Lab Workbench launched successfully.');
     } catch (err) {
