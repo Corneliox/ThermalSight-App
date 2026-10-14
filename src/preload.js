@@ -55,6 +55,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('menu-open-settings', sub);
     return () => ipcRenderer.removeListener('menu-open-settings', sub);
   },
+  onMenuOpenWorkbench: (callback) => {
+    const sub = () => callback();
+    ipcRenderer.on('menu-open-workbench', sub);
+    return () => ipcRenderer.removeListener('menu-open-workbench', sub);
+  },
   onMenuOpenAbout: (callback) => {
     const sub = () => callback();
     ipcRenderer.on('menu-open-about', sub);

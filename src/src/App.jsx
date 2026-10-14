@@ -255,7 +255,7 @@ export default function App() {
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
-    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.8.1 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
+    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.8.3 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
   ]);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const terminalEndRef = useRef(null);
@@ -361,6 +361,7 @@ export default function App() {
     if (api.onMenuOpenSingle)     cleanups.push(api.onMenuOpenSingle(() => menuHandlersRef.current.handleBrowseSingle?.()));
     if (api.onMenuOpenFolder)     cleanups.push(api.onMenuOpenFolder(() => menuHandlersRef.current.handleBrowseFolder?.()));
     if (api.onMenuOpenAnnotation) cleanups.push(api.onMenuOpenAnnotation(() => menuHandlersRef.current.handleOpenAnnotationSession?.()));
+    if (api.onMenuOpenWorkbench)  cleanups.push(api.onMenuOpenWorkbench(() => menuHandlersRef.current.handleLaunchPpgWorkbench?.()));
     if (api.onMenuOpenProject)    cleanups.push(api.onMenuOpenProject(() => menuHandlersRef.current.openFolder?.()));
 
     return () => {
@@ -2093,7 +2094,11 @@ export default function App() {
 
   const handleLaunchPpgWorkbench = async () => {
     if (!window.electronAPI || !window.electronAPI.openPpgWorkbench) {
-      alert('PPG/PGA Lab is available in Desktop mode.');
+      alert(
+        '🔬 PPG/PGA Lab Workbench berjalan secara native dengan Python.\n\n' +
+        '• Jika Anda membuka versi Web di browser: Jalankan file "run_workbench.bat" atau ketik "python ppg_workbench.py" di terminal lokal Anda.\n' +
+        '• Jika Anda menggunakan versi Desktop: Pastikan aplikasi dibuka lewat file instalasi / desktop ThermalSight.'
+      );
       return;
     }
     try {
@@ -2105,6 +2110,7 @@ export default function App() {
       }
       const activeImg = activeImagePath || (imageList && imageList[currentIndex]);
       await window.electronAPI.openPpgWorkbench(sessionCandidate, activeImg);
+      addLog('info', '🔬 PPG/PGA Lab Workbench launched successfully.');
     } catch (err) {
       alert(`Could not launch PPG/PGA Lab:\n${err.message || err}`);
     }
@@ -2206,6 +2212,7 @@ export default function App() {
     handleBrowseSingle,
     handleBrowseFolder,
     handleOpenAnnotationSession,
+    handleLaunchPpgWorkbench,
     openFolder,
   };
 
@@ -2360,7 +2367,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.8.1 (Web & Desktop)</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.8.3 (Web & Desktop)</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -2630,7 +2637,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.8.1' : 'v1.8.1'}</span>
+          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.8.3' : 'v1.8.3'}</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (
@@ -2649,16 +2656,14 @@ export default function App() {
           <button className="btn-ghost" title="Open Saved Annotation Session (annotations_session.json)" onClick={handleOpenAnnotationSession}>
             📂 Load Session
           </button>
-          {window.electronAPI && (
-            <button
-              className="btn-ghost"
-              style={{ color: '#38bdf8', borderColor: '#0284c7', background: 'rgba(2, 132, 199, 0.12)', fontWeight: '600' }}
-              title="Launch Standalone PPG & PGA Interactive Research Lab"
-              onClick={handleLaunchPpgWorkbench}
-            >
-              🔬 PPG/PGA Lab
-            </button>
-          )}
+          <button
+            className="btn-ghost"
+            style={{ color: '#38bdf8', borderColor: '#0284c7', background: 'rgba(2, 132, 199, 0.15)', fontWeight: '700' }}
+            title="Launch Standalone PPG & PGA Interactive Research Lab Workbench"
+            onClick={handleLaunchPpgWorkbench}
+          >
+            🔬 PPG/PGA Lab
+          </button>
           <button className="btn-ghost" title="Workflow Architecture & Operating Guide" onClick={() => setShowWorkflowModal(true)}>
             🗺️ Workflow
           </button>
@@ -3379,6 +3384,21 @@ export default function App() {
                     title="Generate Paper Fig 1 (Panel A: PPP, Panel B: PPG & PGA) for this image"
                   >
                     🦶 Generate Plantar Gradient (PPP - PPG - PGA)
+                  </button>
+                  <button
+                    className="btn-secondary btn-tiny w-full"
+                    style={{
+                      background: 'rgba(124, 58, 237, 0.15)',
+                      borderColor: '#7c3aed',
+                      color: '#c4b5fd',
+                      fontWeight: '700',
+                      padding: '8px',
+                      marginTop: '6px'
+                    }}
+                    onClick={handleLaunchPpgWorkbench}
+                    title="Launch Standalone Interactive PPG & PGA Research Workbench"
+                  >
+                    🔬 Open Interactive PPG / PGA Lab
                   </button>
                 </div>
               )}

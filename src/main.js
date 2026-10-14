@@ -81,6 +81,18 @@ function createApplicationMenu() {
       ]
     },
     {
+      label: 'Tools',
+      submenu: [
+        {
+          label: 'Launch PPG / PGA Lab Workbench...',
+          accelerator: 'CmdOrCtrl+Shift+L',
+          click: () => {
+            if (mainWindow) mainWindow.webContents.send('menu-open-workbench');
+          }
+        }
+      ]
+    },
+    {
       label: 'Help',
       submenu: [
         {
