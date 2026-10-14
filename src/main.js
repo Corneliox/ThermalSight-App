@@ -763,6 +763,35 @@ ipcMain.handle('export-result-package', async (_event, resultDir, filesMap) => {
   }
 });
 
+// ── IPC: export-ppg-summary (Headless PPG/PGA Statistical Summary Generation) ───
+ipcMain.handle('export-ppg-summary', async (_event, resultDir) => {
+  try {
+    const jsonPath = path.join(resultDir, 'annotations_session.json');
+    if (!fs.existsSync(jsonPath)) {
+      return { error: 'annotations_session.json not found in result dir' };
+    }
+    const workbenchScript = app.isPackaged
+      ? path.join(process.resourcesPath, 'ppg_workbench.py')
+      : path.join(__dirname, '..', 'ppg_workbench.py');
+    const pyExe = process.platform === 'win32' ? 'python' : 'python3';
+    return new Promise((resolve) => {
+      const child = spawn(pyExe, [workbenchScript, '--session', jsonPath, '--export-metrics'], {
+        windowsHide: true,
+      });
+      child.on('close', (code) => {
+        sendLogToRenderer('info', `[PPG AUTO-EXPORT] Exit code ${code}`);
+        resolve({ status: code === 0 ? 'ok' : 'error', code });
+      });
+      child.on('error', (err) => {
+        sendLogToRenderer('warning', `[PPG AUTO-EXPORT] Error: ${err.message}`);
+        resolve({ error: err.message });
+      });
+    });
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
 // ── IPC: macOS Diagnostics & Permission Management ────────────────────────────
 ipcMain.handle('get-platform-info', async () => {
   return {

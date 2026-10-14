@@ -45,6 +45,7 @@ const api = window.electronAPI || {
   loadAnnotationFile: async () => null,
   checkExistingAnnotation: async () => null,
   exportResultPackage: async () => {},
+  exportPpgSummary: async () => {},
   readImageBase64: async () => null,
   getPlatformInfo: async () => ({ platform: 'web', isMac: false, isPackaged: false, arch: 'web' }),
   runMacPermissionFix: async () => ({ status: 'skipped' }),
@@ -1804,6 +1805,13 @@ export default function App() {
       if (window.electronAPI && api.exportResultPackage) {
         await api.exportResultPackage(resultDir, exportFilesMap);
         await api.saveMasterJson(resultDir, masterData);
+        if (api.exportPpgSummary) {
+          try {
+            await api.exportPpgSummary(resultDir);
+          } catch (e) {
+            console.warn('[Desktop] exportPpgSummary failed:', e);
+          }
+        }
         await api.clearDraft();
       } else {
         // Pure Client-Side ZIP Generation for Web

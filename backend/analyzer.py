@@ -76,7 +76,7 @@ def load_temperature(filepath: str) -> np.ndarray:
     raw = cv2.imread(filepath, cv2.IMREAD_GRAYSCALE)
     if raw is None:
         fail(f"Cannot open image: {filepath}")
-    return raw.astype(np.float32)
+    return clean_flir_accessories(raw.astype(np.float32))
 
 
 def clean_flir_accessories(temp: np.ndarray) -> np.ndarray:

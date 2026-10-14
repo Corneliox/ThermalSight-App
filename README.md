@@ -1,20 +1,19 @@
 # 🌡 ThermalSight
 
-[![Version](https://img.shields.io/badge/stable%20version-1.8.2-brightgreen.svg)](https://github.com/Corneliox/ThermalSight-App/releases/tag/v1.8.2)
+[![Version](https://img.shields.io/badge/stable%20version-1.8.3-brightgreen.svg)](https://github.com/Corneliox/ThermalSight-App/releases/tag/v1.8.3)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Web-brightgreen.svg)]()
 [![Web App](https://img.shields.io/badge/Live%20Demo-Firebase%20Hosting-orange.svg)](https://thermalsight-web-2026.web.app)
 [![GitHub Pages](https://img.shields.io/badge/GitHub%20Pages-Live%20Mirror-blue.svg)](https://corneliox.github.io/ThermalSight-App/)
 [![License](https://img.shields.io/badge/license-MIT-purple.svg)]()
 
 > [!NOTE]
-> **Production Stable Milestone: v1.8.2**  
-> The current official and verified stable production release is **ThermalSight v1.8.2**. Features include:
+> **Production Stable Milestone: v1.8.3**  
+> The current official and verified stable production release is **ThermalSight v1.8.3**. Features include:
+> - **Seamless PPP/PPG/PGA Auto-Bridge**: The desktop *"Save Label & Export"* pipeline now automatically executes headless statistical recomputation in the background, instantly writing `PPP_PPG_PGA_Statistical_Summary.xlsx` (with Sheet 1 Audit Box, Sheet 2 Executive Summary, and Sheet 3 Methodology Guide) directly to the target output directory.
 > - **Interactive Methodology Audit Trail & Excel Guide Sheet**: Multi-sheet statistical report (`PPP_PPG_PGA_Statistical_Summary.xlsx`) featuring an isolated 2-row audit trail box below detailed ROIs, dynamic Excel formulas (`=AVERAGE`, `=MAX`, `=MIN`), referenced cells, and full anatomical rationale for PPP, PPG, and PGA.
+> - **Headless CLI & Workbench Robustness**: Fixed Workbench class structuring and added `--export-metrics` headless batch processing.
+> - **Complete FLIR Attribute Removal**: 100% pure radiometric thermal matrix rendering with automated inpainting fallback for non-radiometric grayscale inputs.
 > - **In-App Multilingual Interactive Workflow Guide**: 3-perspective architecture and operating guide available in English (`EN` - default), Indonesian (`ID`), and Traditional Chinese (`繁中`).
-> - **Pure Radiometric Sensor Loading ("Mode Mula-mula")**: Artificial inpainting bypassed; 16-bit radiometric sensor metadata decoded directly via FLIR Planck parameters with zero visual OSD stamp artifacts.
-> - **Standardized 9×9 Grid ROI Windows**: ROI circle dimensions locked to exactly 9×9 grid cells ($r = 4.5$ cells) for uniform, reproducible thermal flux quantification.
-> - **Automatic Legacy Annotation Translation**: Historical sessions (v1.6 / v1.7) automatically upgrade to the 9×9 grid standard upon file load while preserving anatomical centroids.
-> - **Blocking Sequence Upload & Terminal Diagnostics**: Top-level root folder filtering and live error recovery for multi-image datasets.
 
 **ThermalSight** is a high-precision biomedical and industrial thermal imaging suite designed for radiometric temperature analysis, multi-label region segmentation, time-series treadmill/pressure protocol tracking, and automated 8-point compass thermal gradient extraction.
 
