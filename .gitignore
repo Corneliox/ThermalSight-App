@@ -89,9 +89,14 @@ scratch/
 *_analysis/
 *.jpg_analysis/
 *.png_analysis/
+*.bak
 *_Result/
 *_Result*/
 *.jpg_Result/
 *.jpg_Result*/
+!example/bas_Result/
+!example/bas_Result/**
+!example/bas_result/
+!example/bas_result/**
 example/1803/
 *.pptx

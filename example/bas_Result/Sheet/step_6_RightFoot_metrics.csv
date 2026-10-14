@@ -1,0 +1,4 @@
+ROI,Grid_X,Grid_Y,ROI_Radius_Grid,PPP_Peak_Value,PPP_Mean_9x9,PPG_Gradient_Mag,PGA_Angle_Deg
+T1,42.9,16.5,4.5,36.57,36.33,0.091,79.5
+M1,45.0,33.2,4.5,36.01,35.91,0.085,-94.4
+M2,36.3,34.4,4.5,36.47,36.16,0.068,-6.3
