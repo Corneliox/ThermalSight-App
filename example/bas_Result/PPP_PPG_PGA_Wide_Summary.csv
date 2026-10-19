@@ -1,8 +1,8 @@
-﻿Image_Name,Foot_Side,T1_PPP_Mean_C,T1_PPP_Peak_C,T1_PPG_Mean_Grad,T1_PPG_Peak_Grad,T1_PGA_Angle_Deg,T1_PGA_Direction,T1_PGA_Coherence_Pct,M1_PPP_Mean_C,M1_PPP_Peak_C,M1_PPG_Mean_Grad,M1_PPG_Peak_Grad,M1_PGA_Angle_Deg,M1_PGA_Direction,M1_PGA_Coherence_Pct,M2_PPP_Mean_C,M2_PPP_Peak_C,M2_PPG_Mean_Grad,M2_PPG_Peak_Grad,M2_PGA_Angle_Deg,M2_PGA_Direction,M2_PGA_Coherence_Pct
-FLIR0201,Right,34.24,34.75,0.122,0.273,176.7,W (Medial),61.5,34.69,35.0,0.162,0.69,191.3,W (Medial),59.8,34.68,35.0,0.099,0.22,337.2,SE (Posterolateral),93.8
-FLIR0202,Right,33.35,33.97,0.105,0.208,66.7,NE (Anterolateral),86.6,33.9,34.0,0.064,0.298,136.1,NW (Anteromedial),27.5,34.0,34.0,0.005,0.12,13.7,E (Lateral),89.3
-FLIR0203,Right,33.03,33.73,0.125,0.308,272.2,S (Proximal / Heel),33.1,33.31,33.73,0.103,0.198,57.9,NE (Anterolateral),8.3,33.57,33.95,0.148,0.219,97.2,N (Distal / Toes),12.2
-FLIR0204,Right,33.6,34.69,0.167,0.336,59.9,NE (Anterolateral),77.3,33.99,34.11,0.013,0.095,144.8,NW (Anteromedial),18.6,33.9,34.04,0.065,0.222,33.8,NE (Anterolateral),33.6
-FLIR0205,Right,35.08,35.99,0.218,0.638,70.7,N (Distal / Toes),60.1,34.99,35.27,0.057,0.503,145.4,NW (Anteromedial),21.5,34.97,35.11,0.065,0.216,15.1,E (Lateral),27.8
-FLIR0206,Right,35.7,36.2,0.208,0.565,106.2,N (Distal / Toes),34.4,35.15,35.92,0.152,0.316,216.9,SW (Posteromedial),73.4,35.65,35.99,0.152,0.217,277.9,S (Proximal / Heel),27.5
-FLIR0207,Right,34.78,35.98,0.262,0.711,60.2,NE (Anterolateral),77.2,35.09,35.71,0.116,0.339,78.0,N (Distal / Toes),31.4,35.31,35.83,0.129,0.233,117.3,NW (Anteromedial),40.5
+﻿Image_Name,Foot_Side,M1_PPP_Mean_C,M1_PPP_Peak_C,M1_PPG_Mean_Grad,M1_PPG_Peak_Grad,M1_PGA_Angle_Deg,M1_PGA_Direction,M1_PGA_Coherence_Pct,M2_PPP_Mean_C,M2_PPP_Peak_C,M2_PPG_Mean_Grad,M2_PPG_Peak_Grad,M2_PGA_Angle_Deg,M2_PGA_Direction,M2_PGA_Coherence_Pct,T1_PPP_Mean_C,T1_PPP_Peak_C,T1_PPG_Mean_Grad,T1_PPG_Peak_Grad,T1_PGA_Angle_Deg,T1_PGA_Direction,T1_PGA_Coherence_Pct
+FLIR0201,Right,35.01,35.35,0.146,0.719,180.9,W (Medial),96.2,34.97,35.31,0.072,0.116,20.4,E (Lateral),93.3,34.8,35.22,0.141,0.377,193.4,W (Medial),65.4
+FLIR0202,Right,34.34,34.64,0.075,0.155,208.6,SW (Posteromedial),85.9,34.66,34.84,0.065,0.104,348.2,E (Lateral),68.1,34.24,34.57,0.15,0.312,187.4,W (Medial),36.3
+FLIR0203,Right,33.85,34.2,0.091,0.184,225.1,SW (Posteromedial),47.1,33.76,34.15,0.06,0.135,356.9,E (Lateral),90.0,33.76,34.69,0.189,0.4,290.8,S (Proximal / Heel),65.7
+FLIR0204,Right,34.25,34.53,0.078,0.157,190.8,W (Medial),8.0,34.32,34.67,0.113,0.221,14.2,E (Lateral),66.9,34.53,35.25,0.192,0.357,310.2,SE (Posterolateral),80.4
+FLIR0205,Right,35.5,35.88,0.094,0.461,223.7,SW (Posteromedial),33.1,35.52,35.85,0.102,0.168,2.0,E (Lateral),70.3,35.73,36.24,0.262,1.012,357.6,E (Lateral),76.9
+FLIR0206,Right,35.64,36.21,0.191,0.548,165.4,W (Medial),87.5,36.04,36.35,0.116,0.192,27.3,NE (Anterolateral),49.4,36.42,36.89,0.253,0.629,318.6,SE (Posterolateral),21.9
+FLIR0207,Right,35.69,36.16,0.148,0.551,227.5,SW (Posteromedial),41.8,35.83,36.24,0.136,0.252,275.9,S (Proximal / Heel),44.9,36.0,36.78,0.315,0.881,335.5,SE (Posterolateral),72.0

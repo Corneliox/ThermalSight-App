@@ -374,11 +374,14 @@ function renderToCanvas(W, H, renderFn) {
 export function runClientThermalAnalysis(tempMatrix, W, H, stem = 'image', cleanImageDataUrl = null) {
   // 1. Normalization
   let minT = Infinity, maxT = -Infinity;
+  let sumT = 0;
   for (let i = 0; i < W * H; i++) {
     const v = tempMatrix[i];
     if (v < minT) minT = v;
     if (v > maxT) maxT = v;
+    sumT += v;
   }
+  const meanT = (W * H > 0) ? (sumT / (W * H)) : 0;
   const rangeT = (maxT - minT) || 1.0;
 
   const norm = new Float32Array(W * H);
@@ -545,7 +548,7 @@ export function runClientThermalAnalysis(tempMatrix, W, H, stem = 'image', clean
     shape: [H, W],
     temp_min: minT,
     temp_max: maxT,
-    temp_mean: sortedMag.reduce((a, b) => a + b, 0) / (W * H),
+    temp_mean: meanT,
     images: {
       original: originalUrl,
       magnitude: magnitudeUrl,
@@ -688,7 +691,7 @@ export function computeLabelStarGradient(tempMatrix, W, H, roi, pxPerCm = null) 
   });
 
   let minGradVal = Infinity;
-  COMPASS.forEach(([name]) => {
+  COMPASS.forEach(name => {
     const p = points[name];
     if (p && p.grad < minGradVal) {
       minGradVal = p.grad;
@@ -778,6 +781,9 @@ export function clientCropPolygonROI(tempMatrix, W, H, points, labelName, roiInd
       }
     }
   }
+
+  // Draw masked pixels onto cropped canvas before vector overlays
+  ctx.putImageData(imgData, 0, 0);
 
   // Compute mean and standard deviation from collected temperatures
   const meanTemp = count > 0 ? sum / count : 0;
@@ -2595,7 +2601,7 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
   for (const m of mappedRois) {
     const rx = panelA_left + (m.gx - 0.5) * cellW;
     const ry = panelTop + (m.gy - 0.5) * cellH;
-    const radPx = Math.max(14, radiusGrid * cellW);
+    const radPx = Math.max(14, (m.rFinal || 1.0) * cellW);
 
     ctx.strokeStyle = '#00e5ff';
     ctx.lineWidth = isCoarse ? 3 : 5;
@@ -2765,7 +2771,7 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
   for (const m of mappedRois) {
     const rx = panelB_left + (m.gx - 0.5) * cellW;
     const ry = panelTop + (m.gy - 0.5) * cellH;
-    const radPx = Math.max(14, radiusGrid * cellW);
+    const radPx = Math.max(14, (m.rFinal || 1.0) * cellW);
 
     ctx.strokeStyle = '#ff0000';
     ctx.lineWidth = isCoarse ? 3 : 5;

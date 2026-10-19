@@ -67,32 +67,43 @@ def normalize_u8(arr):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_temperature(filepath: str) -> np.ndarray:
+    temp = None
     if FLYR_AVAILABLE and filepath.lower().endswith((".jpg", ".jpeg")):
         try:
             log("Trying flyr FLIR unpack…")
-            return flyr.unpack(filepath).celsius.astype(np.float32)
+            temp = flyr.unpack(filepath).celsius.astype(np.float32)
         except Exception as e:
             log(f"flyr failed ({e}), falling back to grayscale")
-    raw = cv2.imread(filepath, cv2.IMREAD_GRAYSCALE)
-    if raw is None:
-        fail(f"Cannot open image: {filepath}")
-    return clean_flir_accessories(raw.astype(np.float32))
+    if temp is None:
+        raw = cv2.imread(filepath, cv2.IMREAD_GRAYSCALE)
+        if raw is None:
+            fail(f"Cannot open image: {filepath}")
+        # BUG-1.7: Map 8-bit grayscale (0-255) to physiological plantar temperature range (20.0°C - 38.0°C)
+        temp = 20.0 + (raw.astype(np.float32) / 255.0) * (38.0 - 20.0)
+
+    # Guard against Kelvin (273K - 350K) or uncalibrated scales > 100°C
+    if float(temp.max()) > 200.0 and float(temp.max()) < 373.15:
+        temp = temp - 273.15
+    elif float(temp.max()) > 100.0:
+        t_min = float(temp.min())
+        t_max = float(temp.max())
+        denom = max(1e-4, t_max - t_min)
+        temp = 20.0 + ((temp - t_min) / denom) * (38.0 - 20.0)
+
+    return clean_flir_accessories(temp)
 
 
 def clean_flir_accessories(temp: np.ndarray) -> np.ndarray:
     """
     Stroke-level FLIR OSD, logo, reticle, and colorbar inpainting.
-    Removes all camera UI accessories to yield a clean thermal matrix.
+    Removes camera UI accessories while strictly preserving exact foot tissue temperatures.
     """
     temp_work = temp.copy()
     H, W = temp_work.shape
     
-    is_celsius = float(temp_work.max()) < 100.0
-    if is_celsius:
-        mn, mx = float(temp_work.min()), float(temp_work.max())
-        norm_u8 = np.clip((temp_work - mn) / (mx - mn + 1e-6) * 255.0, 0, 255).astype(np.uint8)
-    else:
-        norm_u8 = np.clip(temp_work, 0, 255).astype(np.uint8)
+    mn, mx = float(temp_work.min()), float(temp_work.max())
+    denom = max(1e-4, mx - mn)
+    norm_u8 = np.clip((temp_work - mn) / denom * 255.0, 0, 255).astype(np.uint8)
 
     osd_stroke_mask = np.zeros((H, W), dtype=bool)
 
@@ -116,19 +127,20 @@ def clean_flir_accessories(temp: np.ndarray) -> np.ndarray:
     br_box[max(0, H - 45):H, int(W * 0.83):int(W * 0.95)] = True
     osd_stroke_mask |= br_box & ((norm_u8 > 160) | (norm_u8 < 20))
 
-    # 5. Center reticle/crosshair
+    # 5. Center reticle/crosshair (BUG-3.3: NEVER inpaint norm_u8 > 240 as crosshairs!)
+    # Only thin reticles at the exact image center if dark, avoiding foot tissue
+    cy, cx = H // 2, W // 2
     c_box = np.zeros((H, W), dtype=bool)
-    c_box[int(H * 0.20):int(H * 0.80), int(W * 0.15):int(W * 0.85)] = True
-    osd_stroke_mask |= c_box & ((norm_u8 < 30) | (norm_u8 > 240))
+    c_box[max(0, cy - 8):min(H, cy + 8), max(0, cx - 8):min(W, cx + 8)] = True
+    osd_stroke_mask |= c_box & (norm_u8 < 20)
 
-    # Inpaint detected strokes seamlessly
+    # Inpaint detected strokes seamlessly while preserving float32 precision for real tissue (BUG-1.2)
     if np.any(osd_stroke_mask):
         mask_d = cv2.dilate(osd_stroke_mask.astype(np.uint8), np.ones((5, 5), np.uint8))
         inpainted_u8 = cv2.inpaint(norm_u8, mask_d, 7, cv2.INPAINT_TELEA)
-        if is_celsius:
-            temp_work = mn + (inpainted_u8.astype(np.float32) / 255.0) * (mx - mn)
-        else:
-            temp_work = inpainted_u8.astype(np.float32)
+        inpainted_f32 = mn + (inpainted_u8.astype(np.float32) / 255.0) * denom
+        replace_idx = (mask_d > 0)
+        temp_work[replace_idx] = inpainted_f32[replace_idx]
 
     # 6. Replicate ambient thermal background for rightmost colorbar strip
     cb_start = int(W * 0.95)
@@ -160,7 +172,7 @@ def compute(temp: np.ndarray) -> dict:
     magnitude  = np.sqrt(sx_raw**2 + sy_raw**2).astype(np.float32)
     mag_thresh = np.where(magnitude >= np.percentile(magnitude, 75),
                           magnitude, 0).astype(np.float32)
-    angle      = np.arctan2(sy_raw, sx_raw).astype(np.float32)
+    angle      = np.arctan2(-sy_raw, sx_raw).astype(np.float32)
 
     orig_color  = cv2.applyColorMap(normalize_u8(temp), cv2.COLORMAP_INFERNO)
     edge_color  = cv2.applyColorMap(sobel_clahe, cv2.COLORMAP_HOT)
@@ -1218,39 +1230,44 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
 
     # 1. Stroke-Level FLIR OSD & Reticle Inpainting (Zero Foot Heel Notch)
     temp_work = temp.copy()
-    temp_u8 = np.clip(temp_work, 0, 255).astype(np.uint8)
+    mn, mx = float(temp_work.min()), float(temp_work.max())
+    denom = max(1e-4, mx - mn)
+    norm_u8 = np.clip((temp_work - mn) / denom * 255.0, 0, 255).astype(np.uint8)
 
     osd_stroke_mask = np.zeros((H, W), dtype=bool)
     # Top-left temperature text (e.g. "35.0 °C")
     tl_box = np.zeros((H, W), dtype=bool)
     tl_box[4:28, 4:80] = True
-    osd_stroke_mask |= tl_box & ((temp_work > 160) | (temp_work < 15))
+    osd_stroke_mask |= tl_box & ((norm_u8 > 160) | (norm_u8 < 20))
 
     # Bottom-left FLIR logo
     bl_box = np.zeros((H, W), dtype=bool)
     bl_box[195:239, 0:72] = True
-    osd_stroke_mask |= bl_box & ((temp_work > 160) | (temp_work < 15))
+    osd_stroke_mask |= bl_box & ((norm_u8 > 160) | (norm_u8 < 20))
 
     # Top-right scale limit text
     tr_box = np.zeros((H, W), dtype=bool)
     tr_box[4:28, 270:320] = True
-    osd_stroke_mask |= tr_box & ((temp_work > 160) | (temp_work < 15))
+    osd_stroke_mask |= tr_box & ((norm_u8 > 160) | (norm_u8 < 20))
 
     # Bottom-right scale limit text
     br_box = np.zeros((H, W), dtype=bool)
     br_box[195:239, 270:320] = True
-    osd_stroke_mask |= br_box & ((temp_work > 160) | (temp_work < 15))
+    osd_stroke_mask |= br_box & ((norm_u8 > 160) | (norm_u8 < 20))
 
-    # Center reticle/crosshair if present
+    # Center reticle/crosshair if present (BUG-3.3: avoid inpainting hot foot tissue)
+    cy, cx = H // 2, W // 2
     c_box = np.zeros((H, W), dtype=bool)
-    c_box[int(H * 0.25):int(H * 0.75), int(W * 0.15):int(W * 0.85)] = True
-    osd_stroke_mask |= c_box & ((temp_work < 15) | (temp_work > 245))
+    c_box[max(0, cy - 8):min(H, cy + 8), max(0, cx - 8):min(W, cx + 8)] = True
+    osd_stroke_mask |= c_box & (norm_u8 < 20)
 
-    # Inpaint detected strokes seamlessly
+    # Inpaint detected strokes seamlessly while preserving float32 precision (BUG-1.2)
     if np.any(osd_stroke_mask):
         mask_d = cv2.dilate(osd_stroke_mask.astype(np.uint8), np.ones((5, 5), np.uint8))
-        inpainted_u8 = cv2.inpaint(temp_u8, mask_d, 7, cv2.INPAINT_TELEA)
-        temp_work = inpainted_u8.astype(np.float32)
+        inpainted_u8 = cv2.inpaint(norm_u8, mask_d, 7, cv2.INPAINT_TELEA)
+        inpainted_f32 = mn + (inpainted_u8.astype(np.float32) / 255.0) * denom
+        replace_idx = (mask_d > 0)
+        temp_work[replace_idx] = inpainted_f32[replace_idx]
 
     # Blank out the extreme right edge colorbar strip outside the scene
     if W >= 320:
@@ -1276,9 +1293,12 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
 
     # Crop clean foot bounding box (isolated from background & bedsheet)
     if np.max(foot_patch_raw) < 100:
-        # Radiometric Celsius mode: spatially-aware threshold to separate blanket/bedsheet from heel
-        bg_map = np.full_like(foot_patch_raw, 26.5)
-        bg_map[int(H * 0.75):, :] = 27.8
+        # Radiometric Celsius mode: spatially-aware threshold aligned with ppg_workbench.py (31.0°C / adaptive)
+        p85 = float(np.percentile(foot_patch_raw, 85))
+        p25 = float(np.percentile(foot_patch_raw, 25))
+        bg_thresh = 31.0 if (p25 < 31.0 < p85) else (p25 + 0.4 * (p85 - p25))
+        bg_map = np.full_like(foot_patch_raw, bg_thresh)
+        bg_map[int(H * 0.75):, :] = bg_thresh + min(1.2, (p85 - bg_thresh) * 0.3)
         binary_cand = (foot_patch_raw > bg_map).astype(np.uint8)
         num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_cand)
         if num_labels > 1:
@@ -1390,9 +1410,21 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
     for r in rois:
         if not isinstance(r, dict):
             continue
-        name = str(r.get("labelName", "ROI")).upper()
-        rcx = float(r.get("cx", 0)) - offset_x - xmin
-        rcy = float(r.get("cy", 0)) - ymin
+        name = str(r.get("labelName", r.get("name", "ROI"))).upper()
+        if "cx" in r and "cy" in r and r["cx"] is not None and r["cy"] is not None:
+            raw_cx = float(r["cx"])
+            raw_cy = float(r["cy"])
+        else:
+            pts = r.get("points") or []
+            valid_pts = [p for p in pts if isinstance(p, dict) and "x" in p and "y" in p]
+            if valid_pts:
+                raw_cx = float(np.mean([p["x"] for p in valid_pts]))
+                raw_cy = float(np.mean([p["y"] for p in valid_pts]))
+            else:
+                raw_cx = float(offset_x + xmin + 0.5 * cw)
+                raw_cy = float(ymin + 0.5 * ch)
+        rcx = raw_cx - offset_x - xmin
+        rcy = raw_cy - ymin
         gx = (rcx / cw) * n_cols + 0.5
         gy = (rcy / ch) * n_rows + 0.5
 
@@ -1432,33 +1464,72 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
                 ("M2", m2_x, m2_y, 4.5)
             ]
 
-    # Calculate ROI metrics table
+    # Calculate ROI metrics table (aligned with ppg_workbench.py)
+    grad_angles = np.degrees(np.arctan2(-sobel_y, sobel_x)) % 360.0
     metrics = []
     for name, gx, gy, r_rad in mapped_rois:
-        ix = int(np.clip(round(gx) - 1, 0, n_cols - 1))
-        iy = int(np.clip(round(gy) - 1, 0, n_rows - 1))
+        ix = int(np.clip(round(gx - 0.5), 0, n_cols - 1))
+        iy = int(np.clip(round(gy - 0.5), 0, n_rows - 1))
 
-        # Extract 9x9 Local Patch statistics around annotation center
+        # Extract 9x9 Local Patch statistics masked with mask_dense (BUG-1.8 & BUG-1.5)
         x0 = max(0, ix - 4)
         x1 = min(n_cols, ix + 5)
         y0 = max(0, iy - 4)
         y1 = min(n_rows, iy + 5)
-        patch_9x9 = grid_dense[y0:y1, x0:x1]
-        mean_9x9 = float(np.mean(patch_9x9)) if patch_9x9.size > 0 else float(grid_dense[iy, ix])
 
-        val_ppp = float(grid_dense[iy, ix])
-        gx_val = float(sobel_x[iy, ix])
-        gy_val = float(sobel_y[iy, ix])
-        val_ppg = float(np.sqrt(gx_val**2 + gy_val**2))
-        val_pga = float(np.degrees(np.arctan2(gy_val, gx_val)))
+        patch_temps = grid_smooth[y0:y1, x0:x1]
+        patch_mags = grad_mag[y0:y1, x0:x1]
+        patch_angs = grad_angles[y0:y1, x0:x1]
+        patch_mask = mask_dense[y0:y1, x0:x1]
+
+        roi_temps = patch_temps[patch_mask]
+        roi_mags = patch_mags[patch_mask]
+        roi_angs = patch_angs[patch_mask]
+
+        if roi_temps.size == 0:
+            if mask_dense[iy, ix]:
+                roi_temps = np.array([grid_smooth[iy, ix]])
+                roi_mags = np.array([grad_mag[iy, ix]])
+                roi_angs = np.array([grad_angles[iy, ix]])
+            else:
+                ys_dense, xs_dense = np.where(mask_dense)
+                if len(ys_dense) > 0:
+                    dists = (ys_dense - iy)**2 + (xs_dense - ix)**2
+                    best_idx = np.argmin(dists)
+                    ny, nx = ys_dense[best_idx], xs_dense[best_idx]
+                    roi_temps = np.array([grid_smooth[ny, nx]])
+                    roi_mags = np.array([grad_mag[ny, nx]])
+                    roi_angs = np.array([grad_angles[ny, nx]])
+                else:
+                    roi_temps = np.array([grid_smooth[iy, ix]])
+                    roi_mags = np.array([grad_mag[iy, ix]])
+                    roi_angs = np.array([grad_angles[iy, ix]])
+
+        val_ppp_mean = float(np.mean(roi_temps))
+        val_ppp_peak = float(np.max(roi_temps))
+        val_ppg_mean = float(np.mean(roi_mags))
+        val_ppg_peak = float(np.max(roi_mags))
+
+        ang_rads = np.radians(roi_angs.flatten())
+        mags = roi_mags.flatten()
+        mags_sum = float(np.sum(mags))
+        if mags_sum > 1e-6:
+            C_sum = float(np.sum(mags * np.cos(ang_rads)))
+            S_sum = float(np.sum(mags * np.sin(ang_rads)))
+            val_pga = float(np.degrees(np.arctan2(S_sum, C_sum))) % 360.0
+        else:
+            C_sum = float(np.sum(np.cos(ang_rads)))
+            S_sum = float(np.sum(np.sin(ang_rads)))
+            val_pga = float(np.degrees(np.arctan2(S_sum, C_sum))) % 360.0
+
         metrics.append({
             "ROI": name,
             "Grid_X": round(gx, 1),
             "Grid_Y": round(gy, 1),
             "ROI_Radius_Grid": round(r_rad, 1),
-            "PPP_Peak_Value": round(val_ppp, 2),
-            "PPP_Mean_9x9": round(mean_9x9, 2),
-            "PPG_Gradient_Mag": round(val_ppg, 3),
+            "PPP_Peak_Value": round(val_ppp_peak, 2),
+            "PPP_Mean_9x9": round(val_ppp_mean, 2),
+            "PPG_Gradient_Mag": round(val_ppg_mean, 3),
             "PGA_Angle_Deg": round(val_pga, 1)
         })
 

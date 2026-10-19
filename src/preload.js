@@ -8,8 +8,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   measureStar: (imagePath, cx, cy, dist_cm, rotation_deg, pxPerCm, outputDir) => 
     ipcRenderer.invoke('measure-star', imagePath, cx, cy, dist_cm, rotation_deg, pxPerCm, outputDir),
 
-  cropLabels: (imagePath, roiPoints, labelName, roiIndex, outputDir) =>
-    ipcRenderer.invoke('crop-labels', imagePath, roiPoints, labelName, roiIndex, outputDir),
+  cropLabels: (imagePath, roiPoints, labelName, roiIndex, outputDir, pxPerCm) =>
+    ipcRenderer.invoke('crop-labels', imagePath, roiPoints, labelName, roiIndex, outputDir, pxPerCm),
+
+  deleteResultFolder: (folderPath) => ipcRenderer.invoke('delete-result-folder', folderPath),
 
   gradientScene: (imagePath, rois, pxPerCm, outputDir) =>
     ipcRenderer.invoke('gradient-scene', imagePath, rois, pxPerCm, outputDir),

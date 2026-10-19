@@ -20,6 +20,7 @@ import sys
 import json
 import shutil
 import argparse
+import subprocess
 from pathlib import Path
 import numpy as np
 import cv2
@@ -41,15 +42,35 @@ try:
 except ImportError:
     OPENPYXL_AVAILABLE = False
 
+# Cross-platform folder open helper (BUG-3.1)
+def open_folder(path):
+    p_str = str(Path(path).resolve())
+    try:
+        if sys.platform == "win32":
+            os.startfile(p_str)
+        elif sys.platform == "darwin":
+            subprocess.run(["open", p_str], check=False)
+        else:
+            subprocess.run(["xdg-open", p_str], check=False)
+    except Exception as e:
+        print(f"Could not open directory {p_str}: {e}")
+
 # Import backend modules
 CURRENT_DIR = Path(__file__).resolve().parent
 sys.path.append(str(CURRENT_DIR / "backend"))
 try:
     from analyzer import load_temperature
 except ImportError:
-    import flyr
     def load_temperature(p):
-        return flyr.unpack(p).celsius.astype(np.float32)
+        try:
+            import flyr
+            return flyr.unpack(str(p)).celsius.astype(np.float32)
+        except Exception:
+            raw = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
+            if raw is None:
+                raise ValueError(f"Cannot load image: {p}")
+            # Map 8-bit grayscale to physiological plantar range 20.0°C - 38.0°C (BUG-1.7)
+            return (20.0 + (raw.astype(np.float32) / 255.0) * (38.0 - 20.0))
 
 
 def enhance_excel_workbook(excel_path: Path):
@@ -153,13 +174,40 @@ def enhance_excel_workbook(excel_path: Path):
             ws.merge_cells(start_row=hdr_r, start_column=6, end_row=hdr_r, end_column=13)
             ws.row_dimensions[hdr_r].height = 24
             
-            # Rows definition
+            # Calculate Circular Mean of Column K (PGA_Mean_Angle_Deg) weighted by Column H (PPG_Mean_Grad) (BUG-1.4)
+            k_angles = []
+            h_mags = []
+            for r_idx in range(2, data_end_row + 1):
+                k_val = ws.cell(row=r_idx, column=11).value
+                h_val = ws.cell(row=r_idx, column=8).value
+                if k_val is not None:
+                    try:
+                        k_angles.append(float(k_val))
+                        h_mags.append(float(h_val) if h_val is not None else 1.0)
+                    except (ValueError, TypeError):
+                        pass
+
+            if k_angles:
+                k_rads = np.radians(k_angles)
+                k_w = np.array(h_mags, dtype=float)
+                sum_w = np.sum(k_w)
+                if sum_w > 1e-6:
+                    C_k = np.sum(k_w * np.cos(k_rads))
+                    S_k = np.sum(k_w * np.sin(k_rads))
+                else:
+                    C_k = np.sum(np.cos(k_rads))
+                    S_k = np.sum(np.sin(k_rads))
+                pga_circ_mean = float(np.degrees(np.arctan2(S_k, C_k))) % 360.0
+            else:
+                pga_circ_mean = 0.0
+
+            # Rows definition (BUG-1.4: Col D is formatted text, Col E is dynamic Excel formula / value)
             rows_data = [
                 (
                     "PPP (Mean Temp)",
                     "Berapa rata-rata suhu jaringan kulit pada area ROI?",
                     f"Kolom D (D2:D{data_end_row})",
-                    f"=AVERAGE(D2:D{data_end_row})",
+                    f"'=AVERAGE(D2:D{data_end_row})",
                     f"=AVERAGE(D2:D{data_end_row})",
                     "T1 (Hallux), M1 & M2 (Metatarsal) adalah titik kontak beban tumpuan puncak fase berjalan (stance phase). Rata-rata suhu mencerminkan perfusi basal jaringan kulit."
                 ),
@@ -167,7 +215,7 @@ def enhance_excel_workbook(excel_path: Path):
                     "PPP (Peak / Max Temp)",
                     "Berapa suhu tertinggi / hotspot lokal pada area ROI?",
                     f"Kolom E (E2:E{data_end_row})",
-                    f"=MAX(E2:E{data_end_row})",
+                    f"'=MAX(E2:E{data_end_row})",
                     f"=MAX(E2:E{data_end_row})",
                     "Hotspot lokal adalah penanda awal hiperemia dan mikrotrauma jaringan dalam sebelum timbul kerusakan kulit terbuka (ulkus diabetik)."
                 ),
@@ -175,7 +223,7 @@ def enhance_excel_workbook(excel_path: Path):
                     "PPP (Min Temp)",
                     "Berapa suhu terendah di batas area ROI?",
                     f"Kolom F (F2:F{data_end_row})",
-                    f"=MIN(F2:F{data_end_row})",
+                    f"'=MIN(F2:F{data_end_row})",
                     f"=MIN(F2:F{data_end_row})",
                     "Mengevaluasi batas bawah suhu untuk skrining hipoperfusi atau iskemia akibat Peripheral Artery Disease (PAD)."
                 ),
@@ -183,7 +231,7 @@ def enhance_excel_workbook(excel_path: Path):
                     "PPG (Mean Gradient)",
                     "Seberapa tajam rata-rata lonjakan perbedaan suhu spasial?",
                     f"Kolom H (H2:H{data_end_row})",
-                    f"=AVERAGE(H2:H{data_end_row})",
+                    f"'=AVERAGE(H2:H{data_end_row})",
                     f"=AVERAGE(H2:H{data_end_row})",
                     "Membedakan hangat fisiologis merata (suhu ruang/aktivitas) vs peradangan fokal aktif. Gradien tinggi menandakan batas radang aktif."
                 ),
@@ -191,7 +239,7 @@ def enhance_excel_workbook(excel_path: Path):
                     "PPG (Peak Gradient)",
                     "Seberapa curam batas kontras panas paling tajam di titik radang?",
                     f"Kolom I (I2:I{data_end_row})",
-                    f"=MAX(I2:I{data_end_row})",
+                    f"'=MAX(I2:I{data_end_row})",
                     f"=MAX(I2:I{data_end_row})",
                     "Puncak gradien melokalisir batas tepi fokal infeksi dalam atau deformitas Charcot Foot sebelum luka terlihat kasat mata."
                 ),
@@ -199,8 +247,8 @@ def enhance_excel_workbook(excel_path: Path):
                     "PGA (Mean Angle)",
                     "Ke sudut berapa derajat vektor rambatan panas mengalir?",
                     f"Kolom K (K2:K{data_end_row})",
-                    f"=AVERAGE(K2:K{data_end_row})",
-                    f"=AVERAGE(K2:K{data_end_row})",
+                    "Rata-rata Sirkular Vektor (Weighted Circular Mean)",
+                    round(pga_circ_mean, 2),
                     "Menentukan orientasi jalur penyebaran kalor dari titik tumpuan metatarsal ke jaringan sekitar."
                 ),
                 (
@@ -215,7 +263,7 @@ def enhance_excel_workbook(excel_path: Path):
                     "PGA (Vector Coherence %)",
                     "Seberapa seragam arah aliran rambatan panas (0-100%)?",
                     f"Kolom M (M2:M{data_end_row})",
-                    f"=AVERAGE(M2:M{data_end_row})",
+                    f"'=AVERAGE(M2:M{data_end_row})",
                     f"=AVERAGE(M2:M{data_end_row})",
                     "Koherensi tinggi (>75%) membuktikan disipasi panas terarah kuat (fokus vaskular); koherensi rendah (<50%) berarti difusi acak normal."
                 )
@@ -235,11 +283,12 @@ def enhance_excel_workbook(excel_path: Path):
                 ws[f"B{row_cursor}"].alignment = Alignment(vertical="center", wrap_text=True)
                 ws[f"C{row_cursor}"].alignment = Alignment(horizontal="center", vertical="center")
                 ws[f"D{row_cursor}"].alignment = Alignment(vertical="center", wrap_text=True)
+                ws[f"D{row_cursor}"].number_format = "@"
                 ws[f"E{row_cursor}"].alignment = Alignment(horizontal="right", vertical="center")
                 ws[f"E{row_cursor}"].font = Font(name="Calibri", size=10, bold=True, color="0369A1")
                 
-                # format numbers for formulas
-                if "AVERAGE" in formula or "MAX" in formula or "MIN" in formula:
+                # format numbers for formulas and numeric aggregate values in Col E
+                if isinstance(val, (int, float)) or (isinstance(val, str) and ("AVERAGE" in val or "MAX" in val or "MIN" in val)):
                     ws[f"E{row_cursor}"].number_format = "0.00"
                     
                 ws.merge_cells(start_row=row_cursor, start_column=6, end_row=row_cursor, end_column=13)
@@ -379,9 +428,10 @@ def enhance_excel_workbook(excel_path: Path):
         print(f"Notice: Could not enhance Excel styling: {e}")
 
 class PPGWorkbenchApp:
-    def __init__(self, root, session_arg=None, image_arg=None):
+    def __init__(self, root, session_arg=None, image_arg=None, silent_mode=False):
         self.root = root
-        self.root.title("ThermalSight — PPG & PGA Interactive Research Workbench v1.8.3")
+        self.silent_mode = silent_mode
+        self.root.title("ThermalSight — PPG & PGA Interactive Research Workbench v1.8.4")
         self.root.geometry("1560x960")
         self.root.minsize(1220, 780)
         self.root.configure(bg="#F1F5F9")
@@ -436,12 +486,12 @@ class PPGWorkbenchApp:
 
         # Handle command-line arguments or load default
         if session_arg and Path(session_arg).exists():
-            self.load_json_file(session_arg)
+            self.load_json_file(session_arg, silent_err=self.silent_mode)
             if image_arg and Path(image_arg).exists():
                 self.load_image_file(image_arg)
         elif image_arg and Path(image_arg).exists():
             self.load_image_file(image_arg)
-        else:
+        elif not self.silent_mode:
             self.load_default_sample()
 
     def setup_ui(self):
@@ -926,7 +976,10 @@ class PPGWorkbenchApp:
             resolved_images, burned_segs = self.resolve_image_paths_from_json(path_str, data)
             
             if not resolved_images:
-                messagebox.showerror("Image not Found", f"Image not Found\n\nCould not resolve referenced thermal images in:\n{path_str}")
+                if not silent_err and not getattr(self, "silent_mode", False):
+                    messagebox.showerror("Image not Found", f"Image not Found\n\nCould not resolve referenced thermal images in:\n{path_str}")
+                else:
+                    print(f"[ERROR] Could not resolve referenced thermal images in:\n{path_str}", file=sys.stderr)
                 return
 
             self.session_json_path = Path(path_str)
@@ -943,8 +996,10 @@ class PPGWorkbenchApp:
             self.load_image_file(self.image_list[0])
 
         except Exception as e:
-            if not silent_err:
+            if not silent_err and not getattr(self, "silent_mode", False):
                 messagebox.showerror("JSON Load Error", f"Failed to load JSON:\n{e}")
+            else:
+                print(f"[ERROR] Failed to load JSON {path_str}: {e}", file=sys.stderr)
 
     def load_image_file(self, path_str):
         try:
@@ -980,7 +1035,10 @@ class PPGWorkbenchApp:
             self.update_plot()
             self.update_nav_ui()
         except Exception as e:
-            messagebox.showerror("Error Loading Image", str(e))
+            if not getattr(self, "silent_mode", False):
+                messagebox.showerror("Error Loading Image", str(e))
+            else:
+                print(f"[ERROR] Error Loading Image {path_str}: {e}", file=sys.stderr)
 
     def update_nav_ui(self):
         if not self.image_list:
@@ -1069,8 +1127,16 @@ class PPGWorkbenchApp:
                     cv2.fillPoly(full_mask, [pts_arr], 1)
             clean_mask = (full_mask > 0)
         else:
-            bg_map = np.full_like(self.foot_patch_raw, bg_val)
-            bg_map[int(H * 0.75):, :] = bg_val + 1.2
+            is_celsius = float(np.max(self.foot_patch_raw)) < 100.0
+            if is_celsius:
+                p85 = float(np.percentile(self.foot_patch_raw, 85))
+                p25 = float(np.percentile(self.foot_patch_raw, 25))
+                effective_bg = bg_val if (p25 < bg_val < p85) else (p25 + 0.4 * (p85 - p25))
+                bg_map = np.full_like(self.foot_patch_raw, effective_bg)
+                bg_map[int(H * 0.75):, :] = effective_bg + min(1.2, (p85 - effective_bg) * 0.3)
+            else:
+                effective_bg = max(25.5, float(np.percentile(self.foot_patch_raw, 35)))
+                bg_map = np.full_like(self.foot_patch_raw, effective_bg)
             binary_cand = (self.foot_patch_raw > bg_map).astype(np.uint8)
 
             num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_cand)
@@ -1114,9 +1180,21 @@ class PPGWorkbenchApp:
 
         self.mask_dense = cv2.resize(self.mask_crop_u8, (self.n_cols, self.n_rows), interpolation=cv2.INTER_NEAREST).astype(bool)
 
-        # Inward Inpainting to eliminate boundary cliff
-        mask_inv = (self.mask_crop_u8 == 0).astype(np.uint8)
-        crop_inpainted = cv2.inpaint(np.clip(self.foot_crop, 0, 255).astype(np.uint8), mask_inv, 7, cv2.INPAINT_TELEA).astype(np.float32)
+        # Inward Inpainting to eliminate boundary cliff while strictly preserving float32 precision inside foot (BUG-1.2)
+        mask_inside = (self.mask_crop_u8 > 0)
+        mask_inv = (~mask_inside).astype(np.uint8)
+
+        if np.any(mask_inv):
+            c_min = float(self.foot_crop[mask_inside].min()) if np.any(mask_inside) else float(self.foot_crop.min())
+            c_max = float(self.foot_crop[mask_inside].max()) if np.any(mask_inside) else float(self.foot_crop.max())
+            denom = max(1e-4, c_max - c_min)
+            norm_u8 = np.clip((self.foot_crop - c_min) / denom * 255.0, 0, 255).astype(np.uint8)
+            crop_inp_u8 = cv2.inpaint(norm_u8, mask_inv, 7, cv2.INPAINT_TELEA)
+            crop_inpainted = self.foot_crop.copy().astype(np.float32)
+            crop_inpainted[~mask_inside] = (c_min + (crop_inp_u8.astype(np.float32) / 255.0) * denom)[~mask_inside]
+        else:
+            crop_inpainted = self.foot_crop.copy().astype(np.float32)
+
         grid_inpainted = cv2.resize(crop_inpainted, (self.n_cols, self.n_rows), interpolation=cv2.INTER_AREA)
 
         # Smooth & Gradients
@@ -1124,6 +1202,8 @@ class PPGWorkbenchApp:
         self.sobel_x = cv2.Sobel(self.grid_smooth, cv2.CV_64F, 1, 0, ksize=3) / 8.0
         self.sobel_y = cv2.Sobel(self.grid_smooth, cv2.CV_64F, 0, 1, ksize=3) / 8.0
         self.grad_mag = np.sqrt(self.sobel_x**2 + self.sobel_y**2)
+        # BUG-1.1: Compass orientation angle (positive y is UP / North / Toes)
+        self.grad_angles = np.degrees(np.arctan2(-self.sobel_y, self.sobel_x)) % 360.0
 
         self.grid_contour = self.grid_smooth.astype(np.float64)
         self.grid_contour[~self.mask_dense] = np.nan
@@ -1354,12 +1434,14 @@ class PPGWorkbenchApp:
 
     def get_mapped_rois(self, filtered=False):
         mapped = []
-        if not self.rois_data:
+        rois_source = self.rois_data
+        if not rois_source:
             if self.foot_side == "RightFoot":
                 defs = [("T1", 0.61, 0.16), ("M1", 0.61, 0.33), ("M2", 0.44, 0.33)]
             else:
                 defs = [("T1", 0.39, 0.16), ("M1", 0.39, 0.33), ("M2", 0.56, 0.33)]
 
+            rois_source = []
             for name, fx, fy in defs:
                 px = self.offset_x + self.xmin + fx * self.cw
                 py = self.ymin + fy * self.ch
@@ -1373,16 +1455,30 @@ class PPGWorkbenchApp:
                     "color": "#ff4444" if name == "M1" else ("#00e5ff" if name == "M2" else "#44ff44"),
                     "points": []
                 }
-                self.rois_data.append(r_obj)
+                rois_source.append(r_obj)
+            # BUG-3.9: DO NOT mutate self.rois_data with empty points!
 
-        for r in self.rois_data:
+        for r in rois_source:
             if not isinstance(r, dict):
                 continue
             name = str(r.get("labelName", r.get("name", "ROI"))).upper()
             if filtered and not self.is_label_visible(name):
                 continue
-            rcx = float(r.get("cx", (r.get("points") or [{}])[0].get("x", 0))) - self.offset_x - self.xmin
-            rcy = float(r.get("cy", (r.get("points") or [{}])[0].get("y", 0))) - self.ymin
+            if "cx" in r and "cy" in r and r["cx"] is not None and r["cy"] is not None:
+                raw_cx = float(r["cx"])
+                raw_cy = float(r["cy"])
+            else:
+                pts = r.get("points") or []
+                valid_pts = [p for p in pts if isinstance(p, dict) and "x" in p and "y" in p]
+                if valid_pts:
+                    raw_cx = float(np.mean([p["x"] for p in valid_pts]))
+                    raw_cy = float(np.mean([p["y"] for p in valid_pts]))
+                else:
+                    raw_cx = float(self.offset_x + self.xmin + 0.5 * self.cw)
+                    raw_cy = float(self.ymin + 0.5 * self.ch)
+
+            rcx = raw_cx - self.offset_x - self.xmin
+            rcy = raw_cy - self.ymin
             gx = (rcx / self.cw) * self.n_cols + 0.5
             gy = (rcy / self.ch) * self.n_rows + 0.5
             r_final = 4.5
@@ -1466,7 +1562,11 @@ class PPGWorkbenchApp:
 
             # 4. Burn to new active result directory if loaded from backup/result folder
             active_img_dir = Path(self.image_path).parent if self.image_path else target_file.parent
-            new_result_dir = active_img_dir.parent / f"{active_img_dir.name}_result"
+            # BUG-3.2: Strip trailing _result to avoid _result_result nesting
+            clean_parent_name = active_img_dir.name
+            while clean_parent_name.lower().endswith("_result"):
+                clean_parent_name = clean_parent_name[:-7]
+            new_result_dir = active_img_dir.parent / f"{clean_parent_name}_result"
             if "_result" in str(target_file).lower() or active_img_dir.name != target_file.parent.name:
                 try:
                     new_result_dir.mkdir(parents=True, exist_ok=True)
@@ -1478,9 +1578,13 @@ class PPGWorkbenchApp:
                 except Exception as e:
                     print(f"Notice: could not copy to new result dir: {e}")
 
-            messagebox.showinfo("Session Saved", msg)
+            if not getattr(self, "silent_mode", False):
+                messagebox.showinfo("Session Saved", msg)
         except Exception as e:
-            messagebox.showerror("Save Error", f"Could not save JSON file:\n{e}")
+            if not getattr(self, "silent_mode", False):
+                messagebox.showerror("Save Error", f"Could not save JSON file:\n{e}")
+            else:
+                print(f"[ERROR] Could not save JSON file: {e}", file=sys.stderr)
 
 
     # ──────── TARGETED PIPELINE RECOMPUTATION & STATISTICAL EXCEL EXPORT ────────
@@ -1499,12 +1603,18 @@ class PPGWorkbenchApp:
         4. Saves updated annotations_session.json to result directory
         """
         if not self.image_list:
-            if not silent:
+            if not silent and not getattr(self, "silent_mode", False):
                 messagebox.showwarning("No Images", "Please load a session JSON or image folder first.")
-            return
+            else:
+                print("[ERROR] No Images: Please load a session JSON or image folder first.", file=sys.stderr)
+            return False
 
         active_img_dir = Path(self.image_path).parent if self.image_path else Path(self.image_list[0]).parent
-        result_dir = active_img_dir.parent / f"{active_img_dir.name}_result"
+        # BUG-3.2: Strip trailing _result to avoid _result_result nesting
+        clean_name = active_img_dir.name
+        while clean_name.lower().endswith("_result"):
+            clean_name = clean_name[:-7]
+        result_dir = active_img_dir.parent / f"{clean_name}_result"
         result_dir.mkdir(parents=True, exist_ok=True)
 
         detailed_rows = []
@@ -1596,8 +1706,16 @@ class PPGWorkbenchApp:
                     clean_mask = np.zeros_like(foot_patch, dtype=bool)
                     clean_mask[self.ymin:self.ymin+self.ch, self.xmin:self.xmin+self.cw] = (self.mask_crop_u8 > 0)
                 else:
-                    bg_map = np.full_like(foot_patch, bg_val)
-                    bg_map[int(H * 0.75):, :] = bg_val + 1.2
+                    is_celsius = float(np.max(foot_patch)) < 100.0
+                    if is_celsius:
+                        p85 = float(np.percentile(foot_patch, 85))
+                        p25 = float(np.percentile(foot_patch, 25))
+                        effective_bg = bg_val if (p25 < bg_val < p85) else (p25 + 0.4 * (p85 - p25))
+                        bg_map = np.full_like(foot_patch, effective_bg)
+                        bg_map[int(H * 0.75):, :] = effective_bg + min(1.2, (p85 - effective_bg) * 0.3)
+                    else:
+                        effective_bg = max(25.5, float(np.percentile(foot_patch, 35)))
+                        bg_map = np.full_like(foot_patch, effective_bg)
                     binary_cand = (foot_patch > bg_map).astype(np.uint8)
                     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_cand)
                     if num_labels > 1:
@@ -1628,17 +1746,30 @@ class PPGWorkbenchApp:
                 n_rows = 104
                 n_cols = max(20, int(round(n_rows * aspect)))
 
-                # Inpaint & Gradients
+                # Inpaint & Gradients (BUG-1.2: strictly preserve float32 inside foot mask)
                 mask_dense = cv2.resize(mask_crop_u8, (n_cols, n_rows), interpolation=cv2.INTER_NEAREST).astype(bool)
-                mask_inv = (mask_crop_u8 == 0).astype(np.uint8)
-                crop_inp = cv2.inpaint(np.clip(foot_crop, 0, 255).astype(np.uint8), mask_inv, 7, cv2.INPAINT_TELEA).astype(np.float32)
+                mask_inside = (mask_crop_u8 > 0)
+                mask_inv = (~mask_inside).astype(np.uint8)
+
+                if np.any(mask_inv):
+                    c_min = float(foot_crop[mask_inside].min()) if np.any(mask_inside) else float(foot_crop.min())
+                    c_max = float(foot_crop[mask_inside].max()) if np.any(mask_inside) else float(foot_crop.max())
+                    denom = max(1e-4, c_max - c_min)
+                    norm_u8 = np.clip((foot_crop - c_min) / denom * 255.0, 0, 255).astype(np.uint8)
+                    crop_inp_u8 = cv2.inpaint(norm_u8, mask_inv, 7, cv2.INPAINT_TELEA)
+                    crop_inp = foot_crop.copy().astype(np.float32)
+                    crop_inp[~mask_inside] = (c_min + (crop_inp_u8.astype(np.float32) / 255.0) * denom)[~mask_inside]
+                else:
+                    crop_inp = foot_crop.copy().astype(np.float32)
+
                 grid_inp = cv2.resize(crop_inp, (n_cols, n_rows), interpolation=cv2.INTER_AREA)
                 grid_smooth = cv2.GaussianBlur(grid_inp, (7, 7), 1.8)
 
                 sobel_x = cv2.Sobel(grid_smooth, cv2.CV_64F, 1, 0, ksize=3) / 8.0
                 sobel_y = cv2.Sobel(grid_smooth, cv2.CV_64F, 0, 1, ksize=3) / 8.0
                 grad_mag = np.sqrt(sobel_x**2 + sobel_y**2)
-                grad_angles = np.degrees(np.arctan2(sobel_y, sobel_x)) % 360.0
+                # BUG-1.1: Invert y derivative for compass angle (positive y is UP / North / Toes)
+                grad_angles = np.degrees(np.arctan2(-sobel_y, sobel_x)) % 360.0
 
                 # Map ROIs
                 mapped_rois = []
@@ -1654,47 +1785,94 @@ class PPGWorkbenchApp:
                         if not isinstance(r, dict):
                             continue
                         name = str(r.get("labelName", r.get("name", "ROI"))).upper()
-                        rcx = float(r.get("cx", (r.get("points") or [{}])[0].get("x", 0))) - off_x - xmin
-                        rcy = float(r.get("cy", (r.get("points") or [{}])[0].get("y", 0))) - ymin
+                        if "cx" in r and "cy" in r and r["cx"] is not None and r["cy"] is not None:
+                            raw_cx = float(r["cx"])
+                            raw_cy = float(r["cy"])
+                        else:
+                            pts = r.get("points") or []
+                            valid_pts = [p for p in pts if isinstance(p, dict) and "x" in p and "y" in p]
+                            if valid_pts:
+                                raw_cx = float(np.mean([p["x"] for p in valid_pts]))
+                                raw_cy = float(np.mean([p["y"] for p in valid_pts]))
+                            else:
+                                raw_cx = float(off_x + xmin + 0.5 * cw)
+                                raw_cy = float(ymin + 0.5 * ch)
+                        rcx = raw_cx - off_x - xmin
+                        rcy = raw_cy - ymin
                         gx = (rcx / cw) * n_cols + 0.5
                         gy = (rcy / ch) * n_rows + 0.5
                         r_rad = 4.5
                         mapped_rois.append((name, gx, gy, r_rad))
 
-                # Extract 9x9 zone statistics for each ROI
+                # Extract 9x9 zone statistics for each ROI (BUG-1.8: mask with mask_dense & fix 0.5 offset)
                 for name, gx, gy, r_rad in mapped_rois:
-                    gx_min = max(0, int(round(gx - r_rad)))
-                    gx_max = min(n_cols, int(round(gx + r_rad)) + 1)
-                    gy_min = max(0, int(round(gy - r_rad)))
-                    gy_max = min(n_rows, int(round(gy + r_rad)) + 1)
+                    # Convert matplotlib +0.5 coordinate to 0-based numpy integer indices
+                    cx_idx = int(np.clip(round(gx - 0.5), 0, n_cols - 1))
+                    cy_idx = int(np.clip(round(gy - 0.5), 0, n_rows - 1))
 
-                    roi_temps = grid_smooth[gy_min:gy_max, gx_min:gx_max]
-                    roi_mags = grad_mag[gy_min:gy_max, gx_min:gx_max]
-                    roi_angs = grad_angles[gy_min:gy_max, gx_min:gx_max]
+                    # 9x9 box bounds: +/- 4 cells
+                    gx_min = max(0, cx_idx - 4)
+                    gx_max = min(n_cols, cx_idx + 5)
+                    gy_min = max(0, cy_idx - 4)
+                    gy_max = min(n_rows, cy_idx + 5)
 
-                    if roi_temps.size > 0:
-                        ppp_mean = float(np.mean(roi_temps))
-                        ppp_peak = float(np.max(roi_temps))
-                        ppp_min = float(np.min(roi_temps))
-                        ppp_std = float(np.std(roi_temps))
+                    patch_temps = grid_smooth[gy_min:gy_max, gx_min:gx_max]
+                    patch_mags = grad_mag[gy_min:gy_max, gx_min:gx_max]
+                    patch_angs = grad_angles[gy_min:gy_max, gx_min:gx_max]
+                    patch_mask = mask_dense[gy_min:gy_max, gx_min:gx_max]
 
-                        ppg_mean = float(np.mean(roi_mags))
-                        ppg_peak = float(np.max(roi_mags))
-                        ppg_std = float(np.std(roi_mags))
+                    # BUG-1.8: MUST MASK WITH mask_dense! Only include pixels where mask_dense is True!
+                    roi_temps = patch_temps[patch_mask]
+                    roi_mags = patch_mags[patch_mask]
+                    roi_angs = patch_angs[patch_mask]
 
-                        ang_rads = np.radians(roi_angs.flatten())
-                        C_sum = np.sum(np.cos(ang_rads))
-                        S_sum = np.sum(np.sin(ang_rads))
-                        N_pts = len(ang_rads)
+                    # If no pixels in 9x9 box are inside foot mask, fallback to centroid or nearest foot tissue
+                    if roi_temps.size == 0:
+                        if mask_dense[cy_idx, cx_idx]:
+                            roi_temps = np.array([grid_smooth[cy_idx, cx_idx]])
+                            roi_mags = np.array([grad_mag[cy_idx, cx_idx]])
+                            roi_angs = np.array([grad_angles[cy_idx, cx_idx]])
+                        else:
+                            ys_dense, xs_dense = np.where(mask_dense)
+                            if len(ys_dense) > 0:
+                                dists = (ys_dense - cy_idx)**2 + (xs_dense - cx_idx)**2
+                                best_idx = np.argmin(dists)
+                                ny, nx = ys_dense[best_idx], xs_dense[best_idx]
+                                roi_temps = np.array([grid_smooth[ny, nx]])
+                                roi_mags = np.array([grad_mag[ny, nx]])
+                                roi_angs = np.array([grad_angles[ny, nx]])
+                            else:
+                                roi_temps = np.array([grid_smooth[cy_idx, cx_idx]])
+                                roi_mags = np.array([grad_mag[cy_idx, cx_idx]])
+                                roi_angs = np.array([grad_angles[cy_idx, cx_idx]])
+
+                    ppp_mean = float(np.mean(roi_temps))
+                    ppp_peak = float(np.max(roi_temps))
+                    ppp_min = float(np.min(roi_temps))
+                    ppp_std = float(np.std(roi_temps))
+
+                    ppg_mean = float(np.mean(roi_mags))
+                    ppg_peak = float(np.max(roi_mags))
+                    ppg_std = float(np.std(roi_mags))
+
+                    ang_rads = np.radians(roi_angs.flatten())
+                    mags = roi_mags.flatten()
+                    mags_sum = float(np.sum(mags))
+                    if mags_sum > 1e-6:
+                        C_sum = float(np.sum(mags * np.cos(ang_rads)))
+                        S_sum = float(np.sum(mags * np.sin(ang_rads)))
                         mean_ang = float(np.degrees(np.arctan2(S_sum, C_sum))) % 360.0
-                        R_len = np.sqrt(C_sum**2 + S_sum**2) / max(1, N_pts)
+                        R_len = np.sqrt(C_sum**2 + S_sum**2) / mags_sum
                         coherence_pct = float(R_len * 100.0)
-                        compass_dir = get_compass_dir(mean_ang, is_right)
                     else:
-                        ppp_mean = ppp_peak = ppp_min = ppp_std = 0.0
-                        ppg_mean = ppg_peak = ppg_std = 0.0
-                        mean_ang = coherence_pct = 0.0
-                        compass_dir = "N"
+                        C_sum = float(np.sum(np.cos(ang_rads)))
+                        S_sum = float(np.sum(np.sin(ang_rads)))
+                        N_pts = max(1, len(ang_rads))
+                        mean_ang = float(np.degrees(np.arctan2(S_sum, C_sum))) % 360.0
+                        R_len = np.sqrt(C_sum**2 + S_sum**2) / N_pts
+                        coherence_pct = float(R_len * 100.0)
+
+                    compass_dir = get_compass_dir(mean_ang, is_right)
 
                     detailed_rows.append({
                         "Image_Name": stem,
@@ -1849,8 +2027,9 @@ class PPGWorkbenchApp:
             f"Would you like to open the result folder now?"
         )
         print(f"[RECOMPUTE SUCCESS] Generated Excel and metrics in {result_dir}")
-        if not silent and messagebox.askyesno("Recomputation Complete", summary_msg):
-            os.startfile(str(result_dir))
+        if not silent and not getattr(self, "silent_mode", False) and messagebox.askyesno("Recomputation Complete", summary_msg):
+            open_folder(result_dir)
+        return True
 
     # ──────── U-NET DATASET EXPORTER ────────
     def export_unet_dataset(self):
@@ -1950,10 +2129,14 @@ if __name__ == "__main__":
     root = tk.Tk()
     if args.export_metrics:
         root.withdraw()
-        app = PPGWorkbenchApp(root, session_arg=args.session, image_arg=args.image)
-        app.recompute_and_export_all_metrics(silent=True)
+        app = PPGWorkbenchApp(root, session_arg=args.session, image_arg=args.image, silent_mode=True)
+        try:
+            success = app.recompute_and_export_all_metrics(silent=True)
+        except Exception as ex:
+            print(f"[FATAL RECOMPUTE ERROR] {ex}", file=sys.stderr)
+            success = False
         root.destroy()
-        sys.exit(0)
+        sys.exit(0 if success else 1)
     else:
         app = PPGWorkbenchApp(root, session_arg=args.session, image_arg=args.image)
         root.mainloop()

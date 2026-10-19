@@ -72,8 +72,11 @@ if (typeof window !== 'undefined') {
 
 const toFileUrl = (p) => {
   if (!p) return '';
-  if (p.startsWith('data:') || p.startsWith('blob:') || p.startsWith('http') || p.startsWith('file:')) return p;
+  if (p.startsWith('data:') || p.startsWith('blob:') || p.startsWith('http') || p.startsWith('file:') || p.startsWith('atom:') || p.startsWith('local-file:')) return p;
   const s = p.replace(/\\/g, '/');
+  if (typeof window !== 'undefined' && window.electronAPI) {
+    return `atom://${encodeURI(s)}`;
+  }
   const driveMatch = s.match(/^([a-zA-Z]:)(.*)/);
   if (driveMatch) {
     const drive = driveMatch[1]; // e.g. "D:"
@@ -256,7 +259,7 @@ export default function App() {
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
-    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.8.3 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
+    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.8.4 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
   ]);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const terminalEndRef = useRef(null);
@@ -759,7 +762,11 @@ export default function App() {
         }
 
         if (names.length > 0) {
-          names.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+          names.sort((a, b) => {
+            const strA = typeof a === 'string' ? a : (a?.name || String(a || ''));
+            const strB = typeof b === 'string' ? b : (b?.name || String(b || ''));
+            return strA.localeCompare(strB, undefined, { numeric: true, sensitivity: 'base' });
+          });
           setFileObjMap(prev => ({ ...prev, ...fMap }));
           setImageList(names);
           setFolderPath(zipFile.name.replace(/\.[^/.]+$/, ''));
@@ -1572,7 +1579,7 @@ export default function App() {
               roi
             );
           } else {
-            res = await api.cropLabels(imgPath, roi.points, roi.labelName, i + 1, isolatedDir);
+            res = await api.cropLabels(imgPath, roi.points, roi.labelName, i + 1, isolatedDir, imgScale);
           }
 
           if (!aggregatedStats[roi.labelName]) aggregatedStats[roi.labelName] = [];
@@ -2372,7 +2379,7 @@ export default function App() {
           <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
             <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
             <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.8.3 (Web & Desktop)</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.8.4 (Web & Desktop)</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
@@ -2642,7 +2649,7 @@ export default function App() {
         <div className="header-brand">
           <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.8.3' : 'v1.8.3'}</span>
+          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.8.4' : 'v1.8.4'}</span>
         </div>
         <div className="header-actions">
           {appMode === 'bulk' && imageList.length > 0 && (

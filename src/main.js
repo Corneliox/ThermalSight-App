@@ -1,8 +1,32 @@
-// src/main.js
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, protocol, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn, execSync, execFileSync } = require('child_process');
+const { pathToFileURL } = require('url');
+
+// Register privileged schemes for secure local resource loading
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'atom',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      bypassCSP: true,
+      stream: true,
+    },
+  },
+  {
+    scheme: 'local-file',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      bypassCSP: true,
+      stream: true,
+    },
+  },
+]);
 
 let mainWindow;
 
@@ -145,7 +169,7 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
-      webSecurity: false,
+      webSecurity: true,
     },
   });
 
@@ -180,6 +204,29 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // Handle custom protocols for local file streaming securely under webSecurity: true
+  protocol.handle('atom', (request) => {
+    try {
+      const p = decodeURIComponent(request.url.replace(/^atom:\/\/?\/?/, ''));
+      const resolvedPath = (process.platform === 'win32' && /^[a-zA-Z]:/.test(p)) ? p : '/' + p;
+      return net.fetch(pathToFileURL(resolvedPath).toString());
+    } catch (err) {
+      console.error('atom protocol error:', err);
+      return new Response('File not found', { status: 404 });
+    }
+  });
+
+  protocol.handle('local-file', (request) => {
+    try {
+      const p = decodeURIComponent(request.url.replace(/^local-file:\/\/?\/?/, ''));
+      const resolvedPath = (process.platform === 'win32' && /^[a-zA-Z]:/.test(p)) ? p : '/' + p;
+      return net.fetch(pathToFileURL(resolvedPath).toString());
+    } catch (err) {
+      console.error('local-file protocol error:', err);
+      return new Response('File not found', { status: 404 });
+    }
+  });
+
   if (process.platform === 'darwin') {
     try {
       const backendDir = path.join(process.resourcesPath, 'backend');
@@ -193,6 +240,39 @@ app.whenReady().then(() => {
   }
   createWindow();
 });
+
+// ── helper: resolve Python executable (prioritizing venv with flyr/pandas) ───
+function resolvePythonExecutable() {
+  const isWin = process.platform === 'win32';
+  const pyExeName = isWin ? 'python.exe' : 'python3';
+  const pyFallback = isWin ? 'python' : 'python3';
+
+  // Candidate directories for local virtual environments
+  const candidateDirs = [
+    path.join(__dirname, '..', 'backend', 'venv'),
+    path.join(__dirname, '..', '.venv'),
+    path.join(__dirname, '..', 'venv'),
+    path.join(__dirname, '..', 'backend', '.venv'),
+    path.join(process.resourcesPath, 'venv'),
+    path.join(process.resourcesPath, 'backend', 'venv'),
+  ];
+
+  for (const cDir of candidateDirs) {
+    const binSub = isWin ? 'Scripts' : 'bin';
+    const pyPath = path.join(cDir, binSub, pyExeName);
+    if (fs.existsSync(pyPath)) {
+      return pyPath;
+    }
+  }
+
+  // Also check packaged Python if bundled
+  if (app.isPackaged) {
+    const bundledPy = path.join(process.resourcesPath, 'backend', pyExeName);
+    if (fs.existsSync(bundledPy)) return bundledPy;
+  }
+
+  return pyFallback;
+}
 
 // ── helper: resolve the Python executable / script path ──────────────────────
 function getBackendArgs(command, extraArgs) {
@@ -220,9 +300,10 @@ function getBackendArgs(command, extraArgs) {
 
     return { executable: exePath, args: [command, ...extraArgs] };
   } else {
-    // Development: run the Python script directly
+    // Development: run the Python script directly using resolved Python
+    const pyExe = resolvePythonExecutable();
     return {
-      executable: 'python',
+      executable: pyExe,
       args: [path.join(__dirname, '..', 'backend', 'analyzer.py'), command, ...extraArgs],
     };
   }
@@ -343,14 +424,16 @@ ipcMain.handle('measure-star', async (_event, imagePath, cx, cy, dist_cm, rotati
 });
 
 // ── IPC: crop-labels ──────────────────────────────────────────────────────────
-ipcMain.handle('crop-labels', async (_event, imagePath, roiPoints, labelName, roiIndex, outputDir) => {
+ipcMain.handle('crop-labels', async (_event, imagePath, roiPoints, labelName, roiIndex, outputDir, pxPerCm) => {
   const pointsJson = JSON.stringify(roiPoints);
+  const pxScale = (pxPerCm !== undefined && pxPerCm !== null && !isNaN(Number(pxPerCm))) ? String(pxPerCm) : '10.0';
   const res = await runPython('crop', [
     imagePath,
     pointsJson,
     labelName,
     String(roiIndex),
     outputDir,
+    pxScale,
   ]);
 
   if (res && res.status === 'ok') {
@@ -642,7 +725,7 @@ ipcMain.handle('open-ppg-workbench', async (_event, sessionJsonPath, activeImage
     args.push('--image', activeImagePath);
   }
 
-  const pyExe = process.platform === 'win32' ? 'python' : 'python3';
+  const pyExe = resolvePythonExecutable();
   sendLogToRenderer('info', `[PPG LAB] Launching: ${pyExe} "${workbenchScript}"`);
   try {
     const child = spawn(pyExe, args, {
@@ -653,6 +736,12 @@ ipcMain.handle('open-ppg-workbench', async (_event, sessionJsonPath, activeImage
       console.error('Failed to launch PPG Workbench:', err);
       sendLogToRenderer('error', `[PPG LAB ERROR] Could not start Python process (${pyExe}): ${err.message}. Please verify Python is installed in PATH.`);
     });
+    // Drain stdout to prevent OS pipe buffer saturation (64KB buffer deadlock)
+    child.stdout?.on('data', (d) => {
+      const msg = d.toString().trim();
+      if (msg) sendLogToRenderer('info', `[PPG Lab] ${msg}`);
+    });
+    // Drain stderr to prevent OS pipe buffer saturation (64KB buffer deadlock)
     child.stderr?.on('data', (d) => {
       const msg = d.toString().trim();
       if (msg) sendLogToRenderer('warning', `[PPG Lab] ${msg}`);
@@ -733,7 +822,16 @@ ipcMain.handle('open-external', async (_event, url) => {
 
 ipcMain.handle('save-file', async (_event, filePath, content) => {
   try {
+    if (!filePath || typeof filePath !== 'string') {
+      return { error: 'Invalid file path' };
+    }
     const resolved = path.resolve(filePath);
+    const parsed = path.parse(resolved);
+    const root = parsed.root;
+    // Security check: block saving to root or system directories
+    if (resolved === root || path.dirname(resolved) === root) {
+      return { error: 'Access denied: cannot write to system root directory' };
+    }
     const dir = path.dirname(resolved);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
@@ -751,12 +849,16 @@ ipcMain.handle('save-file', async (_event, filePath, content) => {
 
 ipcMain.handle('export-result-package', async (_event, resultDir, filesMap) => {
   try {
-    if (!fs.existsSync(resultDir)) fs.mkdirSync(resultDir, { recursive: true });
+    const resolvedResultDir = path.resolve(resultDir);
+    if (!fs.existsSync(resolvedResultDir)) fs.mkdirSync(resolvedResultDir, { recursive: true });
+
+    const targetBaseWithSep = resolvedResultDir.endsWith(path.sep) ? resolvedResultDir : resolvedResultDir + path.sep;
 
     for (const [relPath, content] of Object.entries(filesMap)) {
       // Security: validate relPath does not escape resultDir
-      const fullPath = path.resolve(resultDir, relPath);
-      if (!fullPath.startsWith(path.resolve(resultDir))) {
+      const fullPath = path.resolve(resolvedResultDir, relPath);
+      const relative = path.relative(resolvedResultDir, fullPath);
+      if (relative.startsWith('..') || path.isAbsolute(relative) || !fullPath.startsWith(targetBaseWithSep)) {
         sendLogToRenderer('error', `[SECURITY] Path traversal blocked: ${relPath}`);
         continue;
       }
@@ -769,7 +871,27 @@ ipcMain.handle('export-result-package', async (_event, resultDir, filesMap) => {
       }
     }
 
-    return { status: 'ok', path: resultDir };
+    return { status: 'ok', path: resolvedResultDir };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle('delete-result-folder', async (_event, folderPath) => {
+  try {
+    if (!folderPath || typeof folderPath !== 'string') return { error: 'Invalid folder path' };
+    const resolved = path.resolve(folderPath);
+    const parsed = path.parse(resolved);
+    if (resolved === parsed.root || path.dirname(resolved) === parsed.root) {
+      return { error: 'Access denied: cannot delete system root directory' };
+    }
+    if (!/_[rR]esult|_isolated_labels/i.test(path.basename(resolved))) {
+      return { error: 'Access denied: can only delete result folders' };
+    }
+    if (fs.existsSync(resolved)) {
+      fs.rmSync(resolved, { recursive: true, force: true });
+    }
+    return { status: 'ok' };
   } catch (e) {
     return { error: e.message };
   }
@@ -785,10 +907,21 @@ ipcMain.handle('export-ppg-summary', async (_event, resultDir) => {
     const workbenchScript = app.isPackaged
       ? path.join(process.resourcesPath, 'ppg_workbench.py')
       : path.join(__dirname, '..', 'ppg_workbench.py');
-    const pyExe = process.platform === 'win32' ? 'python' : 'python3';
+    const pyExe = resolvePythonExecutable();
     return new Promise((resolve) => {
       const child = spawn(pyExe, [workbenchScript, '--session', jsonPath, '--export-metrics'], {
         windowsHide: true,
+        stdio: 'pipe',
+      });
+      // Drain stdout to prevent 64KB OS pipe buffer deadlock
+      child.stdout?.on('data', (d) => {
+        const msg = d.toString().trim();
+        if (msg) sendLogToRenderer('info', `[PPG AUTO-EXPORT] ${msg}`);
+      });
+      // Drain stderr to prevent 64KB OS pipe buffer deadlock
+      child.stderr?.on('data', (d) => {
+        const msg = d.toString().trim();
+        if (msg) sendLogToRenderer('warning', `[PPG AUTO-EXPORT] ${msg}`);
       });
       child.on('close', (code) => {
         sendLogToRenderer('info', `[PPG AUTO-EXPORT] Exit code ${code}`);
