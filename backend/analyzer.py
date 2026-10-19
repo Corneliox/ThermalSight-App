@@ -826,7 +826,7 @@ def cmd_star(image_path: str, cx: float, cy: float,
 
 
 def cmd_crop(image_path: str, points_json_str: str, label_name: str,
-             roi_index_str: str, out_dir_str: str):
+             roi_index_str: str, out_dir_str: str, px_cm: float = 10.0):
     out_dir = Path(out_dir_str)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = Path(image_path).stem
@@ -906,7 +906,8 @@ def cmd_crop(image_path: str, points_json_str: str, label_name: str,
     cx = float(np.mean(pts_arr[:, 0]))
     cy = float(np.mean(pts_arr[:, 1]))
     rad_px = float(max(5.0, min(rw, rh) / 2.0))
-    dist_cm = rad_px / 10.0 # default fallback scale 10 px/cm if uncalibrated
+    effective_scale = float(px_cm) if (px_cm and float(px_cm) > 0) else 10.0
+    dist_cm = rad_px / effective_scale
 
     star_data = compute_star(temp, cx, cy, rad_px, 0.0)
     dom = max(COMPASS, key=lambda nd: abs(star_data["points"][nd[0]]["diff"]))[0]
@@ -1640,13 +1641,15 @@ if __name__ == "__main__":
 
     elif command == "crop":
         if len(sys.argv) < 7:
-            fail("Usage: analyzer.py crop <imagePath> <pointsJson> <labelName> <roiIndex> <outputDir>")
+            fail("Usage: analyzer.py crop <imagePath> <pointsJson> <labelName> <roiIndex> <outputDir> [pxPerCm]")
+        px_scale = float(sys.argv[7]) if len(sys.argv) >= 8 else 10.0
         cmd_crop(
             image_path      = sys.argv[2],
             points_json_str = sys.argv[3],
             label_name      = sys.argv[4],
             roi_index_str   = sys.argv[5],
             out_dir_str     = sys.argv[6],
+            px_cm           = px_scale,
         )
 
     elif command == "gradient_scene":
@@ -1670,6 +1673,23 @@ if __name__ == "__main__":
             grid_mode_str = grid_mode,
         )
 
+    elif command == "export_ppg_summary":
+        if len(sys.argv) < 3:
+            fail("Usage: analyzer.py export_ppg_summary <sessionJsonPath>")
+        session_json_path = sys.argv[2]
+        root_dir = Path(__file__).resolve().parent.parent
+        if str(root_dir) not in sys.path:
+            sys.path.insert(0, str(root_dir))
+        import tkinter as tk
+        import ppg_workbench
+        root = tk.Tk()
+        root.withdraw()
+        wb_app = ppg_workbench.PPGWorkbenchApp(root, session_arg=session_json_path, silent_mode=True)
+        ok = wb_app.recompute_and_export_all_metrics(silent=True)
+        root.destroy()
+        emit({"status": "ok" if ok else "error"})
+
     else:
-        fail(f"Unknown command: {command}. Use 'analyze', 'star', 'crop', 'gradient_scene', or 'plantar_fig1'.")
+        fail(f"Unknown command: {command}. Use 'analyze', 'star', 'crop', 'gradient_scene', 'plantar_fig1', or 'export_ppg_summary'.")
+
 

@@ -2,10 +2,10 @@
 ## ThermalSight Release v1.8.3
 
 - **Tanggal Audit & Validasi Silang**: 19 Oktober 2026
-- **Target Versi**: `v1.8.3` (Commit Tag Remote: `08b28d2`, Commit Local HEAD: `aac73e9`)
+- **Target Versi**: `v1.8.3` $\rightarrow$ **Tuntas Diperbaiki di `v1.8.4`**
 - **Repositori**: `Corneliox/ThermalSight-App`
-- **Tingkat Keparahan Global**: 🔴 **KRITIS (Anomali Suhu > 100°C, Data Integrity Corruption, Scientific Math Flaws, Process Deadlock & Web/UI Runtime Crashes)**
-- **Total Temuan Tervalidasi**: **25 Cacat Perangkat Lunak** (10 Temuan Awal `bugfound_v1_8_3.md` [100% Valid] + 15 Temuan Baru Hasil Audit Kode Sumber & Bukti Empiris Output `FLIR0426`/`FLIR0428`)
+- **Tingkat Keparahan Global**: 🟢 **RESOLVED (Seluruh 25 Bug & Anomali Suhu > 100°C Telah Diperbaiki & Lulus 9/9 Regression Tests di `backend/test_regression_v184.py`)**
+- **Total Temuan Tervalidasi & Diselesaikan**: **25/25 Cacat Perangkat Lunak (100% Fixed & Verified)**
 - **Panduan Eksekusi Lintas-Jendela & Ceklist Pengujian (QA)**: Lihat [`log/README.md`](./README.md)
 
 ---

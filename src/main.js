@@ -904,15 +904,28 @@ ipcMain.handle('export-ppg-summary', async (_event, resultDir) => {
     if (!fs.existsSync(jsonPath)) {
       return { error: 'annotations_session.json not found in result dir' };
     }
+    const { binPath } = getPackagedPaths();
+    if (app.isPackaged && fs.existsSync(binPath)) {
+      return await runPython('export_ppg_summary', [jsonPath]);
+    }
     const workbenchScript = app.isPackaged
       ? path.join(process.resourcesPath, 'ppg_workbench.py')
       : path.join(__dirname, '..', 'ppg_workbench.py');
     const pyExe = resolvePythonExecutable();
     return new Promise((resolve) => {
+      let settled = false;
       const child = spawn(pyExe, [workbenchScript, '--session', jsonPath, '--export-metrics'], {
         windowsHide: true,
         stdio: 'pipe',
       });
+      const safetyTimer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          try { child.kill(); } catch (_) {}
+          sendLogToRenderer('warning', '[PPG AUTO-EXPORT] Timed out after 60s');
+          resolve({ error: 'Export timed out after 60s', code: -1 });
+        }
+      }, 60000);
       // Drain stdout to prevent 64KB OS pipe buffer deadlock
       child.stdout?.on('data', (d) => {
         const msg = d.toString().trim();
@@ -924,12 +937,20 @@ ipcMain.handle('export-ppg-summary', async (_event, resultDir) => {
         if (msg) sendLogToRenderer('warning', `[PPG AUTO-EXPORT] ${msg}`);
       });
       child.on('close', (code) => {
-        sendLogToRenderer('info', `[PPG AUTO-EXPORT] Exit code ${code}`);
-        resolve({ status: code === 0 ? 'ok' : 'error', code });
+        clearTimeout(safetyTimer);
+        if (!settled) {
+          settled = true;
+          sendLogToRenderer('info', `[PPG AUTO-EXPORT] Exit code ${code}`);
+          resolve({ status: code === 0 ? 'ok' : 'error', code });
+        }
       });
       child.on('error', (err) => {
-        sendLogToRenderer('warning', `[PPG AUTO-EXPORT] Error: ${err.message}`);
-        resolve({ error: err.message });
+        clearTimeout(safetyTimer);
+        if (!settled) {
+          settled = true;
+          sendLogToRenderer('warning', `[PPG AUTO-EXPORT] Error: ${err.message}`);
+          resolve({ error: err.message });
+        }
       });
     });
   } catch (e) {

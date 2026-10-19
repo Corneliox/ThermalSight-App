@@ -1,5 +1,5 @@
 """
-ThermalSight PPG & PGA Interactive Workbench (v1.8.3)
+ThermalSight PPG & PGA Interactive Workbench (v1.8.4)
 Standalone companion tool for:
 1. Multi-image session carousel (Next / Prev / Dropdown navigation)
 2. Interactive foot mask paint & erase brush
@@ -26,7 +26,10 @@ import numpy as np
 import cv2
 import pandas as pd
 import matplotlib
-matplotlib.use("TkAgg")
+if "--export-metrics" in sys.argv:
+    matplotlib.use("Agg")
+else:
+    matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
@@ -71,6 +74,38 @@ except ImportError:
                 raise ValueError(f"Cannot load image: {p}")
             # Map 8-bit grayscale to physiological plantar range 20.0°C - 38.0°C (BUG-1.7)
             return (20.0 + (raw.astype(np.float32) / 255.0) * (38.0 - 20.0))
+
+
+def strip_result_suffix(folder_name: str) -> str:
+    """Recursively strips trailing _result suffixes to prevent _result_result nesting (BUG-3.2)."""
+    clean_name = str(folder_name)
+    while clean_name.lower().endswith("_result"):
+        clean_name = clean_name[:-7]
+    return clean_name
+
+
+COMPASS_LABELS_PLANTAR = [
+    (337.5, 360.0, "E (Lateral)", "E (Medial)"),
+    (0.0, 22.5, "E (Lateral)", "E (Medial)"),
+    (22.5, 67.5, "NE (Anterolateral)", "NE (Anteromedial)"),
+    (67.5, 112.5, "N (Distal / Toes / Ke Jari)", "N (Distal / Toes / Ke Jari)"),
+    (112.5, 157.5, "NW (Anteromedial)", "NW (Anterolateral)"),
+    (157.5, 202.5, "W (Medial)", "W (Lateral)"),
+    (202.5, 247.5, "SW (Posteromedial)", "SW (Posterolateral)"),
+    (247.5, 292.5, "S (Proximal / Heel / Ke Tumit)", "S (Proximal / Heel / Ke Tumit)"),
+    (292.5, 337.5, "SE (Posterolateral)", "SE (Posteromedial)"),
+]
+
+
+def get_compass_dir(deg: float, is_right: bool = True, is_right_foot: bool = None) -> str:
+    """Maps mathematical compass angle (90°=North/Toes, 270°=South/Heel) to anatomical label (BUG-1.1)."""
+    if is_right_foot is not None:
+        is_right = is_right_foot
+    deg = float(deg) % 360.0
+    for low, high, right_lbl, left_lbl in COMPASS_LABELS_PLANTAR:
+        if low <= deg < high:
+            return right_lbl if is_right else left_lbl
+    return "N (Distal / Toes / Ke Jari)"
 
 
 def enhance_excel_workbook(excel_path: Path):
@@ -201,13 +236,13 @@ def enhance_excel_workbook(excel_path: Path):
             else:
                 pga_circ_mean = 0.0
 
-            # Rows definition (BUG-1.4: Col D is formatted text, Col E is dynamic Excel formula / value)
+            # Rows definition (BUG-1.4: Col D is clean descriptive formula text, Col E is dynamic Excel formula / value)
             rows_data = [
                 (
                     "PPP (Mean Temp)",
                     "Berapa rata-rata suhu jaringan kulit pada area ROI?",
                     f"Kolom D (D2:D{data_end_row})",
-                    f"'=AVERAGE(D2:D{data_end_row})",
+                    f"Formula: =AVERAGE(D2:D{data_end_row})",
                     f"=AVERAGE(D2:D{data_end_row})",
                     "T1 (Hallux), M1 & M2 (Metatarsal) adalah titik kontak beban tumpuan puncak fase berjalan (stance phase). Rata-rata suhu mencerminkan perfusi basal jaringan kulit."
                 ),
@@ -215,7 +250,7 @@ def enhance_excel_workbook(excel_path: Path):
                     "PPP (Peak / Max Temp)",
                     "Berapa suhu tertinggi / hotspot lokal pada area ROI?",
                     f"Kolom E (E2:E{data_end_row})",
-                    f"'=MAX(E2:E{data_end_row})",
+                    f"Formula: =MAX(E2:E{data_end_row})",
                     f"=MAX(E2:E{data_end_row})",
                     "Hotspot lokal adalah penanda awal hiperemia dan mikrotrauma jaringan dalam sebelum timbul kerusakan kulit terbuka (ulkus diabetik)."
                 ),
@@ -223,7 +258,7 @@ def enhance_excel_workbook(excel_path: Path):
                     "PPP (Min Temp)",
                     "Berapa suhu terendah di batas area ROI?",
                     f"Kolom F (F2:F{data_end_row})",
-                    f"'=MIN(F2:F{data_end_row})",
+                    f"Formula: =MIN(F2:F{data_end_row})",
                     f"=MIN(F2:F{data_end_row})",
                     "Mengevaluasi batas bawah suhu untuk skrining hipoperfusi atau iskemia akibat Peripheral Artery Disease (PAD)."
                 ),
@@ -231,7 +266,7 @@ def enhance_excel_workbook(excel_path: Path):
                     "PPG (Mean Gradient)",
                     "Seberapa tajam rata-rata lonjakan perbedaan suhu spasial?",
                     f"Kolom H (H2:H{data_end_row})",
-                    f"'=AVERAGE(H2:H{data_end_row})",
+                    f"Formula: =AVERAGE(H2:H{data_end_row})",
                     f"=AVERAGE(H2:H{data_end_row})",
                     "Membedakan hangat fisiologis merata (suhu ruang/aktivitas) vs peradangan fokal aktif. Gradien tinggi menandakan batas radang aktif."
                 ),
@@ -239,7 +274,7 @@ def enhance_excel_workbook(excel_path: Path):
                     "PPG (Peak Gradient)",
                     "Seberapa curam batas kontras panas paling tajam di titik radang?",
                     f"Kolom I (I2:I{data_end_row})",
-                    f"'=MAX(I2:I{data_end_row})",
+                    f"Formula: =MAX(I2:I{data_end_row})",
                     f"=MAX(I2:I{data_end_row})",
                     "Puncak gradien melokalisir batas tepi fokal infeksi dalam atau deformitas Charcot Foot sebelum luka terlihat kasat mata."
                 ),
@@ -263,7 +298,7 @@ def enhance_excel_workbook(excel_path: Path):
                     "PGA (Vector Coherence %)",
                     "Seberapa seragam arah aliran rambatan panas (0-100%)?",
                     f"Kolom M (M2:M{data_end_row})",
-                    f"'=AVERAGE(M2:M{data_end_row})",
+                    f"Formula: =AVERAGE(M2:M{data_end_row})",
                     f"=AVERAGE(M2:M{data_end_row})",
                     "Koherensi tinggi (>75%) membuktikan disipasi panas terarah kuat (fokus vaskular); koherensi rendah (<50%) berarti difusi acak normal."
                 )
@@ -344,7 +379,7 @@ def enhance_excel_workbook(excel_path: Path):
         # Subtitle
         ws_guide.merge_cells("A2:G2")
         sub_cell = ws_guide["A2"]
-        sub_cell.value = "ThermalSight v1.8.3 • Diabetic Foot Thermal Biomechanics Evaluation Suite"
+        sub_cell.value = "ThermalSight v1.8.4 • Diabetic Foot Thermal Biomechanics Evaluation Suite"
         sub_cell.fill = PatternFill(start_color="312E81", end_color="312E81", fill_type="solid")
         sub_cell.font = Font(name="Calibri", size=11, italic=True, color="E0E7FF")
         sub_cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -365,7 +400,7 @@ def enhance_excel_workbook(excel_path: Path):
         triad_rows = [
             ("Pilar 1", "PPP", "Seberapa panas titik tersebut?", "Nilai Suhu Absolut (Max, Min, Mean, Std)", "°C", "T_peak = max(T), T_mean = sum(T)/N", "Mendeteksi hotspot fokal hiperemia & skrining asimetri bilateral (ΔT > 2.2°C)."),
             ("Pilar 2", "PPG", "Seberapa tajam beda suhunya?", "Laju Kemiringan Spasial Gradien Suhu", "°C/cm atau px", "||∇T|| = sqrt(Gx^2 + Gy^2) [Sobel 2D]", "Membedakan panas menyeluruh normal vs batas fokal peradangan akut/osteomielitis."),
-            ("Pilar 3", "PGA", "Ke mana arah menjalarnya panas?", "Vektor Orientasi Disipasi Kalor", "Derajat & Kompas", "θ = arctan2(Gy, Gx) % 360°", "Memetakan arah rambatan perfusi vaskular ke arah distal jari atau proksimal tumit.")
+            ("Pilar 3", "PGA", "Ke mana arah menjalarnya panas?", "Vektor Orientasi Disipasi Kalor", "Derajat & Kompas", "θ = arctan2(-Gy, Gx) % 360°", "Memetakan arah rambatan perfusi vaskular ke arah distal jari atau proksimal tumit.")
         ]
         
         for r_idx, r_data in enumerate(triad_rows, 6):
@@ -502,7 +537,7 @@ class PPGWorkbenchApp:
         title_lbl = tk.Label(top_bar, text="ThermalSight PPG & PGA Workbench", font=("Arial", 15, "bold"), fg="#FFFFFF", bg="#0F172A")
         title_lbl.pack(side=tk.LEFT, padx=18, pady=10)
 
-        sub_lbl = tk.Label(top_bar, text="v1.8.3 Ground-Truth Annotation & Topography Lab", font=("Arial", 10), fg="#94A3B8", bg="#0F172A")
+        sub_lbl = tk.Label(top_bar, text="v1.8.4 Ground-Truth Annotation & Topography Lab", font=("Arial", 10), fg="#94A3B8", bg="#0F172A")
         sub_lbl.pack(side=tk.LEFT, padx=5, pady=13)
 
         btn_open_json = tk.Button(top_bar, text="📋 Load Session JSON", font=("Arial", 9, "bold"), bg="#334155", fg="white",
@@ -887,16 +922,20 @@ class PPGWorkbenchApp:
         json_dir = Path(json_path_str).resolve().parent
         parent_dir = json_dir.parent
 
-        # Collect candidate search directories
+        # Collect candidate search directories (prioritize local sibling folders before stale absolute paths)
         candidate_dirs = [json_dir, parent_dir]
-        if "folderPath" in data and data["folderPath"] and Path(data["folderPath"]).exists():
-            candidate_dirs.append(Path(data["folderPath"]))
+        base_stem = strip_result_suffix(json_dir.name)
+        sibling_source = parent_dir / base_stem
+        if sibling_source.exists() and sibling_source.is_dir():
+            candidate_dirs.insert(0, sibling_source)
         try:
             for item in parent_dir.iterdir():
-                if item.is_dir():
+                if item.is_dir() and item not in candidate_dirs:
                     candidate_dirs.append(item)
         except Exception:
             pass
+        if "folderPath" in data and data["folderPath"] and Path(data["folderPath"]).exists():
+            candidate_dirs.append(Path(data["folderPath"]))
 
         # Try to resolve every key
         resolved_list = []
@@ -904,14 +943,13 @@ class PPGWorkbenchApp:
         for old_k in keys:
             bname = Path(old_k).name
             found_full = None
-            if Path(old_k).exists():
+            for cdir in candidate_dirs:
+                cand = cdir / bname
+                if cand.exists():
+                    found_full = str(cand.resolve())
+                    break
+            if not found_full and Path(old_k).exists():
                 found_full = str(Path(old_k).resolve())
-            else:
-                for cdir in candidate_dirs:
-                    cand = cdir / bname
-                    if cand.exists():
-                        found_full = str(cand.resolve())
-                        break
             
             if found_full:
                 resolved_list.append(found_full)
@@ -1434,29 +1472,33 @@ class PPGWorkbenchApp:
 
     def get_mapped_rois(self, filtered=False):
         mapped = []
-        rois_source = self.rois_data
-        if not rois_source:
+        if not self.rois_data:
             if self.foot_side == "RightFoot":
                 defs = [("T1", 0.61, 0.16), ("M1", 0.61, 0.33), ("M2", 0.44, 0.33)]
             else:
                 defs = [("T1", 0.39, 0.16), ("M1", 0.39, 0.33), ("M2", 0.56, 0.33)]
 
-            rois_source = []
+            rad_px = 12.0
+            angles = np.linspace(0, 2 * np.pi, 36, endpoint=False)
             for name, fx, fy in defs:
-                px = self.offset_x + self.xmin + fx * self.cw
-                py = self.ymin + fy * self.ch
+                px = float(self.offset_x + self.xmin + fx * self.cw)
+                py = float(self.ymin + fy * self.ch)
+                pts_poly = [
+                    {"x": round(float(px + rad_px * np.cos(a)), 2), "y": round(float(py + rad_px * np.sin(a)), 2)}
+                    for a in angles
+                ]
                 r_obj = {
                     "id": f"roi_{name.lower()}",
                     "type": "circle",
-                    "cx": float(px),
-                    "cy": float(py),
-                    "radius": 12.0,
+                    "cx": px,
+                    "cy": py,
+                    "radius": rad_px,
                     "labelName": name.lower(),
                     "color": "#ff4444" if name == "M1" else ("#00e5ff" if name == "M2" else "#44ff44"),
-                    "points": []
+                    "points": pts_poly
                 }
-                rois_source.append(r_obj)
-            # BUG-3.9: DO NOT mutate self.rois_data with empty points!
+                self.rois_data.append(r_obj)
+        rois_source = self.rois_data
 
         for r in rois_source:
             if not isinstance(r, dict):
@@ -1563,9 +1605,7 @@ class PPGWorkbenchApp:
             # 4. Burn to new active result directory if loaded from backup/result folder
             active_img_dir = Path(self.image_path).parent if self.image_path else target_file.parent
             # BUG-3.2: Strip trailing _result to avoid _result_result nesting
-            clean_parent_name = active_img_dir.name
-            while clean_parent_name.lower().endswith("_result"):
-                clean_parent_name = clean_parent_name[:-7]
+            clean_parent_name = strip_result_suffix(active_img_dir.name)
             new_result_dir = active_img_dir.parent / f"{clean_parent_name}_result"
             if "_result" in str(target_file).lower() or active_img_dir.name != target_file.parent.name:
                 try:
@@ -1609,12 +1649,18 @@ class PPGWorkbenchApp:
                 print("[ERROR] No Images: Please load a session JSON or image folder first.", file=sys.stderr)
             return False
 
-        active_img_dir = Path(self.image_path).parent if self.image_path else Path(self.image_list[0]).parent
-        # BUG-3.2: Strip trailing _result to avoid _result_result nesting
-        clean_name = active_img_dir.name
-        while clean_name.lower().endswith("_result"):
-            clean_name = clean_name[:-7]
-        result_dir = active_img_dir.parent / f"{clean_name}_result"
+        if self.session_json_path and self.session_json_path.parent.name.lower().endswith("_result"):
+            sess_parent = self.session_json_path.parent.resolve()
+            if sess_parent.name.lower().endswith("_result_result"):
+                clean_name = strip_result_suffix(sess_parent.name)
+                result_dir = sess_parent.parent / f"{clean_name}_result"
+            else:
+                result_dir = sess_parent
+        else:
+            active_img_dir = Path(self.image_path).parent if self.image_path else Path(self.image_list[0]).parent
+            # BUG-3.2: Strip trailing _result to avoid _result_result nesting
+            clean_name = strip_result_suffix(active_img_dir.name)
+            result_dir = active_img_dir.parent / f"{clean_name}_result"
         result_dir.mkdir(parents=True, exist_ok=True)
 
         detailed_rows = []

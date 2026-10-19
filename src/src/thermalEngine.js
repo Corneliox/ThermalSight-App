@@ -101,12 +101,14 @@ export function cleanFlirAccessoriesRgba(data, W, H) {
   const isOsd = new Uint8Array(W * H);
 
   // 1. Identify candidate stroke pixels based on coordinate zones and extreme luminance
+  const centerR = Math.floor(H / 2);
+  const centerC = Math.floor(W / 2);
   for (let r = 0; r < H; r++) {
     const inTl = (r >= 2 && r <= 32);
     const inBl = (r >= H - 45 && r < H);
     const inTr = (r >= 2 && r <= 32);
     const inBr = (r >= H - 45 && r < H);
-    const inCenter = (r >= Math.floor(H * 0.20) && r <= Math.floor(H * 0.80));
+    const inCenter = (Math.abs(r - centerR) <= 8);
 
     for (let c = 0; c < W; c++) {
       const idx = (r * W + c) * 4;
@@ -119,14 +121,15 @@ export function cleanFlirAccessoriesRgba(data, W, H) {
       const isBl = inBl && (c >= 0 && c <= 75);
       const isTr = inTr && (c >= Math.floor(W * 0.83) && c < Math.floor(W * 0.95));
       const isBr = inBr && (c >= Math.floor(W * 0.83) && c < Math.floor(W * 0.95));
-      const isCenterBox = inCenter && (c >= Math.floor(W * 0.15) && c <= Math.floor(W * 0.85));
+      const isCenterBox = inCenter && (Math.abs(c - centerC) <= 8);
 
       if (isTl || isBl || isTr || isBr) {
         if (lum > 160 || lum < 20) {
           isOsd[r * W + c] = 1;
         }
       } else if (isCenterBox) {
-        if (lum < 30 || lum > 240) {
+        // BUG-3.3: Only remove dark reticle crosshairs (lum < 20), NEVER bright hotspots (lum > 240)!
+        if (lum < 20) {
           isOsd[r * W + c] = 1;
         }
       }
@@ -2458,39 +2461,45 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
   const metricsData = [];
 
   for (const m of mappedRois) {
-    const ix = Math.max(0, Math.min(nCols - 1, Math.round(m.gx) - 1));
-    const iy = Math.max(0, Math.min(nRows - 1, Math.round(m.gy) - 1));
+    // BUG-1.8: Convert +0.5 grid center coordinate to 0-based integer index
+    const ix = Math.max(0, Math.min(nCols - 1, Math.round(m.gx - 0.5)));
+    const iy = Math.max(0, Math.min(nRows - 1, Math.round(m.gy - 0.5)));
 
-    // 9x9 Local Patch statistics
+    // 9x9 Local Patch statistics (BUG-1.8: mask out background < 26.5°C)
     let sum9x9 = 0, count9x9 = 0;
+    let ppp = -Infinity;
+    let magSum = 0, gxWeighted = 0, gyWeighted = 0;
     for (let dr = -4; dr <= 4; dr++) {
       for (let dc = -4; dc <= 4; dc++) {
         const rr = iy + dr, cc = ix + dc;
         if (rr >= 0 && rr < nRows && cc >= 0 && cc < nCols) {
-          sum9x9 += gridDense[rr][cc];
-          count9x9++;
-        }
-      }
-    }
-    const mean9x9 = count9x9 > 0 ? sum9x9 / count9x9 : gridDense[iy][ix];
-
-    let ppp = gridDense[iy][ix];
-    const rScan = isCoarse ? 1 : 3;
-    for (let dr = -rScan; dr <= rScan; dr++) {
-      for (let dc = -rScan; dc <= rScan; dc++) {
-        const rr = iy + dr, cc = ix + dc;
-        if (rr >= 0 && rr < nRows && cc >= 0 && cc < nCols) {
-          if (dr*dr + dc*dc <= rScan*rScan && gridDense[rr][cc] > ppp) {
-            ppp = gridDense[rr][cc];
+          if (gridDense[rr][cc] > 26.5) {
+            const tVal = gridSmooth[rr][cc];
+            sum9x9 += tVal;
+            count9x9++;
+            if (tVal > ppp) ppp = tVal;
+            const sx = sobelX[rr][cc];
+            const sy = sobelY[rr][cc];
+            const mg = Math.sqrt(sx * sx + sy * sy);
+            magSum += mg;
+            gxWeighted += sx;
+            gyWeighted += -sy; // BUG-1.1: Invert Y derivative so North/Toes = 90° and South/Heel = 270°
           }
         }
       }
     }
+    const mean9x9 = count9x9 > 0 ? sum9x9 / count9x9 : gridSmooth[iy][ix];
+    if (!Number.isFinite(ppp)) {
+      ppp = gridSmooth[iy][ix];
+    }
 
     const gxVal = sobelX[iy][ix];
     const gyVal = sobelY[iy][ix];
-    const ppg = Math.sqrt(gxVal * gxVal + gyVal * gyVal);
-    const pga = (Math.atan2(gyVal, gxVal) * 180.0) / Math.PI;
+    const ppg = count9x9 > 0 ? (magSum / count9x9) : Math.sqrt(gxVal * gxVal + gyVal * gyVal);
+    const rawAng = count9x9 > 0
+      ? (Math.atan2(gyWeighted, gxWeighted) * 180.0) / Math.PI
+      : (Math.atan2(-gyVal, gxVal) * 180.0) / Math.PI;
+    const pga = ((rawAng % 360.0) + 360.0) % 360.0;
 
     metricsRows.push(`${m.name},${m.gx.toFixed(1)},${m.gy.toFixed(1)},${m.rFinal.toFixed(1)},${ppp.toFixed(2)},${mean9x9.toFixed(2)},${ppg.toFixed(3)},${pga.toFixed(1)}`);
     metricsData.push({
