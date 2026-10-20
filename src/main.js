@@ -558,6 +558,65 @@ ipcMain.handle('list-folder-images', async (_event, folderPath) => {
   return validFiles.map(f => path.join(folderPath, f));
 });
 
+// ── IPC: scan-cohort-folder (Multi-Protocol Cohort Discovery) ──────────────────
+ipcMain.handle('scan-cohort-folder', async (_event, folderPath) => {
+  if (!folderPath || !fs.existsSync(folderPath)) return { isCohort: false, protocols: [] };
+  const exts = ['.jpg', '.jpeg', '.png', '.tiff', '.tif'];
+  try {
+    const entries = fs.readdirSync(folderPath);
+    const subdirs = entries.filter(d => {
+      try {
+        const fullPath = path.join(folderPath, d);
+        if (!fs.statSync(fullPath).isDirectory()) return false;
+        const lower = d.toLowerCase();
+        if (lower.endsWith('_result') || lower.endsWith('_result_result') || lower.endsWith('_analysis')) return false;
+        if (d.startsWith('.') || d.startsWith('__')) return false;
+        if (['node_modules', 'dist', 'build', 'temp', 'tmp', 'sheet', 'gradient', 'isolated_labels'].includes(lower)) return false;
+        return true;
+      } catch { return false; }
+    }).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+
+    const protocols = [];
+    for (const s of subdirs) {
+      const sPath = path.join(folderPath, s);
+      try {
+        const subFiles = fs.readdirSync(sPath);
+        const subImgs = subFiles.filter(f => {
+          try {
+            const fp = path.join(sPath, f);
+            return fs.statSync(fp).isFile() && exts.includes(path.extname(f).toLowerCase());
+          } catch { return false; }
+        }).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+
+        const resDir = path.join(folderPath, `${s}_result`);
+        const sessJson = fs.existsSync(resDir) ? path.join(resDir, 'annotations_session.json') : null;
+
+        if (subImgs.length > 0 || (sessJson && fs.existsSync(sessJson))) {
+          protocols.push({
+            name: s,
+            folderPath: sPath,
+            resultDir: resDir,
+            sessionJsonPath: (sessJson && fs.existsSync(sessJson)) ? sessJson : null,
+            images: subImgs.map(f => path.join(sPath, f))
+          });
+        }
+      } catch {}
+    }
+
+    if (protocols.length >= 2) {
+      return {
+        isCohort: true,
+        parentPath: folderPath,
+        cohortName: path.basename(folderPath),
+        protocols
+      };
+    }
+  } catch (err) {
+    console.error('scan-cohort-folder error:', err);
+  }
+  return { isCohort: false, protocols: [] };
+});
+
 // ── IPC: read-image-base64 (Bulletproof fallback for local file loading) ──────
 ipcMain.handle('read-image-base64', async (_event, filePath) => {
   try {
@@ -713,11 +772,14 @@ ipcMain.handle('check-existing-annotation', async (_event, folderPath) => {
   return null;
 });
 
-ipcMain.handle('open-ppg-workbench', async (_event, sessionJsonPath, activeImagePath) => {
+ipcMain.handle('open-ppg-workbench', async (_event, sessionJsonPath, activeImagePath, cohortPath) => {
   const workbenchScript = app.isPackaged
     ? path.join(process.resourcesPath, 'ppg_workbench.py')
     : path.join(__dirname, '..', 'ppg_workbench.py');
   const args = [workbenchScript];
+  if (cohortPath && fs.existsSync(cohortPath)) {
+    args.push('--cohort', cohortPath);
+  }
   if (sessionJsonPath && fs.existsSync(sessionJsonPath)) {
     args.push('--session', sessionJsonPath);
   }

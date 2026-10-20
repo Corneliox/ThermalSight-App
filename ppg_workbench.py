@@ -84,6 +84,82 @@ def strip_result_suffix(folder_name: str) -> str:
     return clean_name
 
 
+def detect_cohort_protocols(folder_path):
+    """
+    Scans a folder to check if it contains multiple protocol subfolders (e.g. 'azmi/1_30', 'azmi/1_50', etc.).
+    Returns:
+        is_cohort (bool): True if at least 2 protocol subfolders are detected.
+        protocols (list of dict): List of detected protocol metadata dicts.
+    """
+    if not folder_path:
+        return False, []
+    try:
+        p = Path(folder_path).resolve()
+        if not p.is_dir():
+            return False, []
+    except Exception:
+        return False, []
+
+    img_exts = ('.jpg', '.jpeg', '.png', '.tiff', '.tif')
+    subdirs = []
+    try:
+        for item in sorted(p.iterdir()):
+            if not item.is_dir():
+                continue
+            name_lower = item.name.lower()
+            if name_lower.endswith('_result') or name_lower.endswith('_result_result') or name_lower.endswith('_analysis'):
+                continue
+            if item.name.startswith('.') or item.name.startswith('__'):
+                continue
+            if name_lower in ('node_modules', 'dist', 'build', 'temp', 'tmp', 'sheet', 'gradient', 'isolated_labels'):
+                continue
+            subdirs.append(item)
+    except Exception:
+        return False, []
+
+    protocols = []
+    for sdir in subdirs:
+        # Search for images directly in sdir
+        imgs = [str(f.resolve()) for f in sorted(sdir.glob("*")) if f.suffix.lower() in img_exts and f.is_file()]
+
+        # Check companion result folder <sdir.name>_result
+        res_dir = p / f"{sdir.name}_result"
+        sess_json = res_dir / "annotations_session.json"
+        if not sess_json.exists():
+            # Also check inside sdir
+            sess_json_alt = sdir / "annotations_session.json"
+            if sess_json_alt.exists():
+                sess_json = sess_json_alt
+            else:
+                sess_json = None
+
+        # Also check if sdir contains single-image analysis folders that contain images or parent images
+        if not imgs:
+            for sub_sub in sdir.glob("*"):
+                if sub_sub.is_dir() and sub_sub.name.lower().endswith(('_analysis', '_result')):
+                    cand_stem = sub_sub.name[:-9] if sub_sub.name.lower().endswith('_analysis') else sub_sub.name
+                    for ext in img_exts:
+                        cand_img = sdir / f"{cand_stem}{ext}"
+                        if cand_img.exists() and str(cand_img.resolve()) not in imgs:
+                            imgs.append(str(cand_img.resolve()))
+
+        if imgs or (sess_json and sess_json.exists()):
+            protocols.append({
+                'name': sdir.name,
+                'folder': sdir,
+                'folderPath': str(sdir.resolve()),
+                'result_dir': res_dir,
+                'resultDir': str(res_dir.resolve()),
+                'session_json': sess_json if (sess_json and sess_json.exists()) else None,
+                'sessionJsonPath': str(sess_json.resolve()) if (sess_json and sess_json.exists()) else None,
+                'images': imgs
+            })
+
+    if len(protocols) >= 2:
+        return True, protocols
+    return False, []
+
+
 COMPASS_LABELS_PLANTAR = [
     (337.5, 360.0, "E (Lateral)", "E (Medial)"),
     (0.0, 22.5, "E (Lateral)", "E (Medial)"),
@@ -462,14 +538,151 @@ def enhance_excel_workbook(excel_path: Path):
     except Exception as e:
         print(f"Notice: Could not enhance Excel styling: {e}")
 
+
+def enhance_cohort_workbook(excel_path: Path, cohort_name: str, total_protocols: int):
+    """
+    Enhances the Master Cohort Comparison Excel Workbook:
+    1. Sheet 1 ('Protocol_Comparison'):
+       - Formats headers with Indigo theme (#312E81)
+       - Auto-fits column widths
+       - Applies alternating row fills and numeric formatting (0.00)
+    2. Sheet 2 ('All_Protocols_Detailed'):
+       - Formats headers with Slate theme (#1E293B)
+       - Auto-fits column widths
+    3. Sheet 3 ('Panduan_Metodologi'):
+       - Includes clinical protocol comparison notes
+    """
+    if not OPENPYXL_AVAILABLE or not Path(excel_path).exists():
+        return
+
+    try:
+        wb = openpyxl.load_workbook(str(excel_path))
+        thin_border = Border(
+            left=Side(style='thin', color='CBD5E1'),
+            right=Side(style='thin', color='CBD5E1'),
+            top=Side(style='thin', color='CBD5E1'),
+            bottom=Side(style='thin', color='CBD5E1')
+        )
+
+        # ── 1. Protocol_Comparison Sheet ──
+        if "Protocol_Comparison" in wb.sheetnames:
+            ws = wb["Protocol_Comparison"]
+            ws.views.sheetView[0].showGridLines = True
+            header_fill = PatternFill(start_color="312E81", end_color="312E81", fill_type="solid")
+            header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+            alt_fill = PatternFill(start_color="F5F3FF", end_color="F5F3FF", fill_type="solid")
+
+            for col in range(1, ws.max_column + 1):
+                c = ws.cell(row=1, column=col)
+                c.fill = header_fill
+                c.font = header_font
+                c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                c.border = thin_border
+
+            for row in range(2, ws.max_row + 1):
+                is_even = (row % 2 == 0)
+                for col in range(1, ws.max_column + 1):
+                    c = ws.cell(row=row, column=col)
+                    c.font = Font(name="Calibri", size=10, color="0F172A")
+                    c.border = thin_border
+                    if is_even:
+                        c.fill = alt_fill
+                    if isinstance(c.value, (int, float)):
+                        c.number_format = '0.00'
+                        c.alignment = Alignment(horizontal="right", vertical="center")
+                    else:
+                        c.alignment = Alignment(horizontal="center", vertical="center")
+
+            for col in ws.columns:
+                max_len = 0
+                col_letter = get_column_letter(col[0].column)
+                for cell in col:
+                    val_str = str(cell.value or "")
+                    if len(val_str) > max_len and len(val_str) < 50:
+                        max_len = len(val_str)
+                ws.column_dimensions[col_letter].width = max(max_len + 3, 14)
+
+        # ── 2. All_Protocols_Detailed Sheet ──
+        if "All_Protocols_Detailed" in wb.sheetnames:
+            ws = wb["All_Protocols_Detailed"]
+            ws.views.sheetView[0].showGridLines = True
+            header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
+            header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+            alt_fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+
+            for col in range(1, ws.max_column + 1):
+                c = ws.cell(row=1, column=col)
+                c.fill = header_fill
+                c.font = header_font
+                c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                c.border = thin_border
+
+            for row in range(2, ws.max_row + 1):
+                is_even = (row % 2 == 0)
+                for col in range(1, ws.max_column + 1):
+                    c = ws.cell(row=row, column=col)
+                    c.font = Font(name="Calibri", size=10, color="0F172A")
+                    c.border = thin_border
+                    if is_even:
+                        c.fill = alt_fill
+                    if isinstance(c.value, (int, float)):
+                        c.number_format = '0.00'
+                        c.alignment = Alignment(horizontal="right", vertical="center")
+                    else:
+                        c.alignment = Alignment(horizontal="center", vertical="center")
+
+            for col in ws.columns:
+                max_len = 0
+                col_letter = get_column_letter(col[0].column)
+                for cell in col:
+                    val_str = str(cell.value or "")
+                    if len(val_str) > max_len and len(val_str) < 50:
+                        max_len = len(val_str)
+                ws.column_dimensions[col_letter].width = max(max_len + 3, 13)
+
+        # ── 3. Append Panduan Metodologi ──
+        if "Panduan_Metodologi" not in wb.sheetnames:
+            ws_guide = wb.create_sheet(title="Panduan_Metodologi")
+            ws_guide.views.sheetView[0].showGridLines = True
+            ws_guide.column_dimensions['A'].width = 6
+            ws_guide.column_dimensions['B'].width = 30
+            ws_guide.column_dimensions['C'].width = 80
+
+            ws_guide.cell(row=1, column=2, value="PANDUAN INTERPRETASI HASIL KOHOR MULTI-PROTOKOL (ThermalSight v1.8.4)").font = Font(name="Calibri", size=14, bold=True, color="312E81")
+            guide_rows = [
+                ("Prinsip Kohor", f"Folder kohor '{cohort_name}' memuat {total_protocols} protokol eksperimen independen."),
+                ("Isolasi Data", "Setiap protokol dievaluasi secara terpisah pada masing-masing subfolder '_result'. Nilai rata-rata (mean), min, max, dan deviasi standar dihitung murni dalam protokol masing-masing tanpa pencampuran."),
+                ("Perbandingan Protokol", "Sheet 'Protocol_Comparison' merangkum baris ringkasan eksekutif dari seluruh protokol untuk analisis komparatif antar kondisi/intervensi."),
+                ("PPP (Perfusion Profile)", "Suhu absolut (°C) pada ROI T1, M1, M2. Menunjukkan perfusi mikrovaskular plantar."),
+                ("PPG (Peak Gradient)", "Gradien termal spasial puncak (°C/cm) melalui Sobel 3x3 filter. Menandai batas zona hipertermia inflamasi."),
+                ("PGA (Gradient Angle)", "Arah vektor fluks panas (90°=North/Distal/Jari, 270°=South/Proximal/Tumit).")
+            ]
+            for r_i, (k, v) in enumerate(guide_rows, start=3):
+                c_k = ws_guide.cell(row=r_i, column=2, value=k)
+                c_k.font = Font(name="Calibri", size=11, bold=True, color="1E293B")
+                c_k.border = thin_border
+                c_v = ws_guide.cell(row=r_i, column=3, value=v)
+                c_v.font = Font(name="Calibri", size=11, color="334155")
+                c_v.border = thin_border
+                c_v.alignment = Alignment(wrap_text=True)
+
+        wb.save(str(excel_path))
+    except Exception as e:
+        print(f"Error enhancing cohort workbook: {e}")
+
+
 class PPGWorkbenchApp:
-    def __init__(self, root, session_arg=None, image_arg=None, silent_mode=False):
+    def __init__(self, root, session_arg=None, image_arg=None, cohort_arg=None, silent_mode=False):
         self.root = root
         self.silent_mode = silent_mode
         self.root.title("ThermalSight — PPG & PGA Interactive Research Workbench v1.8.4")
         self.root.geometry("1560x960")
         self.root.minsize(1220, 780)
         self.root.configure(bg="#F1F5F9")
+
+        # Multi-Protocol Cohort Hierarchy State (v1.8.4)
+        self.cohort_info = None
+        self.current_protocol_idx = 0
 
         # Session & Image State
         self.image_path = None
@@ -520,12 +733,37 @@ class PPGWorkbenchApp:
         self.bind_shortcuts()
 
         # Handle command-line arguments or load default
-        if session_arg and Path(session_arg).exists():
-            self.load_json_file(session_arg, silent_err=self.silent_mode)
+        if cohort_arg and Path(cohort_arg).exists():
+            is_c, protos = detect_cohort_protocols(cohort_arg)
+            if is_c:
+                self.setup_cohort(cohort_arg, protos)
+            else:
+                self.load_folder_or_cohort(cohort_arg)
+        elif session_arg and Path(session_arg).exists():
+            p_sess = Path(session_arg).resolve()
+            if p_sess.is_dir():
+                is_c, protos = detect_cohort_protocols(p_sess)
+                if is_c:
+                    self.setup_cohort(p_sess, protos)
+                else:
+                    self.load_folder_or_cohort(p_sess)
+            else:
+                gp = p_sess.parent.parent
+                is_c, protos = detect_cohort_protocols(gp)
+                if is_c:
+                    self.setup_cohort(gp, protos, active_protocol_name=strip_result_suffix(p_sess.parent.name))
+                else:
+                    self.load_json_file(session_arg, silent_err=self.silent_mode)
             if image_arg and Path(image_arg).exists():
                 self.load_image_file(image_arg)
         elif image_arg and Path(image_arg).exists():
-            self.load_image_file(image_arg)
+            p_img = Path(image_arg).resolve()
+            gp = p_img.parent.parent
+            is_c, protos = detect_cohort_protocols(gp)
+            if is_c:
+                self.setup_cohort(gp, protos, active_protocol_name=p_img.parent.name, active_image_path=str(p_img))
+            else:
+                self.load_image_file(image_arg)
         elif not self.silent_mode:
             self.load_default_sample()
 
@@ -542,15 +780,46 @@ class PPGWorkbenchApp:
 
         btn_open_json = tk.Button(top_bar, text="📋 Load Session JSON", font=("Arial", 9, "bold"), bg="#334155", fg="white",
                                   activebackground="#475569", relief="flat", padx=12, pady=5, command=self.browse_json)
-        btn_open_json.pack(side=tk.RIGHT, padx=14, pady=10)
+        btn_open_json.pack(side=tk.RIGHT, padx=8, pady=10)
 
-        btn_open_img = tk.Button(top_bar, text="📂 Load Image / Folder", font=("Arial", 9, "bold"), bg="#0284C7", fg="white",
+        btn_open_folder = tk.Button(top_bar, text="📁 Load Folder / Cohort", font=("Arial", 9, "bold"), bg="#2563EB", fg="white",
+                                    activebackground="#1D4ED8", relief="flat", padx=12, pady=5, command=self.browse_folder_or_cohort)
+        btn_open_folder.pack(side=tk.RIGHT, padx=6, pady=10)
+
+        btn_open_img = tk.Button(top_bar, text="🖼️ Load Image", font=("Arial", 9, "bold"), bg="#0284C7", fg="white",
                                  activebackground="#0369A1", relief="flat", padx=12, pady=5, command=self.browse_image)
         btn_open_img.pack(side=tk.RIGHT, padx=6, pady=10)
 
+        # 1.5 Cohort Sub-Toolbar (Dynamically shown when a multi-protocol cohort is active)
+        self.cohort_bar = tk.Frame(self.root, bg="#312E81", height=38)
+
+        self.lbl_cohort_name = tk.Label(self.cohort_bar, text="🗂️ Cohort: None", font=("Arial", 9, "bold"), fg="#FFFFFF", bg="#312E81")
+        self.lbl_cohort_name.pack(side=tk.LEFT, padx=(15, 10), pady=6)
+
+        lbl_proto_title = tk.Label(self.cohort_bar, text="Protocol:", font=("Arial", 9), fg="#C7D2FE", bg="#312E81")
+        lbl_proto_title.pack(side=tk.LEFT, padx=(0, 6), pady=6)
+
+        self.combo_protocols = ttk.Combobox(self.cohort_bar, state="readonly", width=30)
+        self.combo_protocols.pack(side=tk.LEFT, padx=4, pady=6)
+        self.combo_protocols.bind("<<ComboboxSelected>>", self.on_protocol_selected_from_combo)
+
+        self.btn_prev_proto = tk.Button(self.cohort_bar, text="◀ Prev Protocol", font=("Arial", 8, "bold"), bg="#4338CA", fg="white",
+                                        activebackground="#3730A3", relief="flat", padx=8, pady=2, command=self.prev_protocol)
+        self.btn_prev_proto.pack(side=tk.LEFT, padx=4, pady=6)
+
+        self.btn_next_proto = tk.Button(self.cohort_bar, text="Next Protocol ▶", font=("Arial", 8, "bold"), bg="#4338CA", fg="white",
+                                        activebackground="#3730A3", relief="flat", padx=8, pady=2, command=self.next_protocol)
+        self.btn_next_proto.pack(side=tk.LEFT, padx=4, pady=6)
+
+        btn_batch_cohort = tk.Button(self.cohort_bar, text="⚡ Batch Recompute All Protocols (Cohort)", font=("Arial", 9, "bold"),
+                                     bg="#7C3AED", fg="white", activebackground="#6D28D9", relief="flat", padx=12, pady=3,
+                                     command=self.recompute_and_export_all_protocols_cohort)
+        btn_batch_cohort.pack(side=tk.RIGHT, padx=15, pady=6)
+
         # 2. Carousel & Session Sub-Toolbar
-        nav_bar = tk.Frame(self.root, bg="#1E293B", height=42)
-        nav_bar.pack(side=tk.TOP, fill=tk.X)
+        self.nav_bar = tk.Frame(self.root, bg="#1E293B", height=42)
+        self.nav_bar.pack(side=tk.TOP, fill=tk.X)
+        nav_bar = self.nav_bar
 
         self.btn_prev = tk.Button(nav_bar, text="◀ Prev Image", font=("Arial", 9, "bold"), bg="#334155", fg="white",
                                   activebackground="#475569", relief="flat", padx=10, pady=3, command=self.prev_image)
@@ -994,20 +1263,289 @@ class PPGWorkbenchApp:
             if sample_img.exists():
                 self.load_image_file(str(sample_img))
 
+    def browse_folder_or_cohort(self):
+        folder_path = filedialog.askdirectory(title="Select Thermal Image Folder or Multi-Protocol Cohort Folder")
+        if folder_path:
+            self.load_folder_or_cohort(folder_path)
+
+    def load_folder_or_cohort(self, folder_path):
+        p = Path(folder_path).resolve()
+        is_cohort, protocols = detect_cohort_protocols(p)
+        if is_cohort:
+            self.setup_cohort(p, protocols)
+            if not getattr(self, "silent_mode", False):
+                messagebox.showinfo(
+                    "Multi-Protocol Cohort Loaded",
+                    f"Detected cohort '{p.name}' with {len(protocols)} experimental protocols:\n\n"
+                    + "\n".join(f"• {proto['name']} ({len(proto['images'])} images)" for proto in protocols)
+                    + "\n\nUse the Protocol selector bar at the top to navigate between protocols, or click '⚡ Batch Recompute All Protocols' to generate isolated statistics for every protocol in one go."
+                )
+        else:
+            img_exts = ('.jpg', '.jpeg', '.png', '.tiff', '.tif')
+            imgs = [str(f.resolve()) for f in sorted(p.glob("*")) if f.suffix.lower() in img_exts and f.is_file()]
+            if not imgs:
+                if not getattr(self, "silent_mode", False):
+                    messagebox.showwarning("No Images Found", f"No thermal images or protocol subfolders found in:\n{folder_path}")
+                return
+
+            if hasattr(self, "cohort_bar"):
+                self.cohort_bar.pack_forget()
+            self.cohort_info = None
+
+            res_dir = p.parent / f"{strip_result_suffix(p.name)}_result"
+            sess_json = res_dir / "annotations_session.json"
+            if sess_json.exists():
+                self._direct_load_json(str(sess_json))
+            else:
+                self.session_json_path = None
+                self.session_data = {"version": "1.8.4", "folderPath": str(p), "segmentations": {}, "foot_masks": {}}
+                self.image_list = imgs
+                self.current_img_idx = 0
+                self.combo_images['values'] = [Path(x).name for x in self.image_list]
+                self._direct_load_image(self.image_list[0])
+                self.update_nav_ui()
+
+    def setup_cohort(self, parent_dir, protocols, active_protocol_name=None, active_image_path=None):
+        self.cohort_info = {
+            'parent_dir': Path(parent_dir).resolve(),
+            'protocols': protocols
+        }
+        idx = 0
+        if active_protocol_name:
+            for i, p in enumerate(protocols):
+                if p['name'].lower() == active_protocol_name.lower():
+                    idx = i
+                    break
+        self.current_protocol_idx = idx
+
+        self.lbl_cohort_name.config(text=f"🗂️ Cohort: {self.cohort_info['parent_dir'].name}")
+        self.combo_protocols['values'] = [f"{p['name']} ({len(p['images'])} images)" for p in protocols]
+        self.combo_protocols.current(idx)
+        self.cohort_bar.pack(side=tk.TOP, fill=tk.X, before=self.nav_bar)
+
+        self.switch_to_protocol(idx, active_image_path=active_image_path, is_initial=True)
+
+    def switch_to_protocol(self, idx, active_image_path=None, is_initial=False):
+        if not self.cohort_info or idx < 0 or idx >= len(self.cohort_info['protocols']):
+            return
+
+        # Auto-save active protocol annotations if modified
+        if not is_initial and self.session_data and self.image_list and hasattr(self, "current_protocol_idx"):
+            try:
+                prev_proto = self.cohort_info['protocols'][self.current_protocol_idx]
+                prev_proto['result_dir'].mkdir(parents=True, exist_ok=True)
+                with open(prev_proto['result_dir'] / "annotations_session.json", "w", encoding="utf-8") as f:
+                    json.dump(self.session_data, f, indent=2)
+            except Exception:
+                pass
+
+        self.current_protocol_idx = idx
+        proto = self.cohort_info['protocols'][idx]
+        self.combo_protocols.current(idx)
+
+        # Check if session json exists for this protocol
+        if proto['session_json'] and Path(proto['session_json']).exists():
+            self._direct_load_json(str(proto['session_json']), silent_err=True)
+            if active_image_path and active_image_path in self.image_list:
+                self.current_img_idx = self.image_list.index(active_image_path)
+                self._direct_load_image(active_image_path)
+        elif proto['images']:
+            self.session_json_path = None
+            self.session_data = {
+                "version": "1.8.4",
+                "folderPath": str(proto['folder'].resolve()),
+                "segmentations": {},
+                "foot_masks": {}
+            }
+            self.image_list = proto['images']
+            self.current_img_idx = 0
+            if active_image_path and active_image_path in self.image_list:
+                self.current_img_idx = self.image_list.index(active_image_path)
+            self.combo_images['values'] = [Path(x).name for x in self.image_list]
+            self._direct_load_image(self.image_list[self.current_img_idx])
+            self.update_nav_ui()
+
+    def on_protocol_selected_from_combo(self, event):
+        idx = self.combo_protocols.current()
+        if idx >= 0:
+            self.switch_to_protocol(idx)
+
+    def prev_protocol(self):
+        if self.cohort_info and self.current_protocol_idx > 0:
+            self.switch_to_protocol(self.current_protocol_idx - 1)
+
+    def next_protocol(self):
+        if self.cohort_info and self.current_protocol_idx < len(self.cohort_info['protocols']) - 1:
+            self.switch_to_protocol(self.current_protocol_idx + 1)
+
+    def recompute_and_export_all_protocols_cohort(self, silent=False):
+        if not self.cohort_info or not self.cohort_info.get('protocols'):
+            return False
+
+        parent_dir = self.cohort_info['parent_dir']
+        protocols = self.cohort_info['protocols']
+        total_protocols = len(protocols)
+
+        progress_win = None
+        pbar = None
+        lbl_status = None
+        lbl_sub = None
+
+        if not silent and not getattr(self, "silent_mode", False):
+            try:
+                progress_win = tk.Toplevel(self.root)
+                progress_win.title("ThermalSight — Cohort Batch Recompute")
+                progress_win.geometry("560x240")
+                progress_win.resizable(False, False)
+                progress_win.transient(self.root)
+                progress_win.grab_set()
+
+                progress_win.update_idletasks()
+                rx = self.root.winfo_rootx() + (self.root.winfo_width() - 560) // 2
+                ry = self.root.winfo_rooty() + (self.root.winfo_height() - 240) // 2
+                progress_win.geometry(f"+{max(10, rx)}+{max(10, ry)}")
+
+                lbl_h = tk.Label(progress_win, text=f"⚡ Batch Recomputing Cohort: {parent_dir.name}", font=("Arial", 12, "bold"), fg="#1E293B")
+                lbl_h.pack(pady=(16, 4))
+
+                lbl_sub = tk.Label(progress_win, text=f"Processing {total_protocols} protocols sequentially (100% isolated outputs)...", font=("Arial", 9), fg="#64748B")
+                lbl_sub.pack(pady=(0, 10))
+
+                pbar = ttk.Progressbar(progress_win, orient="horizontal", mode="determinate", length=480, maximum=total_protocols)
+                pbar.pack(pady=4)
+
+                lbl_status = tk.Label(progress_win, text="Starting cohort batch...", font=("Arial", 9, "bold"), fg="#4F46E5")
+                lbl_status.pack(pady=(8, 12))
+
+                progress_win.update()
+                self.root.update_idletasks()
+            except Exception as e:
+                progress_win = None
+                print(f"Cohort progress window error: {e}")
+
+        all_long_dfs = []
+        all_wide_dfs = []
+
+        for p_idx, proto in enumerate(protocols):
+            proto_name = proto['name']
+            if progress_win:
+                try:
+                    pbar['value'] = p_idx
+                    lbl_status.config(text=f"Protocol {p_idx + 1} of {total_protocols}: '{proto_name}' ({len(proto['images'])} images)...")
+                    progress_win.update()
+                    self.root.update_idletasks()
+                except Exception:
+                    pass
+
+            # Switch to this protocol
+            self.switch_to_protocol(p_idx, is_initial=False)
+
+            def img_callback(curr_img, tot_img, img_stem):
+                if progress_win and lbl_sub:
+                    try:
+                        lbl_sub.config(text=f"Protocol '{proto_name}' ({p_idx+1}/{total_protocols}) - Image {curr_img}/{tot_img}: {img_stem}")
+                        progress_win.update()
+                        self.root.update_idletasks()
+                    except Exception:
+                        pass
+
+            try:
+                res = self.recompute_and_export_all_metrics(
+                    silent=True,
+                    is_cohort_subtask=True,
+                    progress_callback=img_callback
+                )
+                if isinstance(res, tuple) and len(res) == 4 and res[0]:
+                    _, df_l, df_w, _ = res
+                    if df_l is not None and not df_l.empty:
+                        df_l_tagged = df_l.copy()
+                        df_l_tagged.insert(0, 'Protocol', proto_name)
+                        all_long_dfs.append(df_l_tagged)
+                    if df_w is not None and not df_w.empty:
+                        df_w_tagged = df_w.copy()
+                        df_w_tagged.insert(0, 'Protocol', proto_name)
+                        all_wide_dfs.append(df_w_tagged)
+            except Exception as ex:
+                print(f"[ERROR] Failed recomputing protocol '{proto_name}': {ex}", file=sys.stderr)
+
+        if all_wide_dfs or all_long_dfs:
+            if progress_win:
+                try:
+                    pbar['value'] = total_protocols
+                    lbl_status.config(text="Generating Master Cohort Comparison Workbook...")
+                    progress_win.update()
+                    self.root.update_idletasks()
+                except Exception:
+                    pass
+
+            master_excel = parent_dir / "Cohort_Protocols_Summary.xlsx"
+            csv_wide_path = parent_dir / "Cohort_Protocols_Summary.csv"
+            csv_long_path = parent_dir / "Cohort_Protocols_Detailed.csv"
+
+            df_cohort_wide = pd.concat(all_wide_dfs, ignore_index=True) if all_wide_dfs else pd.DataFrame()
+            df_cohort_long = pd.concat(all_long_dfs, ignore_index=True) if all_long_dfs else pd.DataFrame()
+
+            try:
+                with pd.ExcelWriter(str(master_excel), engine="openpyxl") as writer:
+                    if not df_cohort_wide.empty:
+                        df_cohort_wide.to_excel(writer, sheet_name="Protocol_Comparison", index=False)
+                    if not df_cohort_long.empty:
+                        df_cohort_long.to_excel(writer, sheet_name="All_Protocols_Detailed", index=False)
+                enhance_cohort_workbook(master_excel, parent_dir.name, total_protocols)
+            except Exception as e:
+                print(f"Master cohort excel notice: {e}")
+
+            if not df_cohort_wide.empty:
+                df_cohort_wide.to_csv(str(csv_wide_path), index=False, encoding="utf-8-sig")
+            if not df_cohort_long.empty:
+                df_cohort_long.to_csv(str(csv_long_path), index=False, encoding="utf-8-sig")
+
+        if progress_win:
+            try:
+                progress_win.grab_release()
+                progress_win.destroy()
+                progress_win = None
+            except Exception:
+                pass
+
+        self.switch_to_protocol(0, is_initial=False)
+
+        completion_msg = (
+            f"✓ Multi-Protocol Cohort Recomputation Successful!\n\n"
+            f"Cohort: {parent_dir.name}\n"
+            f"Total Protocols Processed: {total_protocols}\n\n"
+            f"Outputs Generated (100% Isolated Per Protocol):\n"
+            + "\n".join(f"• 📁 {p['name']}_result/ (PPP_PPG_PGA_Statistical_Summary.xlsx)" for p in protocols)
+            + f"\n\n📊 Consolidated Master Comparison:\n• 📄 Cohort_Protocols_Summary.xlsx\n• 📄 Cohort_Protocols_Summary.csv\n\n"
+            f"Would you like to open the cohort folder now?"
+        )
+        print(f"[COHORT RECOMPUTE SUCCESS] Finished {total_protocols} protocols in {parent_dir}")
+        if not silent and not getattr(self, "silent_mode", False):
+            self.root.lift()
+            self.root.focus_force()
+            if messagebox.askyesno("Cohort Recomputation Complete", completion_msg, parent=self.root):
+                open_folder(parent_dir)
+        return True
+
     def browse_image(self):
         file_path = filedialog.askopenfilename(
             title="Select FLIR Thermal Image",
             filetypes=[("Thermal Images", "*.jpg *.jpeg *.png *.tiff"), ("All Files", "*.*")]
         )
         if file_path:
-            p = Path(file_path)
+            p = Path(file_path).resolve()
+            gp = p.parent.parent
+            is_c, protos = detect_cohort_protocols(gp)
+            if is_c and not self.cohort_info:
+                self.setup_cohort(gp, protos, active_protocol_name=p.parent.name, active_image_path=str(p))
+                return
             siblings = sorted([str(f.resolve()) for f in p.parent.glob("*.jpg")])
             if siblings:
                 self.image_list = siblings
-                self.current_img_idx = siblings.index(str(p.resolve())) if str(p.resolve()) in siblings else 0
+                self.current_img_idx = siblings.index(str(p)) if str(p) in siblings else 0
                 self.combo_images['values'] = [Path(x).name for x in self.image_list]
                 self.update_nav_ui()
-            self.load_image_file(file_path)
+            self._direct_load_image(str(p))
 
     def browse_json(self):
         file_path = filedialog.askopenfilename(
@@ -1018,6 +1556,16 @@ class PPGWorkbenchApp:
             self.load_json_file(file_path)
 
     def load_json_file(self, path_str, silent_err=False):
+        if not self.cohort_info:
+            sess_p = Path(path_str).resolve()
+            gp = sess_p.parent.parent
+            is_c, protos = detect_cohort_protocols(gp)
+            if is_c:
+                self.setup_cohort(gp, protos, active_protocol_name=strip_result_suffix(sess_p.parent.name))
+                return
+        self._direct_load_json(path_str, silent_err=silent_err)
+
+    def _direct_load_json(self, path_str, silent_err=False):
         try:
             with open(path_str, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -1042,7 +1590,7 @@ class PPGWorkbenchApp:
             self.update_nav_ui()
 
             # Load first image in session
-            self.load_image_file(self.image_list[0])
+            self._direct_load_image(self.image_list[0])
 
         except Exception as e:
             if not silent_err and not getattr(self, "silent_mode", False):
@@ -1051,6 +1599,16 @@ class PPGWorkbenchApp:
                 print(f"[ERROR] Failed to load JSON {path_str}: {e}", file=sys.stderr)
 
     def load_image_file(self, path_str):
+        if not self.cohort_info:
+            img_p = Path(path_str).resolve()
+            gp = img_p.parent.parent
+            is_c, protos = detect_cohort_protocols(gp)
+            if is_c:
+                self.setup_cohort(gp, protos, active_protocol_name=img_p.parent.name, active_image_path=str(img_p))
+                return
+        self._direct_load_image(path_str)
+
+    def _direct_load_image(self, path_str):
         try:
             self.image_path = str(Path(path_str).resolve())
             self.temp_raw = load_temperature(path_str)
@@ -1677,7 +2235,7 @@ class PPGWorkbenchApp:
 
 
     # ──────── TARGETED PIPELINE RECOMPUTATION & STATISTICAL EXCEL EXPORT ────────
-    def recompute_and_export_all_metrics(self, silent=False):
+    def recompute_and_export_all_metrics(self, silent=False, progress_callback=None, is_cohort_subtask=False):
         """
         Targeted incremental recomputation across all images in the session.
         Generates:
@@ -1697,6 +2255,22 @@ class PPGWorkbenchApp:
             else:
                 print("[ERROR] No Images: Please load a session JSON or image folder first.", file=sys.stderr)
             return False
+
+        # If in cohort mode with multiple protocols and user clicked GUI recompute directly:
+        if not is_cohort_subtask and not silent and self.cohort_info and len(self.cohort_info.get('protocols', [])) > 1:
+            resp = messagebox.askyesnocancel(
+                "Multi-Protocol Cohort Detected",
+                f"Multi-Protocol Cohort '{self.cohort_info['parent_dir'].name}' contains {len(self.cohort_info['protocols'])} protocols:\n"
+                f"{', '.join(p['name'] for p in self.cohort_info['protocols'])}\n\n"
+                f"• Click YES to Recompute ALL {len(self.cohort_info['protocols'])} protocols (Batch Cohort Export).\n"
+                f"• Click NO to Recompute ONLY current protocol ('{self.cohort_info['protocols'][self.current_protocol_idx]['name']}').\n"
+                f"• Click CANCEL to abort.",
+                parent=self.root
+            )
+            if resp is None:
+                return False
+            if resp:
+                return self.recompute_and_export_all_protocols_cohort(silent=False)
 
         if self.session_json_path and self.session_json_path.parent.name.lower().endswith("_result"):
             sess_parent = self.session_json_path.parent.resolve()
@@ -1741,8 +2315,57 @@ class PPGWorkbenchApp:
                     return right_lbl if is_right else left_lbl
             return "N"
 
-        for img_p in self.image_list:
+        # Modal Progress Dialog for visual progress bar & responsive GUI
+        progress_win = None
+        pbar = None
+        lbl_img = None
+        if not silent and not is_cohort_subtask and not getattr(self, "silent_mode", False):
+            try:
+                progress_win = tk.Toplevel(self.root)
+                progress_win.title("ThermalSight — Recomputing Metrics")
+                progress_win.geometry("520x210")
+                progress_win.resizable(False, False)
+                progress_win.transient(self.root)
+                progress_win.grab_set()
+
+                progress_win.update_idletasks()
+                rx = self.root.winfo_rootx() + (self.root.winfo_width() - 520) // 2
+                ry = self.root.winfo_rooty() + (self.root.winfo_height() - 210) // 2
+                progress_win.geometry(f"+{max(10, rx)}+{max(10, ry)}")
+
+                lbl_h = tk.Label(progress_win, text="⚡ Recomputing Metrics & Generating Figures", font=("Arial", 11, "bold"), fg="#1E293B")
+                lbl_h.pack(pady=(16, 4))
+
+                lbl_sub = tk.Label(progress_win, text=f"Processing {len(self.image_list)} images (Sobel gradients, ROIs & 300 DPI figures)...", font=("Arial", 9), fg="#64748B")
+                lbl_sub.pack(pady=(0, 12))
+
+                pbar = ttk.Progressbar(progress_win, orient="horizontal", mode="determinate", length=440, maximum=len(self.image_list))
+                pbar.pack(pady=4)
+
+                lbl_img = tk.Label(progress_win, text="Initializing pipeline...", font=("Arial", 9, "bold"), fg="#2563EB")
+                lbl_img.pack(pady=(8, 12))
+
+                progress_win.update()
+                self.root.update_idletasks()
+            except Exception as e:
+                progress_win = None
+                print(f"Progress dialog notice: {e}")
+
+        for idx, img_p in enumerate(self.image_list):
             stem = Path(img_p).stem
+            if progress_win:
+                try:
+                    pbar['value'] = idx
+                    lbl_img.config(text=f"Image {idx + 1} of {len(self.image_list)}: {Path(img_p).name}")
+                    progress_win.update()
+                    self.root.update_idletasks()
+                except Exception:
+                    pass
+            if progress_callback:
+                try:
+                    progress_callback(idx + 1, len(self.image_list), stem)
+                except Exception:
+                    pass
             try:
                 temp_raw = load_temperature(img_p)
                 H, W = temp_raw.shape
@@ -2108,6 +2731,19 @@ class PPGWorkbenchApp:
         with open(json_target, "w", encoding="utf-8") as f:
             json.dump(self.session_data, f, indent=2)
 
+        # Close progress modal window if active
+        if progress_win:
+            try:
+                progress_win.grab_release()
+                progress_win.destroy()
+                progress_win = None
+            except Exception:
+                pass
+
+        # If running as a subtask of cohort batch recomputation, return dataframes directly
+        if is_cohort_subtask:
+            return (True, df_long, df_wide, result_dir)
+
         # Show success message with option to open folder
         summary_msg = (
             f"✓ Complete Targeted Recomputation Successful!\n\n"
@@ -2122,8 +2758,11 @@ class PPGWorkbenchApp:
             f"Would you like to open the result folder now?"
         )
         print(f"[RECOMPUTE SUCCESS] Generated Excel and metrics in {result_dir}")
-        if not silent and not getattr(self, "silent_mode", False) and messagebox.askyesno("Recomputation Complete", summary_msg):
-            open_folder(result_dir)
+        if not silent and not getattr(self, "silent_mode", False):
+            self.root.lift()
+            self.root.focus_force()
+            if messagebox.askyesno("Recomputation Complete", summary_msg, parent=self.root):
+                open_folder(result_dir)
         return True
 
     # ──────── U-NET DATASET EXPORTER ────────
@@ -2218,20 +2857,24 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ThermalSight PPG/PGA Interactive Workbench")
     parser.add_argument("--session", type=str, default=None, help="Path to annotations_session.json")
     parser.add_argument("--image", type=str, default=None, help="Path to active thermal image")
+    parser.add_argument("--cohort", type=str, default=None, help="Path to multi-protocol cohort directory")
     parser.add_argument("--export-metrics", action="store_true", help="Headless export of all PPP/PPG/PGA metrics to Excel & CSV")
     args, _ = parser.parse_known_args()
 
     root = tk.Tk()
     if args.export_metrics:
         root.withdraw()
-        app = PPGWorkbenchApp(root, session_arg=args.session, image_arg=args.image, silent_mode=True)
+        app = PPGWorkbenchApp(root, session_arg=args.session, image_arg=args.image, cohort_arg=args.cohort, silent_mode=True)
         try:
-            success = app.recompute_and_export_all_metrics(silent=True)
+            if app.cohort_info and len(app.cohort_info.get("protocols", [])) > 1:
+                success = app.recompute_and_export_all_protocols_cohort(silent=True)
+            else:
+                success = app.recompute_and_export_all_metrics(silent=True)
         except Exception as ex:
             print(f"[FATAL RECOMPUTE ERROR] {ex}", file=sys.stderr)
             success = False
         root.destroy()
         sys.exit(0 if success else 1)
     else:
-        app = PPGWorkbenchApp(root, session_arg=args.session, image_arg=args.image)
+        app = PPGWorkbenchApp(root, session_arg=args.session, image_arg=args.image, cohort_arg=args.cohort)
         root.mainloop()

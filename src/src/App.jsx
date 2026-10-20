@@ -44,6 +44,7 @@ const api = window.electronAPI || {
   openAnnotationDialog: async () => null,
   loadAnnotationFile: async () => null,
   checkExistingAnnotation: async () => null,
+  scanCohortFolder: async () => ({ isCohort: false, protocols: [] }),
   exportResultPackage: async () => {},
   exportPpgSummary: async () => {},
   readImageBase64: async () => null,
@@ -242,6 +243,10 @@ export default function App() {
 
   // RAM state storing annotations per image: { [imagePath]: [ { id, type, cx, cy, radius, labelName, color, points: [{x, y}], star } ] }
   const [segmentations,  setSegmentations]  = useState({});
+
+  // Multi-Protocol Cohort Hierarchy State (v1.8.4)
+  const [cohortData, setCohortData] = useState(null);
+  const [activeCohortProtocol, setActiveCohortProtocol] = useState(null);
 
   // Crash Recovery, Settings & About State
   const [showRestoreModal,   setShowRestoreModal]   = useState(false);
@@ -597,10 +602,56 @@ export default function App() {
     }
   };
 
+  const loadCohortProtocol = async (protocol, currentCohort = cohortData) => {
+    if (!protocol) return;
+    setActiveCohortProtocol(protocol);
+    setFolderPath(protocol.folderPath);
+    let files = protocol.images;
+    if (!files || files.length === 0) {
+      files = await api.listFolderImages(protocol.folderPath);
+    }
+    if (!files || files.length === 0) {
+      alert(`No thermal images found in protocol folder "${protocol.name}".`);
+      return;
+    }
+    setImageList(files);
+    setCurrentIndex(0);
+    setAppMode('bulk');
+
+    try {
+      let existing = null;
+      if (protocol.sessionJsonPath) {
+        existing = await api.loadAnnotationFile(protocol.sessionJsonPath);
+      } else {
+        existing = await api.checkExistingAnnotation(protocol.folderPath);
+      }
+      if (existing && existing.segmentations && Object.keys(existing.segmentations).length > 0) {
+        applyLoadedSession(existing, files);
+        addLog('info', `[COHORT] Restored annotations for protocol "${protocol.name}" (${files.length} images)`);
+      } else {
+        setSegmentations({});
+      }
+    } catch (e) {
+      console.warn('Annotation check error for protocol:', e);
+    }
+    executeBatchIngestion(files, {}, protocol.name);
+  };
+
   const handleBrowseFolder = async () => {
     if (window.electronAPI && window.electronAPI.openFolderDialog) {
       const folder = await api.openFolderDialog();
       if (folder) {
+        if (api.scanCohortFolder) {
+          const cohort = await api.scanCohortFolder(folder);
+          if (cohort && cohort.isCohort && cohort.protocols && cohort.protocols.length > 0) {
+            setCohortData(cohort);
+            loadCohortProtocol(cohort.protocols[0], cohort);
+            addLog('info', `[COHORT] Loaded multi-protocol cohort "${cohort.cohortName}" with ${cohort.protocols.length} protocols`);
+            return;
+          }
+        }
+        setCohortData(null);
+        setActiveCohortProtocol(null);
         setFolderPath(folder);
         const files = await api.listFolderImages(folder);
         if (!files || files.length === 0) {
@@ -1423,6 +1474,12 @@ export default function App() {
 
   // ── Helper to resolve {parentfolder}_result consistently ────────────────────
   const getResultFolderInfo = () => {
+    if (activeCohortProtocol && activeCohortProtocol.resultDir) {
+      return {
+        parentFolderName: activeCohortProtocol.name,
+        resultDir: activeCohortProtocol.resultDir,
+      };
+    }
     if (folderPath) {
       const cleanPath = folderPath.replace(/[\\/]+$/, '');
       const parentName = cleanPath.split(/[\\/]/).pop() || 'thermal';
@@ -2121,7 +2178,8 @@ export default function App() {
         sessionCandidate = `${folderPath}_result/annotations_session.json`;
       }
       const activeImg = activeImagePath || (imageList && imageList[currentIndex]) || null;
-      await window.electronAPI.openPpgWorkbench(sessionCandidate, activeImg);
+      const cohortPath = cohortData ? cohortData.parentPath : null;
+      await window.electronAPI.openPpgWorkbench(sessionCandidate, activeImg, cohortPath);
       addLog('info', '🔬 PPG/PGA Lab Workbench launched successfully.');
     } catch (err) {
       alert(`Could not launch PPG/PGA Lab:\n${err.message || err}`);
@@ -2710,6 +2768,76 @@ export default function App() {
           )}
         </div>
       </header>
+
+      {/* COHORT NAVIGATION BANNER (Multi-Protocol Hierarchy) */}
+      {cohortData && (
+        <div
+          className="cohort-navigation-banner"
+          style={{
+            margin: '8px 16px 0 16px',
+            padding: '8px 14px',
+            borderRadius: '8px',
+            background: 'linear-gradient(90deg, rgba(49, 46, 129, 0.45) 0%, rgba(30, 27, 75, 0.6) 100%)',
+            border: '1px solid #6366f1',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            boxShadow: '0 2px 10px rgba(99, 102, 241, 0.15)'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '18px' }}>🧬</span>
+            <div>
+              <div style={{ fontSize: '12px', fontWeight: '700', color: '#c7d2fe', letterSpacing: '0.3px' }}>
+                COHORT DATASET: <span style={{ color: '#ffffff' }}>{cohortData.cohortName}</span>
+                <span style={{ marginLeft: '8px', background: '#4338ca', color: '#e0e7ff', padding: '1px 7px', borderRadius: '12px', fontSize: '10px' }}>
+                  {cohortData.protocols?.length || 0} Protocols
+                </span>
+              </div>
+              <div style={{ fontSize: '11px', color: '#a5b4fc', marginTop: '2px' }}>
+                Active Protocol: <strong style={{ color: '#38bdf8' }}>{activeCohortProtocol?.name || 'None'}</strong> — Isolated results in <code style={{ color: '#93c5fd', background: 'rgba(0,0,0,0.3)', padding: '1px 4px', borderRadius: '4px' }}>{activeCohortProtocol?.name}_result/</code>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <label style={{ fontSize: '11px', color: '#c7d2fe', fontWeight: '600' }}>Switch Protocol:</label>
+            <select
+              value={activeCohortProtocol?.name || ''}
+              onChange={(e) => {
+                const target = cohortData.protocols.find(p => p.name === e.target.value);
+                if (target) loadCohortProtocol(target);
+              }}
+              style={{
+                background: '#1e1b4b',
+                color: '#e0e7ff',
+                border: '1px solid #818cf8',
+                borderRadius: '6px',
+                padding: '4px 8px',
+                fontSize: '12px',
+                fontWeight: '600',
+                cursor: 'pointer'
+              }}
+            >
+              {cohortData.protocols.map((p) => (
+                <option key={p.name} value={p.name}>
+                  {p.name} ({p.images?.length || 0} images)
+                </option>
+              ))}
+            </select>
+
+            <button
+              className="btn-ghost btn-tiny"
+              style={{ background: '#4338ca', color: '#ffffff', borderColor: '#818cf8', fontWeight: '700' }}
+              title="Launch PPG/PGA Workbench with Cohort Multi-Protocol Mode"
+              onClick={handleLaunchPpgWorkbench}
+            >
+              ⚡ PPG Workbench (Cohort)
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* CALIBRATION WIZARD BANNER */}
       {activeImagePath && calibrationWizardStep && (
