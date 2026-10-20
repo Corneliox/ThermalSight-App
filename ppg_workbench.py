@@ -1,5 +1,5 @@
 """
-ThermalSight PPG & PGA Interactive Workbench (v1.8.4)
+ThermalSight PPG & PGA Interactive Workbench (v1.8.5)
 Standalone companion tool for:
 1. Multi-image session carousel (Next / Prev / Dropdown navigation)
 2. Interactive foot mask paint & erase brush
@@ -455,7 +455,7 @@ def enhance_excel_workbook(excel_path: Path):
         # Subtitle
         ws_guide.merge_cells("A2:G2")
         sub_cell = ws_guide["A2"]
-        sub_cell.value = "ThermalSight v1.8.4 • Diabetic Foot Thermal Biomechanics Evaluation Suite"
+        sub_cell.value = "ThermalSight v1.8.5 • Diabetic Foot Thermal Biomechanics Evaluation Suite"
         sub_cell.fill = PatternFill(start_color="312E81", end_color="312E81", fill_type="solid")
         sub_cell.font = Font(name="Calibri", size=11, italic=True, color="E0E7FF")
         sub_cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -648,7 +648,7 @@ def enhance_cohort_workbook(excel_path: Path, cohort_name: str, total_protocols:
             ws_guide.column_dimensions['B'].width = 30
             ws_guide.column_dimensions['C'].width = 80
 
-            ws_guide.cell(row=1, column=2, value="PANDUAN INTERPRETASI HASIL KOHOR MULTI-PROTOKOL (ThermalSight v1.8.4)").font = Font(name="Calibri", size=14, bold=True, color="312E81")
+            ws_guide.cell(row=1, column=2, value="PANDUAN INTERPRETASI HASIL KOHOR MULTI-PROTOKOL (ThermalSight v1.8.5)").font = Font(name="Calibri", size=14, bold=True, color="312E81")
             guide_rows = [
                 ("Prinsip Kohor", f"Folder kohor '{cohort_name}' memuat {total_protocols} protokol eksperimen independen."),
                 ("Isolasi Data", "Setiap protokol dievaluasi secara terpisah pada masing-masing subfolder '_result'. Nilai rata-rata (mean), min, max, dan deviasi standar dihitung murni dalam protokol masing-masing tanpa pencampuran."),
@@ -675,12 +675,12 @@ class PPGWorkbenchApp:
     def __init__(self, root, session_arg=None, image_arg=None, cohort_arg=None, silent_mode=False):
         self.root = root
         self.silent_mode = silent_mode
-        self.root.title("ThermalSight — PPG & PGA Interactive Research Workbench v1.8.4")
+        self.root.title("ThermalSight — PPG & PGA Interactive Research Workbench v1.8.5")
         self.root.geometry("1560x960")
         self.root.minsize(1220, 780)
         self.root.configure(bg="#F1F5F9")
 
-        # Multi-Protocol Cohort Hierarchy State (v1.8.4)
+        # Multi-Protocol Cohort Hierarchy State (v1.8.5)
         self.cohort_info = None
         self.current_protocol_idx = 0
 
@@ -775,7 +775,7 @@ class PPGWorkbenchApp:
         title_lbl = tk.Label(top_bar, text="ThermalSight PPG & PGA Workbench", font=("Arial", 15, "bold"), fg="#FFFFFF", bg="#0F172A")
         title_lbl.pack(side=tk.LEFT, padx=18, pady=10)
 
-        sub_lbl = tk.Label(top_bar, text="v1.8.4 Ground-Truth Annotation & Topography Lab", font=("Arial", 10), fg="#94A3B8", bg="#0F172A")
+        sub_lbl = tk.Label(top_bar, text="v1.8.5 Ground-Truth Annotation & Topography Lab", font=("Arial", 10), fg="#94A3B8", bg="#0F172A")
         sub_lbl.pack(side=tk.LEFT, padx=5, pady=13)
 
         btn_open_json = tk.Button(top_bar, text="📋 Load Session JSON", font=("Arial", 9, "bold"), bg="#334155", fg="white",
@@ -1298,7 +1298,7 @@ class PPGWorkbenchApp:
                 self._direct_load_json(str(sess_json))
             else:
                 self.session_json_path = None
-                self.session_data = {"version": "1.8.4", "folderPath": str(p), "segmentations": {}, "foot_masks": {}}
+                self.session_data = {"version": "1.8.5", "folderPath": str(p), "segmentations": {}, "foot_masks": {}}
                 self.image_list = imgs
                 self.current_img_idx = 0
                 self.combo_images['values'] = [Path(x).name for x in self.image_list]
@@ -1352,7 +1352,7 @@ class PPGWorkbenchApp:
         elif proto['images']:
             self.session_json_path = None
             self.session_data = {
-                "version": "1.8.4",
+                "version": "1.8.5",
                 "folderPath": str(proto['folder'].resolve()),
                 "segmentations": {},
                 "foot_masks": {}

@@ -1,19 +1,18 @@
 # 🌡 ThermalSight
 
-[![Version](https://img.shields.io/badge/stable%20version-1.8.3-brightgreen.svg)](https://github.com/Corneliox/ThermalSight-App/releases/tag/v1.8.3)
+[![Version](https://img.shields.io/badge/stable%20version-1.8.5-brightgreen.svg)](https://github.com/Corneliox/ThermalSight-App/releases/tag/v1.8.5)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Web-brightgreen.svg)]()
 [![Web App](https://img.shields.io/badge/Live%20Demo-Firebase%20Hosting-orange.svg)](https://thermalsight-web-2026.web.app)
 [![GitHub Pages](https://img.shields.io/badge/GitHub%20Pages-Live%20Mirror-blue.svg)](https://corneliox.github.io/ThermalSight-App/)
 [![License](https://img.shields.io/badge/license-MIT-purple.svg)]()
 
 > [!NOTE]
-> **Production Stable Milestone: v1.8.3**  
-> The current official and verified stable production release is **ThermalSight v1.8.3**. Features include:
-> - **Seamless PPP/PPG/PGA Auto-Bridge**: The desktop *"Save Label & Export"* pipeline now automatically executes headless statistical recomputation in the background, instantly writing `PPP_PPG_PGA_Statistical_Summary.xlsx` (with Sheet 1 Audit Box, Sheet 2 Executive Summary, and Sheet 3 Methodology Guide) directly to the target output directory.
-> - **Interactive Methodology Audit Trail & Excel Guide Sheet**: Multi-sheet statistical report (`PPP_PPG_PGA_Statistical_Summary.xlsx`) featuring an isolated 2-row audit trail box below detailed ROIs, dynamic Excel formulas (`=AVERAGE`, `=MAX`, `=MIN`), referenced cells, and full anatomical rationale for PPP, PPG, and PGA.
-> - **Headless CLI & Workbench Robustness**: Fixed Workbench class structuring and added `--export-metrics` headless batch processing.
-> - **Complete FLIR Attribute Removal**: 100% pure radiometric thermal matrix rendering with automated inpainting fallback for non-radiometric grayscale inputs.
-> - **In-App Multilingual Interactive Workflow Guide**: 3-perspective architecture and operating guide available in English (`EN` - default), Indonesian (`ID`), and Traditional Chinese (`繁中`).
+> **Production Stable Milestone: v1.8.5**  
+> The current official and verified stable production release is **ThermalSight v1.8.5**. Key capabilities:
+> - **Multi-Protocol Cohort Hierarchical Ingestion**: Single-action ingestion of entire cohort directories (e.g. `azmi/1_30`, `1_50`, `1-100`, etc.) with strict mathematical isolation per protocol (`<protocol>_result/`) guaranteeing zero cross-contamination of mean, min, max, and std statistics, complemented by a consolidated master comparison workbook (`Cohort_Protocols_Summary.xlsx`).
+> - **Interactive Cohort Navigation Bar**: Integrated cohort protocol switchers across both the Electron Desktop App and PPG/PGA Lab Workbench with live image count badges and batch recomputation triggers.
+> - **Determinate Progress Bar & Native Completion Dialogs**: Live responsive progress feedback during intensive thermal matrix recomputations, preventing UI freezes and providing one-click access to result folders.
+> - **100% Mathematically Rigorous Triad Metrics (PPP, PPG, PGA)**: Full directional statistics integration with weighted circular mean and vector coherence percentage for accurate diabetic foot thermal biomechanics analysis.
 
 **ThermalSight** is a high-precision biomedical and industrial thermal imaging suite designed for radiometric temperature analysis, multi-label region segmentation, time-series treadmill/pressure protocol tracking, and automated 8-point compass thermal gradient extraction.
 
