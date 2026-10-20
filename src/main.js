@@ -588,6 +588,24 @@ ipcMain.handle('scan-cohort-folder', async (_event, folderPath) => {
           } catch { return false; }
         }).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
 
+        // Also check if images reside inside single-image analysis subfolders e.g. FLIR0426.jpg_analysis
+        if (subImgs.length === 0) {
+          for (const f of subFiles) {
+            try {
+              const subDir = path.join(sPath, f);
+              if (fs.statSync(subDir).isDirectory() && f.toLowerCase().endsWith('_analysis')) {
+                const nestedFiles = fs.readdirSync(subDir);
+                for (const nf of nestedFiles) {
+                  if (exts.includes(path.extname(nf).toLowerCase())) {
+                    subImgs.push(path.join(subDir, nf));
+                  }
+                }
+              }
+            } catch {}
+          }
+          subImgs.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+        }
+
         const resDir = path.join(folderPath, `${s}_result`);
         const sessJson = fs.existsSync(resDir) ? path.join(resDir, 'annotations_session.json') : null;
 
@@ -597,7 +615,7 @@ ipcMain.handle('scan-cohort-folder', async (_event, folderPath) => {
             folderPath: sPath,
             resultDir: resDir,
             sessionJsonPath: (sessJson && fs.existsSync(sessJson)) ? sessJson : null,
-            images: subImgs.map(f => path.join(sPath, f))
+            images: subImgs.map(f => path.isAbsolute(f) ? f : path.join(sPath, f))
           });
         }
       } catch {}
