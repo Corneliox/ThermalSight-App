@@ -1866,16 +1866,28 @@ class PPGWorkbenchApp:
         avg_x = float(np.mean(xs)) if xs else (W * 0.28)
         col_prof = np.mean(temp_work, axis=0)
         c_start, c_end = int(W * 0.35), int(W * 0.65)
+        left_peak = float(np.max(col_prof[:c_start])) if c_start > 0 else 0.0
+        right_peak = float(np.max(col_prof[c_end:])) if c_end < W else 0.0
+        min_center = float(np.min(col_prof[c_start:c_end]))
+        has_two_feet = (left_peak - min_center >= 2.0) and (right_peak - min_center >= 2.0)
+
         valley_idx = int(np.argmin(col_prof[c_start:c_end])) + c_start
 
-        if avg_x < valley_idx:
-            self.foot_patch_raw = temp_work[:, :valley_idx].copy()
-            self.offset_x = 0
-            self.foot_side = "RightFoot"
+        if has_two_feet:
+            self.foot_side = "RightFoot" if avg_x < valley_idx else "LeftFoot"
+            margin = int(W * 0.08)  # Margin tolerance so medial border (toes/arch) is never chopped
+            if self.foot_side == "RightFoot":
+                split_col = min(W, valley_idx + margin)
+                self.foot_patch_raw = temp_work[:, :split_col].copy()
+                self.offset_x = 0
+            else:
+                split_col = max(0, valley_idx - margin)
+                self.foot_patch_raw = temp_work[:, split_col:].copy()
+                self.offset_x = split_col
         else:
-            self.foot_patch_raw = temp_work[:, valley_idx:].copy()
-            self.offset_x = valley_idx
-            self.foot_side = "LeftFoot"
+            self.foot_side = "RightFoot" if avg_x < (W / 2) else "LeftFoot"
+            self.foot_patch_raw = temp_work.copy()
+            self.offset_x = 0
 
         # Check if saved foot_mask_polygon exists in session data
         saved_polys = None
@@ -1919,9 +1931,35 @@ class PPGWorkbenchApp:
             binary_cand = (self.foot_patch_raw > bg_map).astype(np.uint8)
 
             num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_cand)
+            target_idx = None
             if num_labels > 1:
-                largest_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-                clean_mask = (labels == largest_idx)
+                # 1. Anchor to user's ROI landmarks (T1, M1, M2)
+                for r in self.rois_data:
+                    if isinstance(r, dict):
+                        rx = int(round(r.get("cx", avg_x) - self.offset_x))
+                        ry = int(round(r.get("cy", H / 2)))
+                        if 0 <= rx < self.foot_patch_raw.shape[1] and 0 <= ry < H:
+                            lbl_at_roi = labels[ry, rx]
+                            if lbl_at_roi > 0:
+                                target_idx = lbl_at_roi
+                                break
+                # 2. Search local neighborhood around ROI coordinates
+                if target_idx is None and len(xs) > 0:
+                    for r in self.rois_data:
+                        if isinstance(r, dict):
+                            rx = int(round(r.get("cx", avg_x) - self.offset_x))
+                            ry = int(round(r.get("cy", H / 2)))
+                            y0, y1 = max(0, ry - 8), min(H, ry + 9)
+                            x0, x1 = max(0, rx - 8), min(self.foot_patch_raw.shape[1], rx + 9)
+                            sub_lbls = labels[y0:y1, x0:x1]
+                            pos_lbls = sub_lbls[sub_lbls > 0]
+                            if len(pos_lbls) > 0:
+                                target_idx = int(np.bincount(pos_lbls).argmax())
+                                break
+                # 3. Fallback to largest area
+                if target_idx is None:
+                    target_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+                clean_mask = (labels == target_idx)
             else:
                 clean_mask = (self.foot_patch_raw > bg_map)
 
@@ -2552,21 +2590,33 @@ class PPGWorkbenchApp:
                 if not rois and self.image_path == img_p:
                     rois = self.rois_data
 
-                # Foot side detection
+                # Foot side & patch detection (Label-Anchored with Margin Tolerance)
                 xs = [r.get("cx", (r.get("points") or [{}])[0].get("x", W / 2)) for r in rois if isinstance(r, dict)]
                 avg_x = float(np.mean(xs)) if xs else (W * 0.28)
                 col_prof = np.mean(temp_raw, axis=0)
                 c_start, c_end = int(W * 0.35), int(W * 0.65)
+                left_peak = float(np.max(col_prof[:c_start])) if c_start > 0 else 0.0
+                right_peak = float(np.max(col_prof[c_end:])) if c_end < W else 0.0
+                min_center = float(np.min(col_prof[c_start:c_end]))
+                has_two_feet = (left_peak - min_center >= 2.0) and (right_peak - min_center >= 2.0)
+
                 valley_idx = int(np.argmin(col_prof[c_start:c_end])) + c_start
 
-                if avg_x < valley_idx:
-                    foot_patch = temp_raw[:, :valley_idx].copy()
-                    off_x = 0
-                    is_right = True
+                if has_two_feet:
+                    is_right = (avg_x < valley_idx)
+                    margin = int(W * 0.08)  # Margin tolerance so medial border (toes/arch) is never chopped
+                    if is_right:
+                        split_col = min(W, valley_idx + margin)
+                        foot_patch = temp_raw[:, :split_col].copy()
+                        off_x = 0
+                    else:
+                        split_col = max(0, valley_idx - margin)
+                        foot_patch = temp_raw[:, split_col:].copy()
+                        off_x = split_col
                 else:
-                    foot_patch = temp_raw[:, valley_idx:].copy()
-                    off_x = valley_idx
-                    is_right = False
+                    is_right = (avg_x < (W / 2))
+                    foot_patch = temp_raw.copy()
+                    off_x = 0
 
                 # Retrieve or compute mask
                 saved_polys = None
@@ -2604,9 +2654,35 @@ class PPGWorkbenchApp:
                         bg_map = np.full_like(foot_patch, effective_bg)
                     binary_cand = (foot_patch > bg_map).astype(np.uint8)
                     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_cand)
+                    target_idx = None
                     if num_labels > 1:
-                        lg_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-                        clean_mask = (labels == lg_idx)
+                        # 1. Anchor to user ROI points (T1, M1, M2)
+                        for r in rois:
+                            if isinstance(r, dict):
+                                rx = int(round(r.get("cx", avg_x) - off_x))
+                                ry = int(round(r.get("cy", H / 2)))
+                                if 0 <= rx < foot_patch.shape[1] and 0 <= ry < H:
+                                    lbl_at_roi = labels[ry, rx]
+                                    if lbl_at_roi > 0:
+                                        target_idx = lbl_at_roi
+                                        break
+                        # 2. Local neighborhood search around ROI coordinates
+                        if target_idx is None and len(xs) > 0:
+                            for r in rois:
+                                if isinstance(r, dict):
+                                    rx = int(round(r.get("cx", avg_x) - off_x))
+                                    ry = int(round(r.get("cy", H / 2)))
+                                    y0, y1 = max(0, ry - 8), min(H, ry + 9)
+                                    x0, x1 = max(0, rx - 8), min(foot_patch.shape[1], rx + 9)
+                                    sub_lbls = labels[y0:y1, x0:x1]
+                                    pos_lbls = sub_lbls[sub_lbls > 0]
+                                    if len(pos_lbls) > 0:
+                                        target_idx = int(np.bincount(pos_lbls).argmax())
+                                        break
+                        # 3. Fallback to largest area
+                        if target_idx is None:
+                            target_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+                        clean_mask = (labels == target_idx)
                     else:
                         clean_mask = (foot_patch > bg_map)
                     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (morph_k, morph_k))
