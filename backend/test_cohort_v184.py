@@ -211,6 +211,24 @@ class TestCohortProtocolsV184(unittest.TestCase):
         img_names_in_excel = {str(ws_det.cell(row=r, column=1).value) for r in range(2, 2 + len(data_rows))}
         self.assertEqual(img_names_in_excel, {'FLIR0426', 'FLIR0428'}, "Excel must only contain FLIR0426 and FLIR0428")
 
+        # 4. Test Excel file locking resilience: if primary Excel is locked, fallback to _isolated.xlsx
+        with open(excel_out, 'r+b') as locked_file:
+            # File is now opened exclusively / locked on Windows
+            success_lock = app.recompute_and_export_all_metrics(silent=True)
+            self.assertTrue(success_lock, "Recompute should succeed even if primary Excel is locked")
+            fallback_excel = os.path.join(res_dir_130, 'PPP_PPG_PGA_Statistical_Summary_isolated.xlsx')
+            self.assertTrue(os.path.exists(fallback_excel), "Fallback isolated Excel must be created when primary is locked")
+            
+            wb_fall = openpyxl.load_workbook(fallback_excel)
+            ws_fall = wb_fall['Detailed_ROIs']
+            fall_rows = []
+            for r in range(2, ws_fall.max_row + 1):
+                val = ws_fall.cell(row=r, column=1).value
+                if not val or not str(val).strip() or "AUDIT" in str(val).upper():
+                    break
+                fall_rows.append(str(val).strip())
+            self.assertEqual(len(fall_rows), 6, "Fallback Excel must also have exactly 6 isolated rows")
+
         root.destroy()
 
 if __name__ == '__main__':
