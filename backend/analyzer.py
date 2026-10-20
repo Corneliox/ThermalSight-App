@@ -1277,113 +1277,65 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         temp_work[:, int(W * 0.968):] = 23.5
 
     # 2. Determine Foot Side: Screen Left (avg_x < W/2) -> Right Foot in camera plantar view
-    # 2. Determine Foot Side & Patch with Margin Tolerance (Label-Anchored)
+    # 2. Determine Foot Side & Patch with Margin Tolerance (Thermal-Valley Split)
     xs = [r.get("cx", (r.get("points") or [{}])[0].get("x", W / 2)) for r in rois if isinstance(r, dict)]
     avg_x = float(np.mean(xs)) if xs else (W * 0.28)
     col_prof = np.mean(temp_work, axis=0)
     c_start, c_end = int(W * 0.35), int(W * 0.65)
-    left_peak = float(np.max(col_prof[:c_start])) if c_start > 0 else 0.0
-    right_peak = float(np.max(col_prof[c_end:])) if c_end < W else 0.0
-    min_center = float(np.min(col_prof[c_start:c_end]))
-    has_two_feet = (left_peak - min_center >= 2.0) and (right_peak - min_center >= 2.0)
-
     valley_idx = int(np.argmin(col_prof[c_start:c_end])) + c_start
 
-    if has_two_feet:
-        foot_side = "RightFoot" if avg_x < valley_idx else "LeftFoot"
-        margin = int(W * 0.08)  # Margin tolerance so medial border (toes/arch) is never chopped
-        if foot_side == "RightFoot":
-            split_col = min(W, valley_idx + margin)
-            foot_patch_raw = temp_work[:, :split_col].copy()
-            offset_x = 0
-        else:
-            split_col = max(0, valley_idx - margin)
-            foot_patch_raw = temp_work[:, split_col:].copy()
-            offset_x = split_col
-    else:
-        foot_side = "RightFoot" if avg_x < (W / 2) else "LeftFoot"
-        foot_patch_raw = temp_work.copy()
+    is_right = (avg_x < valley_idx)
+    foot_side = "RightFoot" if is_right else "LeftFoot"
+    margin = int(W * 0.08)  # Margin tolerance so medial border (toes/arch) is never chopped
+    if is_right:
+        split_col = min(W, valley_idx + margin)
+        foot_patch_raw = temp_work[:, :split_col].copy()
         offset_x = 0
-
-    # Crop clean foot bounding box (isolated from background & bedsheet)
-    if np.max(foot_patch_raw) < 100:
-        # Radiometric Celsius mode: spatially-aware threshold aligned with ppg_workbench.py (31.0°C / adaptive)
-        p85 = float(np.percentile(foot_patch_raw, 85))
-        p25 = float(np.percentile(foot_patch_raw, 25))
-        bg_thresh = 31.0 if (p25 < 31.0 < p85) else (p25 + 0.4 * (p85 - p25))
-        bg_map = np.full_like(foot_patch_raw, bg_thresh)
-        bg_map[int(H * 0.75):, :] = bg_thresh + min(1.2, (p85 - bg_thresh) * 0.3)
-        binary_cand = (foot_patch_raw > bg_map).astype(np.uint8)
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_cand)
-        target_idx = None
-        if num_labels > 1:
-            for r in rois:
-                if isinstance(r, dict):
-                    rx = int(round(r.get("cx", avg_x) - offset_x))
-                    ry = int(round(r.get("cy", H / 2)))
-                    if 0 <= rx < foot_patch_raw.shape[1] and 0 <= ry < H:
-                        lbl_at_roi = labels[ry, rx]
-                        if lbl_at_roi > 0:
-                            target_idx = lbl_at_roi
-                            break
-            if target_idx is None and len(xs) > 0:
-                for r in rois:
-                    if isinstance(r, dict):
-                        rx = int(round(r.get("cx", avg_x) - offset_x))
-                        ry = int(round(r.get("cy", H / 2)))
-                        y0, y1 = max(0, ry - 8), min(H, ry + 9)
-                        x0, x1 = max(0, rx - 8), min(foot_patch_raw.shape[1], rx + 9)
-                        sub_lbls = labels[y0:y1, x0:x1]
-                        pos_lbls = sub_lbls[sub_lbls > 0]
-                        if len(pos_lbls) > 0:
-                            target_idx = int(np.bincount(pos_lbls).argmax())
-                            break
-            if target_idx is None:
-                target_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-            clean_foot_mask = (labels == target_idx)
-        else:
-            clean_foot_mask = (foot_patch_raw > bg_map)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-        clean_foot_mask = cv2.morphologyEx(clean_foot_mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
-        clean_foot_mask = cv2.morphologyEx(clean_foot_mask, cv2.MORPH_OPEN, kernel).astype(bool)
     else:
-        # Grayscale fallback mode
-        bg_thresh = max(25.5, float(np.percentile(foot_patch_raw, 35)))
-        binary_cand = (foot_patch_raw > bg_thresh).astype(np.uint8)
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_cand)
-        target_idx = None
-        if num_labels > 1:
-            for r in rois:
-                if isinstance(r, dict):
-                    rx = int(round(r.get("cx", avg_x) - offset_x))
-                    ry = int(round(r.get("cy", H / 2)))
-                    if 0 <= rx < foot_patch_raw.shape[1] and 0 <= ry < H:
-                        lbl_at_roi = labels[ry, rx]
-                        if lbl_at_roi > 0:
-                            target_idx = lbl_at_roi
-                            break
-            if target_idx is None:
-                target_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-            clean_foot_mask = (labels == target_idx)
-        else:
-            clean_foot_mask = (foot_patch_raw > bg_thresh)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        clean_foot_mask = cv2.morphologyEx(clean_foot_mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel).astype(bool)
+        split_col = max(0, valley_idx - margin)
+        foot_patch_raw = temp_work[:, split_col:].copy()
+        offset_x = split_col
 
-    ys, xs_mask = np.where(clean_foot_mask)
+    # 3. Whole Foot Bounding Box (Toes to Heel anchored to ROIs & thermal tissue)
+    if np.max(foot_patch_raw) < 100.0:
+        p35 = float(np.percentile(foot_patch_raw, 35))
+        thresh = max(26.0, min(29.0, p35))
+    else:
+        p35 = float(np.percentile(foot_patch_raw, 35))
+        thresh = max(25.5, p35)
+
+    warm_mask = (foot_patch_raw > thresh)
+    ys, xs_mask = np.where(warm_mask)
+
+    roi_ys = [int(round(r.get("cy", (r.get("points") or [{}])[0].get("y", H / 2)))) for r in rois if isinstance(r, dict)]
+    roi_xs = [int(round(r.get("cx", (r.get("points") or [{}])[0].get("x", W / 2)) - offset_x)) for r in rois if isinstance(r, dict)]
+
     pad = 4
     if len(ys) > 50:
-        ymin = max(0, int(np.min(ys)) - pad)
-        ymax = min(H - 1, int(np.max(ys)) + pad)
-        xmin = max(0, int(np.min(xs_mask)) - pad)
-        xmax = min(foot_patch_raw.shape[1] - 1, int(np.max(xs_mask)) + pad)
-        foot_crop = foot_patch_raw[ymin:ymax+1, xmin:xmax+1].copy()
-        mask_crop = clean_foot_mask[ymin:ymax+1, xmin:xmax+1]
-        foot_crop[~mask_crop] = 23.5
+        ymin = max(0, min(int(np.min(ys)), min(roi_ys) if roi_ys else 0) - pad)
+        ymax = min(H - 1, max(int(np.max(ys)), max(roi_ys) if roi_ys else H - 1) + pad)
+        xmin = max(0, min(int(np.min(xs_mask)), min(roi_xs) if roi_xs else 0) - pad)
+        xmax = min(foot_patch_raw.shape[1] - 1, max(int(np.max(xs_mask)), max(roi_xs) if roi_xs else foot_patch_raw.shape[1] - 1) + pad)
     else:
         ymin, ymax, xmin, xmax = 0, H - 1, 0, foot_patch_raw.shape[1] - 1
-        foot_crop = foot_patch_raw.copy()
-        mask_crop = np.ones_like(foot_crop, dtype=bool)
+
+    foot_crop = foot_patch_raw[ymin:ymax+1, xmin:xmax+1].copy()
+
+    # Foot tissue mask inside crop
+    crop_warm = (foot_crop > thresh)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mask_crop = cv2.morphologyEx(crop_warm.astype(np.uint8), cv2.MORPH_CLOSE, kernel).astype(bool)
+
+    # Ensure all labeled ROI areas are unconditionally marked inside the foot mask
+    crop_warm_u8 = mask_crop.astype(np.uint8)
+    for r in rois:
+        if isinstance(r, dict):
+            rx = int(round(r.get("cx", (r.get("points") or [{}])[0].get("x", W / 2)) - offset_x - xmin))
+            ry = int(round(r.get("cy", (r.get("points") or [{}])[0].get("y", H / 2)) - ymin))
+            rad = int(round(float(r.get("radius", 12.0))))
+            cv2.circle(crop_warm_u8, (rx, ry), rad, 1, -1)
+    mask_crop = (crop_warm_u8 > 0)
+    foot_crop[~mask_crop] = 23.5
 
     ch, cw = foot_crop.shape
     aspect = max(0.1, float(cw) / max(1, ch))
