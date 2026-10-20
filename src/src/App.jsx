@@ -1859,12 +1859,20 @@ export default function App() {
         exportFilesMap[`analytics_graph_white.svg`] = generateGraphSvg(firstLabel, aggregatedStats[firstLabel], 'white');
       }
 
+      // Strict protocol isolation: only include segmentations and calibrations belonging to targetPaths
+      const targetSegs = {};
+      const targetCalibs = {};
+      targetPaths.forEach(p => {
+        if (segmentations[p]) targetSegs[p] = segmentations[p];
+        if (calibrationsMap[p]) targetCalibs[p] = calibrationsMap[p];
+      });
+
       const masterData = {
         exportedAt: new Date().toISOString(),
         folderPath,
         labels,
-        segmentations,
-        calibrationsMap,
+        segmentations: targetSegs,
+        calibrationsMap: targetCalibs,
         aggregatedStats,
       };
 

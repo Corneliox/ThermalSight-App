@@ -18,6 +18,7 @@ Standalone companion tool for:
 import os
 import sys
 import json
+import copy
 import shutil
 import argparse
 import subprocess
@@ -137,11 +138,26 @@ def detect_cohort_protocols(folder_path):
         if not imgs:
             for sub_sub in sdir.glob("*"):
                 if sub_sub.is_dir() and sub_sub.name.lower().endswith(('_analysis', '_result')):
-                    cand_stem = sub_sub.name[:-9] if sub_sub.name.lower().endswith('_analysis') else sub_sub.name
-                    for ext in img_exts:
-                        cand_img = sdir / f"{cand_stem}{ext}"
+                    # 1. Check if image is directly inside sub_sub
+                    for f in sorted(sub_sub.glob("*")):
+                        if f.suffix.lower() in img_exts and f.is_file() and str(f.resolve()) not in imgs:
+                            imgs.append(str(f.resolve()))
+                    # 2. Check if parent sdir contains the companion image
+                    raw_stem = sub_sub.name
+                    if raw_stem.lower().endswith('_analysis'):
+                        raw_stem = raw_stem[:-9]
+                    elif raw_stem.lower().endswith('_result'):
+                        raw_stem = raw_stem[:-7]
+                    
+                    if raw_stem.lower().endswith(img_exts):
+                        cand_img = sdir / raw_stem
                         if cand_img.exists() and str(cand_img.resolve()) not in imgs:
                             imgs.append(str(cand_img.resolve()))
+                    else:
+                        for ext in img_exts:
+                            cand_img = sdir / f"{raw_stem}{ext}"
+                            if cand_img.exists() and str(cand_img.resolve()) not in imgs:
+                                imgs.append(str(cand_img.resolve()))
 
         if imgs or (sess_json and sess_json.exists()):
             protocols.append({
@@ -1276,11 +1292,11 @@ class PPGWorkbenchApp:
         return True
 
     # ──────── SMART DIRECTORY & IMAGE RESOLUTION ────────
-    def resolve_image_paths_from_json(self, json_path_str, data):
+    def resolve_image_paths_from_json(self, json_path_str, data, allowed_folder=None):
         """
         Smart image resolver:
-        Searches original keys, JSON dir, parent dir, and subdirectories.
-        If no images found, returns None (triggering 'Image not Found').
+        Searches original keys, JSON dir, and sibling protocol source dir.
+        Strictly limits search scope to THIS protocol's folder to prevent cross-protocol leakage.
         """
         if not isinstance(data, dict):
             return None, {}
@@ -1300,22 +1316,33 @@ class PPGWorkbenchApp:
         json_dir = Path(json_path_str).resolve().parent
         parent_dir = json_dir.parent
 
-        # Collect candidate search directories (prioritize local sibling folders before stale absolute paths)
-        candidate_dirs = [json_dir, parent_dir]
+        # Collect candidate search directories strictly for THIS protocol
+        candidate_dirs = [json_dir]
+        if allowed_folder and Path(allowed_folder).exists():
+            candidate_dirs.insert(0, Path(allowed_folder).resolve())
+
         base_stem = strip_result_suffix(json_dir.name)
         sibling_source = parent_dir / base_stem
-        if sibling_source.exists() and sibling_source.is_dir():
-            candidate_dirs.insert(0, sibling_source)
-        try:
-            for item in parent_dir.iterdir():
-                if item.is_dir() and item not in candidate_dirs:
-                    candidate_dirs.append(item)
-        except Exception:
-            pass
-        if "folderPath" in data and data["folderPath"] and Path(data["folderPath"]).exists():
-            candidate_dirs.append(Path(data["folderPath"]))
+        if sibling_source.exists() and sibling_source.is_dir() and sibling_source.resolve() not in [cd.resolve() for cd in candidate_dirs]:
+            candidate_dirs.insert(0, sibling_source.resolve())
 
-        # Try to resolve every key
+        # Also check single-image analysis subfolders inside candidate dirs
+        for cdir in list(candidate_dirs):
+            try:
+                for sub in cdir.iterdir():
+                    if sub.is_dir() and sub.name.lower().endswith(('_analysis', '_result')):
+                        candidate_dirs.append(sub.resolve())
+            except Exception:
+                pass
+
+        if "folderPath" in data and data["folderPath"] and Path(data["folderPath"]).exists():
+            fp = Path(data["folderPath"]).resolve()
+            if any(fp == cd for cd in candidate_dirs):
+                pass
+            elif not allowed_folder:
+                candidate_dirs.append(fp)
+
+        # Try to resolve every key strictly within candidate_dirs
         resolved_list = []
         burned_segs = {}
         for old_k in keys:
@@ -1326,8 +1353,12 @@ class PPGWorkbenchApp:
                 if cand.exists():
                     found_full = str(cand.resolve())
                     break
+            
+            # If not found yet and old_k exists directly on disk, ensure it belongs to this protocol
             if not found_full and Path(old_k).exists():
-                found_full = str(Path(old_k).resolve())
+                old_p = Path(old_k).resolve()
+                if any(cd in (old_p.parent, old_p.parent.parent) for cd in candidate_dirs):
+                    found_full = str(old_p)
             
             if found_full:
                 resolved_list.append(found_full)
@@ -1427,26 +1458,61 @@ class PPGWorkbenchApp:
         if not self.cohort_info or idx < 0 or idx >= len(self.cohort_info['protocols']):
             return
 
-        # Auto-save active protocol annotations if modified
+        # Auto-save previous protocol annotations if modified (isolated strictly to previous protocol)
         if not is_initial and self.session_data and self.image_list and hasattr(self, "current_protocol_idx"):
             try:
                 prev_proto = self.cohort_info['protocols'][self.current_protocol_idx]
                 prev_proto['result_dir'].mkdir(parents=True, exist_ok=True)
+                valid_bnames = {Path(p).name for p in prev_proto.get('images', [])}
+                save_data = copy.deepcopy(self.session_data)
+                if "segmentations" in save_data and isinstance(save_data["segmentations"], dict):
+                    save_data["segmentations"] = {k: v for k, v in save_data["segmentations"].items() if Path(k).name in valid_bnames}
+                if "foot_masks" in save_data and isinstance(save_data["foot_masks"], dict):
+                    save_data["foot_masks"] = {k: v for k, v in save_data["foot_masks"].items() if Path(k).name in valid_bnames}
                 with open(prev_proto['result_dir'] / "annotations_session.json", "w", encoding="utf-8") as f:
-                    json.dump(self.session_data, f, indent=2)
+                    json.dump(save_data, f, indent=2)
             except Exception:
                 pass
 
         self.current_protocol_idx = idx
         proto = self.cohort_info['protocols'][idx]
         self.combo_protocols.current(idx)
+        proto_folder = proto['folder'].resolve()
+        proto_imgs = proto.get('images', [])
 
         # Check if session json exists for this protocol
         if proto['session_json'] and Path(proto['session_json']).exists():
-            self._direct_load_json(str(proto['session_json']), silent_err=True)
+            self._direct_load_json(str(proto['session_json']), silent_err=True, allowed_folder=proto_folder)
+            
+            # CRITICAL ISOLATION: Restrict self.image_list strictly to this protocol's images
+            if self.image_list:
+                filtered_imgs = [
+                    p for p in self.image_list
+                    if Path(p).parent.resolve() == proto_folder or Path(p).name in [Path(x).name for x in proto_imgs]
+                ]
+                if filtered_imgs:
+                    self.image_list = filtered_imgs
+                elif proto_imgs:
+                    self.image_list = proto_imgs
+            elif proto_imgs:
+                self.image_list = proto_imgs
+
+            # Clean session_data segmentations strictly to this protocol's images
+            if self.session_data and "segmentations" in self.session_data and isinstance(self.session_data["segmentations"], dict):
+                valid_bnames = {Path(p).name for p in self.image_list}
+                self.session_data["segmentations"] = {
+                    k: v for k, v in self.session_data["segmentations"].items()
+                    if Path(k).name in valid_bnames
+                }
+
             if active_image_path and active_image_path in self.image_list:
                 self.current_img_idx = self.image_list.index(active_image_path)
-                self._direct_load_image(active_image_path)
+            else:
+                self.current_img_idx = 0
+            if self.image_list:
+                self.combo_images['values'] = [Path(x).name for x in self.image_list]
+                self._direct_load_image(self.image_list[self.current_img_idx])
+                self.update_nav_ui()
         elif proto['images']:
             self.session_json_path = None
             self.session_data = {
@@ -1663,13 +1729,21 @@ class PPGWorkbenchApp:
                 return
         self._direct_load_json(path_str, silent_err=silent_err)
 
-    def _direct_load_json(self, path_str, silent_err=False):
+    def _direct_load_json(self, path_str, silent_err=False, allowed_folder=None):
         try:
             with open(path_str, "r", encoding="utf-8") as f:
                 data = json.load(f)
             
-            resolved_images, burned_segs = self.resolve_image_paths_from_json(path_str, data)
+            resolved_images, burned_segs = self.resolve_image_paths_from_json(path_str, data, allowed_folder=allowed_folder)
             
+            # If resolved_images is empty, but allowed_folder has images:
+            if not resolved_images and allowed_folder and Path(allowed_folder).exists():
+                img_exts = ('.jpg', '.jpeg', '.png', '.tiff', '.tif')
+                af_p = Path(allowed_folder).resolve()
+                fallback_imgs = [str(f.resolve()) for f in sorted(af_p.glob("*")) if f.suffix.lower() in img_exts and f.is_file()]
+                if fallback_imgs:
+                    resolved_images = fallback_imgs
+
             if not resolved_images:
                 if not silent_err and not getattr(self, "silent_mode", False):
                     messagebox.showerror("Image not Found", f"Image not Found\n\nCould not resolve referenced thermal images in:\n{path_str}")
@@ -2341,18 +2415,43 @@ class PPGWorkbenchApp:
             if resp:
                 return self.recompute_and_export_all_protocols_cohort(silent=False)
 
-        if self.session_json_path and self.session_json_path.parent.name.lower().endswith("_result"):
+        # Determine protocol isolation
+        current_proto = None
+        if self.cohort_info and hasattr(self, 'current_protocol_idx') and 0 <= self.current_protocol_idx < len(self.cohort_info.get('protocols', [])):
+            current_proto = self.cohort_info['protocols'][self.current_protocol_idx]
+
+        if current_proto:
+            proto_folder = current_proto['folder'].resolve()
+            proto_imgs = [Path(x).resolve() for x in current_proto.get('images', [])]
+            proto_img_names = {Path(x).name for x in current_proto.get('images', [])}
+            # Strictly filter self.image_list to this protocol
+            isolated_images = [
+                img for img in self.image_list 
+                if Path(img).parent.resolve() == proto_folder or Path(img).resolve() in proto_imgs or Path(img).name in proto_img_names
+            ]
+            if not isolated_images and current_proto.get('images'):
+                isolated_images = current_proto['images']
+            self.image_list = isolated_images
+            result_dir = current_proto['result_dir']
+        elif self.session_json_path and self.session_json_path.parent.name.lower().endswith("_result"):
             sess_parent = self.session_json_path.parent.resolve()
             if sess_parent.name.lower().endswith("_result_result"):
                 clean_name = strip_result_suffix(sess_parent.name)
                 result_dir = sess_parent.parent / f"{clean_name}_result"
             else:
                 result_dir = sess_parent
+            src_dir = sess_parent.parent / strip_result_suffix(sess_parent.name)
+            if src_dir.exists() and src_dir.is_dir():
+                isolated_imgs = [img for img in self.image_list if Path(img).parent.resolve() == src_dir.resolve()]
+                if isolated_imgs:
+                    self.image_list = isolated_imgs
         else:
             active_img_dir = Path(self.image_path).parent if self.image_path else Path(self.image_list[0]).parent
-            # BUG-3.2: Strip trailing _result to avoid _result_result nesting
             clean_name = strip_result_suffix(active_img_dir.name)
             result_dir = active_img_dir.parent / f"{clean_name}_result"
+            isolated_imgs = [img for img in self.image_list if Path(img).parent.resolve() == active_img_dir.resolve()]
+            if isolated_imgs:
+                self.image_list = isolated_imgs
         result_dir.mkdir(parents=True, exist_ok=True)
 
         detailed_rows = []
@@ -2795,10 +2894,31 @@ class PPGWorkbenchApp:
         df_long.to_csv(str(csv_long_path), index=False, encoding="utf-8-sig")
         df_wide.to_csv(str(csv_wide_path), index=False, encoding="utf-8-sig")
 
-        # 3. Save updated session JSON to result directory
-        json_target = result_dir / "annotations_session.json"
-        with open(json_target, "w", encoding="utf-8") as f:
-            json.dump(self.session_data, f, indent=2)
+        # Also mirror Excel & CSVs into Sheet/ subfolder (e.g. 1_30_result/Sheet/)
+        sheet_dir = result_dir / "Sheet"
+        sheet_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            import shutil
+            if has_excel and excel_path.exists():
+                shutil.copy2(excel_path, sheet_dir / "PPP_PPG_PGA_Statistical_Summary.xlsx")
+            if csv_long_path.exists():
+                shutil.copy2(csv_long_path, sheet_dir / "PPP_PPG_PGA_Statistical_Summary.csv")
+            if csv_wide_path.exists():
+                shutil.copy2(csv_wide_path, sheet_dir / "PPP_PPG_PGA_Wide_Summary.csv")
+        except Exception as ex_mirror:
+            print(f"Notice: mirror to Sheet/ folder: {ex_mirror}")
+
+        # 3. Save updated session JSON to result directory (filtered strictly to this protocol's images)
+        if self.session_data:
+            valid_bnames = {Path(p).name for p in self.image_list}
+            save_data = copy.deepcopy(self.session_data)
+            if "segmentations" in save_data and isinstance(save_data["segmentations"], dict):
+                save_data["segmentations"] = {k: v for k, v in save_data["segmentations"].items() if Path(k).name in valid_bnames}
+            if "foot_masks" in save_data and isinstance(save_data["foot_masks"], dict):
+                save_data["foot_masks"] = {k: v for k, v in save_data["foot_masks"].items() if Path(k).name in valid_bnames}
+            json_target = result_dir / "annotations_session.json"
+            with open(json_target, "w", encoding="utf-8") as f:
+                json.dump(save_data, f, indent=2)
 
         # Close progress modal window if active
         if progress_win:
@@ -2935,7 +3055,8 @@ if __name__ == "__main__":
         root.withdraw()
         app = PPGWorkbenchApp(root, session_arg=args.session, image_arg=args.image, cohort_arg=args.cohort, silent_mode=True)
         try:
-            if app.cohort_info and len(app.cohort_info.get("protocols", [])) > 1:
+            # Run batch cohort recomputation only when --cohort was explicitly passed
+            if args.cohort and app.cohort_info and len(app.cohort_info.get("protocols", [])) > 1:
                 success = app.recompute_and_export_all_protocols_cohort(silent=True)
             else:
                 success = app.recompute_and_export_all_metrics(silent=True)
