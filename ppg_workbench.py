@@ -612,10 +612,11 @@ class PPGWorkbenchApp:
         self.canvas = FigureCanvasTkAgg(self.fig, master=display_frame)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # Mouse Event Connections for Brush Painting and ROI Dragging
+        # Mouse Event Connections for Brush Painting, ROI Dragging and Smooth Zooming
         self.canvas.mpl_connect("button_press_event", self.on_canvas_press)
         self.canvas.mpl_connect("motion_notify_event", self.on_canvas_motion)
         self.canvas.mpl_connect("button_release_event", self.on_canvas_release)
+        self.canvas.mpl_connect("scroll_event", self.on_canvas_scroll)
 
         # Matplotlib Toolbar
         toolbar_frame = tk.Frame(display_frame, bg="#FFFFFF")
@@ -623,12 +624,22 @@ class PPGWorkbenchApp:
         self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
         self.toolbar.update()
 
+    def reset_zoom(self):
+        """Reset plot zoom to default 100% full view."""
+        if hasattr(self, "toolbar"):
+            self.toolbar.home()
+        else:
+            self.update_plot()
+
     def bind_shortcuts(self):
         self.root.bind("<Left>", lambda e: self.prev_image())
         self.root.bind("<Right>", lambda e: self.next_image())
         self.root.bind("[", lambda e: self.prev_image())
         self.root.bind("]", lambda e: self.next_image())
         self.root.bind("<Control-s>", lambda e: self.save_annotations_to_json())
+        self.root.bind("<Control-0>", lambda e: self.reset_zoom())
+        self.root.bind("<Home>", lambda e: self.reset_zoom())
+        self.root.bind("r", lambda e: self.reset_zoom() if self.tool_mode.get() == "pan" else None)
 
     def build_sidebar_controls(self):
         p = self.scroll_content
@@ -1256,6 +1267,11 @@ class PPGWorkbenchApp:
         if event.inaxes not in [self.ax1, self.ax2] or event.xdata is None or event.ydata is None:
             return
 
+        if getattr(event, "dblclick", False):
+            # Double-click resets zoom to 100% full view
+            self.reset_zoom()
+            return
+
         if mode == "adjust_roi" and event.button == 1:
             gx, gy = event.xdata, event.ydata
             mapped = self.get_mapped_rois(filtered=True)
@@ -1317,6 +1333,39 @@ class PPGWorkbenchApp:
             self.is_mouse_down = False
             self.recompute_gradients_from_mask()
             self.update_plot()
+
+    def on_canvas_scroll(self, event):
+        """Smoothly zoom in/out using mouse scroll wheel centered on cursor."""
+        mode = self.tool_mode.get()
+        if mode != "pan":
+            return
+        if event.inaxes not in [self.ax1, self.ax2] or event.xdata is None or event.ydata is None:
+            return
+
+        base_scale = 1.25
+        if event.button == "up":
+            # Scroll up: Zoom In
+            scale_factor = 1.0 / base_scale
+        elif event.button == "down":
+            # Scroll down: Zoom Out
+            scale_factor = base_scale
+        else:
+            return
+
+        for ax in [self.ax1, self.ax2]:
+            cur_xlim = ax.get_xlim()
+            cur_ylim = ax.get_ylim()
+            xdata = event.xdata
+            ydata = event.ydata
+            new_width = (cur_xlim[1] - cur_xlim[0]) * scale_factor
+            new_height = (cur_ylim[1] - cur_ylim[0]) * scale_factor
+            span_x = max(1e-6, cur_xlim[1] - cur_xlim[0])
+            span_y = max(1e-6, cur_ylim[1] - cur_ylim[0])
+            relx = (cur_xlim[1] - xdata) / span_x
+            rely = (cur_ylim[1] - ydata) / span_y
+            ax.set_xlim([xdata - new_width * (1.0 - relx), xdata + new_width * relx])
+            ax.set_ylim([ydata - new_height * (1.0 - rely), ydata + new_height * rely])
+        self.canvas.draw_idle()
 
     def apply_brush_stroke(self, gx, gy, interactive=False):
         if gx is None or gy is None or self.mask_crop_u8 is None:
