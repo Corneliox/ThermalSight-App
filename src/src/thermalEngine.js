@@ -2262,13 +2262,20 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     }
   }
 
+  let leftPeak = 0;
+  for (let c = 0; c < cStart; c++) { if (colAverages[c] > leftPeak) leftPeak = colAverages[c]; }
+  let rightPeak = 0;
+  for (let c = cEnd; c < W; c++) { if (colAverages[c] > rightPeak) rightPeak = colAverages[c]; }
+  const hasTwoFeet = (leftPeak - minColVal >= 2.0) && (rightPeak - minColVal >= 2.0);
+
   const isRightFoot = avgX < valleyIdx;
   const footSide = isRightFoot ? 'RightFoot' : 'LeftFoot';
   const footDisplayName = isRightFoot ? 'Kaki Kanan (Right Foot)' : 'Kaki Kiri (Left Foot)';
 
-  // Crop foot patch with stroke-level FLIR OSD exclusion (preserves anatomical heel)
-  const xStartCol = isRightFoot ? 0 : valleyIdx;
-  const xEndCol = isRightFoot ? valleyIdx : W;
+  // Margin tolerance (~8% W) to prevent chopping medial toes or arch
+  const margin = Math.floor(W * 0.08);
+  const xStartCol = hasTwoFeet ? (isRightFoot ? 0 : Math.max(0, valleyIdx - margin)) : 0;
+  const xEndCol = hasTwoFeet ? (isRightFoot ? Math.min(W, valleyIdx + margin) : W) : W;
 
   let ymin = H, ymax = 0, xmin = W, xmax = 0;
   let count = 0;
