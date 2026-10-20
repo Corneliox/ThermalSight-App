@@ -2262,20 +2262,14 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     }
   }
 
-  let leftPeak = 0;
-  for (let c = 0; c < cStart; c++) { if (colAverages[c] > leftPeak) leftPeak = colAverages[c]; }
-  let rightPeak = 0;
-  for (let c = cEnd; c < W; c++) { if (colAverages[c] > rightPeak) rightPeak = colAverages[c]; }
-  const hasTwoFeet = (leftPeak - minColVal >= 2.0) && (rightPeak - minColVal >= 2.0);
-
   const isRightFoot = avgX < valleyIdx;
   const footSide = isRightFoot ? 'RightFoot' : 'LeftFoot';
   const footDisplayName = isRightFoot ? 'Kaki Kanan (Right Foot)' : 'Kaki Kiri (Left Foot)';
 
   // Margin tolerance (~8% W) to prevent chopping medial toes or arch
   const margin = Math.floor(W * 0.08);
-  const xStartCol = hasTwoFeet ? (isRightFoot ? 0 : Math.max(0, valleyIdx - margin)) : 0;
-  const xEndCol = hasTwoFeet ? (isRightFoot ? Math.min(W, valleyIdx + margin) : W) : W;
+  const xStartCol = isRightFoot ? 0 : Math.max(0, valleyIdx - margin);
+  const xEndCol = isRightFoot ? Math.min(W, valleyIdx + margin) : W;
 
   let ymin = H, ymax = 0, xmin = W, xmax = 0;
   let count = 0;
@@ -2294,6 +2288,18 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
       }
     }
   }
+
+  // Also bound by labeled ROIs so no ROI is ever outside the bounding box
+  (segs || []).forEach(s => {
+    const rx = s.cx || (s.points && s.points[0]?.x) || 0;
+    const ry = s.cy || (s.points && s.points[0]?.y) || 0;
+    if (rx >= xStartCol && rx < xEndCol) {
+      if (ry < ymin) ymin = Math.max(0, Math.floor(ry));
+      if (ry > ymax) ymax = Math.min(H - 1, Math.ceil(ry));
+      if (rx < xmin) xmin = Math.max(xStartCol, Math.floor(rx));
+      if (rx > xmax) xmax = Math.min(xEndCol - 1, Math.ceil(rx));
+    }
+  });
 
   const pad = 4;
   if (count > 50) {
