@@ -1325,6 +1325,8 @@ class PPGWorkbenchApp:
         sibling_source = parent_dir / base_stem
         if sibling_source.exists() and sibling_source.is_dir() and sibling_source.resolve() not in [cd.resolve() for cd in candidate_dirs]:
             candidate_dirs.insert(0, sibling_source.resolve())
+            if not allowed_folder:
+                allowed_folder = sibling_source.resolve()
 
         # Also check single-image analysis subfolders inside candidate dirs
         for cdir in list(candidate_dirs):
@@ -1700,9 +1702,15 @@ class PPGWorkbenchApp:
             p = Path(file_path).resolve()
             gp = p.parent.parent
             is_c, protos = detect_cohort_protocols(gp)
-            if is_c and not self.cohort_info:
+            if is_c and (not self.cohort_info or self.cohort_info.get('parent_dir') != gp):
                 self.setup_cohort(gp, protos, active_protocol_name=p.parent.name, active_image_path=str(p))
                 return
+            elif is_c and self.cohort_info and self.cohort_info.get('parent_dir') == gp:
+                target_name = p.parent.name
+                for i, proto in enumerate(self.cohort_info.get('protocols', [])):
+                    if proto['name'].lower() == target_name.lower():
+                        self.switch_to_protocol(i, active_image_path=str(p))
+                        return
             siblings = sorted([str(f.resolve()) for f in p.parent.glob("*.jpg")])
             if siblings:
                 self.image_list = siblings
@@ -1720,13 +1728,18 @@ class PPGWorkbenchApp:
             self.load_json_file(file_path)
 
     def load_json_file(self, path_str, silent_err=False):
-        if not self.cohort_info:
-            sess_p = Path(path_str).resolve()
-            gp = sess_p.parent.parent
-            is_c, protos = detect_cohort_protocols(gp)
-            if is_c:
-                self.setup_cohort(gp, protos, active_protocol_name=strip_result_suffix(sess_p.parent.name))
-                return
+        sess_p = Path(path_str).resolve()
+        gp = sess_p.parent.parent
+        is_c, protos = detect_cohort_protocols(gp)
+        if is_c and (not self.cohort_info or self.cohort_info.get('parent_dir') != gp):
+            self.setup_cohort(gp, protos, active_protocol_name=strip_result_suffix(sess_p.parent.name))
+            return
+        elif is_c and self.cohort_info and self.cohort_info.get('parent_dir') == gp:
+            target_name = strip_result_suffix(sess_p.parent.name)
+            for i, p in enumerate(self.cohort_info.get('protocols', [])):
+                if p['name'].lower() == target_name.lower():
+                    self.switch_to_protocol(i)
+                    return
         self._direct_load_json(path_str, silent_err=silent_err)
 
     def _direct_load_json(self, path_str, silent_err=False, allowed_folder=None):
@@ -2446,14 +2459,28 @@ class PPGWorkbenchApp:
                 result_dir = sess_parent
             src_dir = sess_parent.parent / strip_result_suffix(sess_parent.name)
             if src_dir.exists() and src_dir.is_dir():
-                isolated_imgs = [img for img in self.image_list if Path(img).parent.resolve() == src_dir.resolve()]
+                img_exts = ('.jpg', '.jpeg', '.png', '.tiff', '.tif')
+                src_img_names = {f.name for f in src_dir.glob('*') if f.suffix.lower() in img_exts and f.is_file()}
+                isolated_imgs = [
+                    img for img in self.image_list 
+                    if Path(img).parent.resolve() == src_dir.resolve() or Path(img).name in src_img_names
+                ]
+                if not isolated_imgs and src_img_names:
+                    isolated_imgs = [str(f.resolve()) for f in sorted(src_dir.glob('*')) if f.suffix.lower() in img_exts and f.is_file()]
                 if isolated_imgs:
                     self.image_list = isolated_imgs
         else:
             active_img_dir = Path(self.image_path).parent if self.image_path else Path(self.image_list[0]).parent
             clean_name = strip_result_suffix(active_img_dir.name)
             result_dir = active_img_dir.parent / f"{clean_name}_result"
-            isolated_imgs = [img for img in self.image_list if Path(img).parent.resolve() == active_img_dir.resolve()]
+            img_exts = ('.jpg', '.jpeg', '.png', '.tiff', '.tif')
+            act_img_names = {f.name for f in active_img_dir.glob('*') if f.suffix.lower() in img_exts and f.is_file()}
+            isolated_imgs = [
+                img for img in self.image_list 
+                if Path(img).parent.resolve() == active_img_dir.resolve() or Path(img).name in act_img_names
+            ]
+            if not isolated_imgs and act_img_names:
+                isolated_imgs = [str(f.resolve()) for f in sorted(active_img_dir.glob('*')) if f.suffix.lower() in img_exts and f.is_file()]
             if isolated_imgs:
                 self.image_list = isolated_imgs
         result_dir.mkdir(parents=True, exist_ok=True)
@@ -2882,17 +2909,47 @@ class PPGWorkbenchApp:
 
         df_wide = pd.DataFrame(list(wide_rows.values()))
 
-        # 1. Save Multi-Sheet Excel Workbook (via openpyxl)
+        # 1. Save Multi-Sheet Excel Workbook (via openpyxl) with File Lock Resilience
         excel_path = result_dir / "PPP_PPG_PGA_Statistical_Summary.xlsx"
+        excel_target = excel_path
+        has_excel = False
+
+        # Attempt to unlink existing stale excel to prevent locking / retention anomalies
+        if excel_path.exists():
+            try:
+                excel_path.unlink()
+            except Exception as ex_del:
+                print(f"[EXCEL NOTICE] Primary Excel file is locked: {ex_del}")
+                # Fallback to isolated filename if user has primary file open in MS Excel
+                excel_target = result_dir / "PPP_PPG_PGA_Statistical_Summary_isolated.xlsx"
+                try:
+                    if excel_target.exists():
+                        excel_target.unlink()
+                except Exception:
+                    pass
+
         try:
-            with pd.ExcelWriter(str(excel_path), engine="openpyxl") as writer:
+            with pd.ExcelWriter(str(excel_target), engine="openpyxl") as writer:
                 df_long.to_excel(writer, sheet_name="Detailed_ROIs", index=False)
                 df_wide.to_excel(writer, sheet_name="Executive_Summary", index=False)
             has_excel = True
             # Enhance with Audit Trail Box & Methodology Guide Sheet
-            enhance_excel_workbook(excel_path)
+            enhance_excel_workbook(excel_target)
+
+            # If fallback was used and GUI is active, show helpful warning
+            if excel_target != excel_path and not silent and not is_cohort_subtask and not getattr(self, "silent_mode", False):
+                try:
+                    messagebox.showwarning(
+                        "Excel File Locked",
+                        f"File utama 'PPP_PPG_PGA_Statistical_Summary.xlsx' sedang terbuka di Microsoft Excel.\n\n"
+                        f"Hasil isolasi protokol telah disimpan di file terpisah:\n"
+                        f"📄 {excel_target.name}\n\n"
+                        f"Silakan tutup Microsoft Excel jika ingin memperbarui file utama secara otomatis."
+                    )
+                except Exception:
+                    pass
         except Exception as e:
-            print(f"Excel writer notice: {e}")
+            print(f"[FATAL EXCEL WRITE ERROR] {e}")
             has_excel = False
 
         # 2. Save Universal CSVs (UTF-8 with BOM for Excel compatibility)
@@ -2906,8 +2963,14 @@ class PPGWorkbenchApp:
         sheet_dir.mkdir(parents=True, exist_ok=True)
         try:
             import shutil
-            if has_excel and excel_path.exists():
-                shutil.copy2(excel_path, sheet_dir / "PPP_PPG_PGA_Statistical_Summary.xlsx")
+            if has_excel and excel_target.exists():
+                sheet_excel = sheet_dir / "PPP_PPG_PGA_Statistical_Summary.xlsx"
+                try:
+                    if sheet_excel.exists():
+                        sheet_excel.unlink()
+                    shutil.copy2(excel_target, sheet_excel)
+                except Exception:
+                    shutil.copy2(excel_target, sheet_dir / excel_target.name)
             if csv_long_path.exists():
                 shutil.copy2(csv_long_path, sheet_dir / "PPP_PPG_PGA_Statistical_Summary.csv")
             if csv_wide_path.exists():
