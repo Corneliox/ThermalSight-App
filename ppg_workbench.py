@@ -875,17 +875,46 @@ class PPGWorkbenchApp:
         display_frame = tk.Frame(main_container, bg="#FFFFFF", highlightbackground="#CBD5E1", highlightthickness=1)
         display_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
+        # Prominent Zoom Control Bar (Disables erratic mouse wheel, provides explicit step buttons)
+        zoom_bar = tk.Frame(display_frame, bg="#0F172A", height=38)
+        zoom_bar.pack(side=tk.TOP, fill=tk.X)
+
+        lbl_z_title = tk.Label(zoom_bar, text="🔍 Zoom Controls:", font=("Arial", 9, "bold"), fg="#E2E8F0", bg="#0F172A")
+        lbl_z_title.pack(side=tk.LEFT, padx=(12, 6), pady=6)
+
+        self.btn_zoom_in = tk.Button(zoom_bar, text="➕ Zoom In (+20%)", font=("Arial", 9, "bold"),
+                                     bg="#2563EB", fg="#FFFFFF", activebackground="#1D4ED8", activeforeground="#FFFFFF",
+                                     relief="flat", padx=10, pady=3, cursor="hand2", command=self.zoom_in)
+        self.btn_zoom_in.pack(side=tk.LEFT, padx=4, pady=6)
+
+        self.btn_zoom_out = tk.Button(zoom_bar, text="➖ Zoom Out (-20%)", font=("Arial", 9, "bold"),
+                                      bg="#475569", fg="#FFFFFF", activebackground="#334155", activeforeground="#FFFFFF",
+                                      relief="flat", padx=10, pady=3, cursor="hand2", command=self.zoom_out)
+        self.btn_zoom_out.pack(side=tk.LEFT, padx=4, pady=6)
+
+        self.btn_zoom_reset = tk.Button(zoom_bar, text="🔄 Fit / Reset (100%)", font=("Arial", 9, "bold"),
+                                        bg="#0D9488", fg="#FFFFFF", activebackground="#0F766E", activeforeground="#FFFFFF",
+                                        relief="flat", padx=10, pady=3, cursor="hand2", command=self.reset_zoom)
+        self.btn_zoom_reset.pack(side=tk.LEFT, padx=4, pady=6)
+
+        self.lbl_zoom_level = tk.Label(zoom_bar, text="Level: 100%", font=("Arial", 9, "bold"), fg="#38BDF8", bg="#1E293B",
+                                       padx=8, pady=3, relief="groove")
+        self.lbl_zoom_level.pack(side=tk.LEFT, padx=8, pady=6)
+
+        lbl_hint = tk.Label(zoom_bar, text="💡 Wheel scroll disabled (use buttons, +, -, or Ctrl+0)",
+                            font=("Arial", 8, "italic"), fg="#94A3B8", bg="#0F172A")
+        lbl_hint.pack(side=tk.RIGHT, padx=12, pady=6)
+
         self.fig, (self.ax1, self.ax2) = plt.subplots(1, 2, figsize=(11, 8.5), dpi=100, facecolor="white")
         self.fig.subplots_adjust(left=0.04, right=0.96, top=0.92, bottom=0.06, wspace=0.12)
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=display_frame)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # Mouse Event Connections for Brush Painting, ROI Dragging and Smooth Zooming
+        # Mouse Event Connections for Brush Painting and ROI Dragging (Scroll wheel disabled per user request)
         self.canvas.mpl_connect("button_press_event", self.on_canvas_press)
         self.canvas.mpl_connect("motion_notify_event", self.on_canvas_motion)
         self.canvas.mpl_connect("button_release_event", self.on_canvas_release)
-        self.canvas.mpl_connect("scroll_event", self.on_canvas_scroll)
 
         # Matplotlib Toolbar
         toolbar_frame = tk.Frame(display_frame, bg="#FFFFFF")
@@ -893,12 +922,62 @@ class PPGWorkbenchApp:
         self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
         self.toolbar.update()
 
+    def update_zoom_label(self):
+        pct = int(round(getattr(self, "zoom_level", 1.0) * 100))
+        if hasattr(self, "lbl_zoom_level") and self.lbl_zoom_level.winfo_exists():
+            self.lbl_zoom_level.config(text=f"Level: {pct}%")
+
+    def zoom_in(self, step=1.2):
+        """Zoom in both axes towards the center with a gentle, controlled step."""
+        self.zoom_level = getattr(self, "zoom_level", 1.0) * step
+        factor = 1.0 / step
+        for ax in [self.ax1, self.ax2]:
+            cur_xlim = ax.get_xlim()
+            cur_ylim = ax.get_ylim()
+            cx = 0.5 * (cur_xlim[0] + cur_xlim[1])
+            cy = 0.5 * (cur_ylim[0] + cur_ylim[1])
+            new_w = (cur_xlim[1] - cur_xlim[0]) * factor
+            new_h = (cur_ylim[1] - cur_ylim[0]) * factor
+            if abs(new_w) < 2.0 or abs(new_h) < 2.0:
+                continue
+            ax.set_xlim([cx - new_w / 2.0, cx + new_w / 2.0])
+            ax.set_ylim([cy - new_h / 2.0, cy + new_h / 2.0])
+        self.update_zoom_label()
+        self.canvas.draw_idle()
+
+    def zoom_out(self, step=1.2):
+        """Zoom out both axes from the center with a gentle, controlled step."""
+        factor = step
+        self.zoom_level = max(0.5, getattr(self, "zoom_level", 1.0) / step)
+        for ax in [self.ax1, self.ax2]:
+            cur_xlim = ax.get_xlim()
+            cur_ylim = ax.get_ylim()
+            cx = 0.5 * (cur_xlim[0] + cur_xlim[1])
+            cy = 0.5 * (cur_ylim[0] + cur_ylim[1])
+            new_w = (cur_xlim[1] - cur_xlim[0]) * factor
+            new_h = (cur_ylim[1] - cur_ylim[0]) * factor
+            max_w = (self.n_cols + 2) * 2.5
+            max_h = (self.n_rows + 2) * 2.5
+            if abs(new_w) > max_w or abs(new_h) > max_h:
+                continue
+            ax.set_xlim([cx - new_w / 2.0, cx + new_w / 2.0])
+            ax.set_ylim([cy - new_h / 2.0, cy + new_h / 2.0])
+        self.update_zoom_label()
+        self.canvas.draw_idle()
+
     def reset_zoom(self):
         """Reset plot zoom to default 100% full view."""
+        self.zoom_level = 1.0
+        for ax in [self.ax1, self.ax2]:
+            ax.set_xlim(0.5, self.n_cols + 0.5)
+            ax.set_ylim(self.n_rows + 0.5, 0.5)
         if hasattr(self, "toolbar"):
-            self.toolbar.home()
-        else:
-            self.update_plot()
+            try:
+                self.toolbar.update()
+            except Exception:
+                pass
+        self.update_zoom_label()
+        self.canvas.draw_idle()
 
     def bind_shortcuts(self):
         self.root.bind("<Left>", lambda e: self.prev_image())
@@ -906,6 +985,10 @@ class PPGWorkbenchApp:
         self.root.bind("[", lambda e: self.prev_image())
         self.root.bind("]", lambda e: self.next_image())
         self.root.bind("<Control-s>", lambda e: self.save_annotations_to_json())
+        self.root.bind("+", lambda e: self.zoom_in())
+        self.root.bind("=", lambda e: self.zoom_in())
+        self.root.bind("-", lambda e: self.zoom_out())
+        self.root.bind("_", lambda e: self.zoom_out())
         self.root.bind("<Control-0>", lambda e: self.reset_zoom())
         self.root.bind("<Home>", lambda e: self.reset_zoom())
         self.root.bind("r", lambda e: self.reset_zoom() if self.tool_mode.get() == "pan" else None)
@@ -946,6 +1029,21 @@ class PPGWorkbenchApp:
         r_erase = tk.Radiobutton(box_mode, text="🧹 Erase Mask (Remove Blanket/Noise)", variable=self.tool_mode, value="erase",
                                  font=("Arial", 9, "bold"), fg="#DC2626", bg="#F8FAFC", activebackground="#F8FAFC", command=self.on_tool_mode_change)
         r_erase.pack(anchor="w", pady=1)
+
+        # Quick Zoom Buttons in Sidebar
+        lbl_quick_zoom = tk.Label(box_mode, text="Manual Zoom Controls (No Scroll):", font=("Arial", 8, "bold"), fg="#475569", bg="#F8FAFC")
+        lbl_quick_zoom.pack(anchor="w", pady=(6, 2))
+        frame_zoom_btns = tk.Frame(box_mode, bg="#F8FAFC")
+        frame_zoom_btns.pack(fill=tk.X, pady=(0, 6))
+        btn_zi = tk.Button(frame_zoom_btns, text="🔍+ In", font=("Arial", 8, "bold"), bg="#DBEAFE", fg="#1D4ED8",
+                           relief="flat", padx=4, pady=3, cursor="hand2", command=self.zoom_in)
+        btn_zi.pack(side=tk.LEFT, padx=(0, 2), expand=True, fill=tk.X)
+        btn_zo = tk.Button(frame_zoom_btns, text="🔍- Out", font=("Arial", 8, "bold"), bg="#E2E8F0", fg="#334155",
+                           relief="flat", padx=2, pady=3, cursor="hand2", command=self.zoom_out)
+        btn_zo.pack(side=tk.LEFT, padx=2, expand=True, fill=tk.X)
+        btn_zr = tk.Button(frame_zoom_btns, text="↺ 100%", font=("Arial", 8, "bold"), bg="#CCFBF1", fg="#0F766E",
+                           relief="flat", padx=4, pady=3, cursor="hand2", command=self.reset_zoom)
+        btn_zr.pack(side=tk.RIGHT, padx=(2, 0), expand=True, fill=tk.X)
 
         lbl_bsize = tk.Label(box_mode, text="Brush Radius (Cells):", font=("Arial", 8), fg="#475569", bg="#F8FAFC")
         lbl_bsize.pack(anchor="w", pady=(6, 0))
@@ -1893,37 +1991,8 @@ class PPGWorkbenchApp:
             self.update_plot()
 
     def on_canvas_scroll(self, event):
-        """Smoothly zoom in/out using mouse scroll wheel centered on cursor."""
-        mode = self.tool_mode.get()
-        if mode != "pan":
-            return
-        if event.inaxes not in [self.ax1, self.ax2] or event.xdata is None or event.ydata is None:
-            return
-
-        base_scale = 1.25
-        if event.button == "up":
-            # Scroll up: Zoom In
-            scale_factor = 1.0 / base_scale
-        elif event.button == "down":
-            # Scroll down: Zoom Out
-            scale_factor = base_scale
-        else:
-            return
-
-        for ax in [self.ax1, self.ax2]:
-            cur_xlim = ax.get_xlim()
-            cur_ylim = ax.get_ylim()
-            xdata = event.xdata
-            ydata = event.ydata
-            new_width = (cur_xlim[1] - cur_xlim[0]) * scale_factor
-            new_height = (cur_ylim[1] - cur_ylim[0]) * scale_factor
-            span_x = max(1e-6, cur_xlim[1] - cur_xlim[0])
-            span_y = max(1e-6, cur_ylim[1] - cur_ylim[0])
-            relx = (cur_xlim[1] - xdata) / span_x
-            rely = (cur_ylim[1] - ydata) / span_y
-            ax.set_xlim([xdata - new_width * (1.0 - relx), xdata + new_width * relx])
-            ax.set_ylim([ydata - new_height * (1.0 - rely), ydata + new_height * rely])
-        self.canvas.draw_idle()
+        """Scroll wheel zoom is disabled per user request to prevent erratic jumps. Use zoom buttons or hotkeys (+, -, Ctrl+0)."""
+        pass
 
     def apply_brush_stroke(self, gx, gy, interactive=False):
         if gx is None or gy is None or self.mask_crop_u8 is None:
