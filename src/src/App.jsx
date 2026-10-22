@@ -2174,9 +2174,9 @@ export default function App() {
   const handleLaunchPpgWorkbench = async () => {
     if (!window.electronAPI || !window.electronAPI.openPpgWorkbench) {
       alert(
-        '🔬 PPG/PGA Lab Workbench berjalan secara native dengan Python.\n\n' +
-        '• Jika Anda membuka versi Web di browser: Jalankan file "run_workbench.bat" atau ketik "python ppg_workbench.py" di terminal lokal Anda.\n' +
-        '• Jika Anda menggunakan versi Desktop: Pastikan aplikasi dibuka lewat file instalasi / desktop ThermalSight.'
+        'Notice: The PPG/PGA Research Lab operates natively with the Python scientific engine.\n\n' +
+        '• Web Demo Limitation: The online GitHub Pages preview runs the lightweight Nano client-side engine. Full radiometric FLIR decoding, deep U-Net models, and multi-protocol cohort batch processing are restricted to prevent high server and browser compute loads.\n\n' +
+        '• Desktop Application: For complete multi-protocol cohort analysis, vector figure generation, and interactive Python lab capabilities, please download and run the standalone Desktop Application from GitHub Releases.'
       );
       return;
     }
@@ -2442,39 +2442,60 @@ export default function App() {
       {/* ABOUT POPUP MODAL */}
       {showAboutModal && (
         <div className="modal-overlay">
-          <div className="modal-card" style={{ maxWidth: '520px', textAlign: 'center', padding: '28px' }}>
-            <div style={{ fontSize: '42px', marginBottom: '8px' }}>🌡</div>
-            <h3 style={{ fontSize: '22px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>v1.8.5 (Web & Desktop)</span>
+          <div className="modal-card" style={{ maxWidth: '580px', textAlign: 'center', padding: '32px' }}>
+            <h3 style={{ fontSize: '24px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '4px 12px' }}>v1.8.5 Stable Release</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
-              Thermal Gradient Analysis, 8-Point Star Measurement & Multi-Label Region Segmentation Tool.
+              Biomedical Infrared Thermography, Directional Gradient Statistics (PPP, PPG, PGA), and Multi-Protocol Plantar Perfusion Analysis Suite.
             </p>
 
-            <div style={{ background: 'var(--bg1)', border: '1px solid var(--border)', borderRadius: '8px', padding: '16px', textAlign: 'left', marginBottom: '20px' }}>
-              <h4 style={{ fontSize: '11px', color: 'var(--text2)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '10px' }}>
-                👨‍💻 Development Team & Github Links
+            <div style={{ background: 'var(--bg1)', border: '1px solid var(--border)', borderRadius: '8px', padding: '18px', textAlign: 'left', marginBottom: '20px' }}>
+              <h4 style={{ fontSize: '11px', color: 'var(--text2)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '12px' }}>
+                Authors and Institutional Affiliations
               </h4>
               
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div>
-                    <span style={{ fontWeight: '600', color: 'var(--text0)' }}>Corneliox</span>
-                    <span style={{ fontSize: '11px', color: 'var(--cyan)', marginLeft: '8px' }}>(Lead Developer)</span>
+                    <div style={{ fontWeight: '600', color: 'var(--text0)' }}>Aditya Kusuma</div>
+                    <div style={{ fontSize: '12px', color: 'var(--text2)', marginTop: '2px' }}>Principal Researcher & Author</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text2)' }}>Department of Biomedical Engineering, Asia University, Taiwan</div>
                   </div>
-                  <a className="btn-secondary btn-tiny" href="https://github.com/Corneliox" target="_blank" rel="noreferrer">
-                    🌐 github.com/Corneliox
+                  <a className="btn-secondary btn-tiny" href="https://github.com/Aditya42069" target="_blank" rel="noreferrer">
+                    GitHub Profile
                   </a>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ height: '1px', background: 'var(--border)' }} />
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div>
-                    <span style={{ fontWeight: '600', color: 'var(--text0)' }}>Aditya42069</span>
-                    <span style={{ fontSize: '11px', color: 'var(--accent2)', marginLeft: '8px' }}>(Co-Developer)</span>
+                    <div style={{ fontWeight: '600', color: 'var(--text0)' }}>Corneliox</div>
+                    <div style={{ fontSize: '12px', color: 'var(--cyan)', marginTop: '2px' }}>Lead Systems & Software Architect</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text2)' }}>Biomedical Systems & Scientific Software Engineering</div>
                   </div>
-                  <a className="btn-secondary btn-tiny" href="https://github.com/Aditya42069" target="_blank" rel="noreferrer">
-                    🌐 github.com/Aditya42069
+                  <a className="btn-secondary btn-tiny" href="https://github.com/Corneliox" target="_blank" rel="noreferrer">
+                    GitHub Profile
                   </a>
+                </div>
+
+                <div style={{ height: '1px', background: 'var(--border)' }} />
+
+                <div>
+                  <div style={{ fontSize: '11px', color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Laboratory & Institution</div>
+                  <div style={{ fontSize: '12px', color: 'var(--text1)', marginTop: '2px', fontWeight: '500' }}>
+                    Asia University Biomedical Engineering & Biodesign Laboratory, Taichung, Taiwan
+                  </div>
+                </div>
+
+                <div style={{ height: '1px', background: 'var(--border)' }} />
+
+                <div>
+                  <div style={{ fontSize: '11px', color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>License & Terms</div>
+                  <div style={{ fontSize: '12px', color: 'var(--text1)', marginTop: '2px' }}>
+                    PolyForm Noncommercial License 1.0.0 (Free for academic, scientific, and educational research; commercial usage requires explicit authorization).
+                  </div>
                 </div>
               </div>
             </div>
@@ -2482,11 +2503,11 @@ export default function App() {
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
               {window.electronAPI && (
                 <button className="btn-secondary btn-tiny" onClick={() => { setShowAboutModal(false); setShowMacGuideModal(true); }}>
-                  🍎 macOS Permission Guide
+                  macOS Permission Guide
                 </button>
               )}
               <a className="btn-primary" href="https://github.com/Corneliox/ThermalSight-App/releases" target="_blank" rel="noreferrer">
-                📦 Check Releases & Downloads
+                Releases & Downloads
               </a>
               <button className="btn-ghost" onClick={() => setShowAboutModal(false)}>Close</button>
             </div>
@@ -2710,29 +2731,77 @@ export default function App() {
         </div>
       )}
 
+      {/* WEB TRIAL BANNER */}
+      {isWeb && (
+        <div style={{
+          background: '#0f172a',
+          borderBottom: '1px solid #1e293b',
+          color: '#94a3b8',
+          padding: '8px 20px',
+          fontSize: '12px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          boxSizing: 'border-box'
+        }}>
+          <div>
+            <strong style={{ color: '#38bdf8' }}>Trial Web Demo (Nano Engine):</strong> Lightweight browser preview mode. Radiometric FLIR parsing, deep U-Net models, multi-protocol cohort batch processing, and the Python PPG/PGA Lab require the standalone Desktop Application to prevent excessive server load.
+          </div>
+          <a
+            href="https://github.com/Corneliox/ThermalSight-App/releases"
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              color: '#38bdf8',
+              fontWeight: '600',
+              textDecoration: 'none',
+              marginLeft: '16px',
+              whiteSpace: 'nowrap',
+              padding: '4px 10px',
+              borderRadius: '4px',
+              background: 'rgba(56, 189, 248, 0.1)',
+              border: '1px solid rgba(56, 189, 248, 0.3)'
+            }}
+          >
+            Download Desktop App &rarr;
+          </a>
+        </div>
+      )}
+
       {/* HEADER */}
       <header className="app-header">
         <div className="header-brand">
-          <span className="brand-icon">🌡</span>
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">{isWeb ? '🌐 Online Web v1.8.5' : 'v1.8.5'}</span>
+          <span className="brand-badge">{isWeb ? 'Trial Web Demo (Nano Engine)' : 'v1.8.5'}</span>
         </div>
         <div className="header-actions">
+          {isWeb && (
+            <a
+              href="https://github.com/Corneliox/ThermalSight-App/releases"
+              target="_blank"
+              rel="noreferrer"
+              className="btn-ghost"
+              style={{ color: '#38bdf8', borderColor: '#0284c7', background: 'rgba(2, 132, 199, 0.15)', textDecoration: 'none', fontWeight: '600' }}
+              title="Download Standalone Desktop Application (Windows / macOS)"
+            >
+              Download Desktop
+            </a>
+          )}
           {appMode === 'bulk' && imageList.length > 0 && (
             <div style={{ display: 'flex', gap: '4px', alignItems: 'center', background: 'var(--bg1)', padding: '2px 6px', borderRadius: '6px', border: '1px solid var(--border)' }}>
               <button className="btn-ghost btn-tiny" disabled={currentIndex === 0} onClick={handlePrevImage} title="Previous Image (ArrowLeft / [ / b)">
-                ◄ Prev
+                Prev
               </button>
               <span style={{ fontSize: '11px', color: 'var(--cyan)', fontWeight: '600', padding: '0 4px' }}>
                 {currentIndex + 1} / {imageList.length}
               </span>
               <button className="btn-ghost btn-tiny" disabled={currentIndex === imageList.length - 1} onClick={handleNextImage} title="Next Image (ArrowRight / ] / n)">
-                Next ►
+                Next
               </button>
             </div>
           )}
           <button className="btn-ghost" title="Open Saved Annotation Session (annotations_session.json)" onClick={handleOpenAnnotationSession}>
-            📂 Load Session
+            Load Session
           </button>
           <button
             className="btn-ghost"
@@ -2740,16 +2809,16 @@ export default function App() {
             title="Launch Standalone PPG & PGA Interactive Research Lab Workbench"
             onClick={handleLaunchPpgWorkbench}
           >
-            🔬 PPG/PGA Lab
+            PPG/PGA Lab
           </button>
           <button className="btn-ghost" title="Workflow Architecture & Operating Guide" onClick={() => setShowWorkflowModal(true)}>
-            🗺️ Workflow
+            Workflow
           </button>
           <button className="btn-ghost" title="Settings / Variable Configurations" onClick={() => setShowSettingsModal(true)}>
-            ⚙ Settings
+            Settings
           </button>
           <button className="btn-ghost" title="About ThermalSight & Developer Credits" onClick={() => setShowAboutModal(true)}>
-            ❓ About
+            About
           </button>
           {window.electronAPI && isMacPlatform && (
             <button

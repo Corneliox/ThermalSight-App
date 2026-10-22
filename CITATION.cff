@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+message: "If you use ThermalSight in your academic research, clinical studies, or publications, please cite it as below."
+title: "ThermalSight: Biomedical Infrared Thermography and Plantar Perfusion Biomechanics Analysis Suite"
+version: 1.8.5
+date-released: 2026-10-22
+url: "https://github.com/Corneliox/ThermalSight-App"
+repository-code: "https://github.com/Corneliox/ThermalSight-App"
+license: PolyForm-Noncommercial-1.0.0
+type: software
+authors:
+  - family-names: "Kusuma"
+    given-names: "Aditya"
+    affiliation: "Department of Biomedical Engineering, Asia University, Taiwan"
+    alias: "Aditya42069"
+  - family-names: "Cornelius"
+    given-names: "Corneliox"
+    affiliation: "Biomedical Systems & Software Engineering Group"
+    alias: "Corneliox"
+keywords:
+  - "infrared thermography"
+  - "diabetic foot ulcer"
+  - "plantar perfusion"
+  - "thermal gradient analysis"
+  - "directional statistics"
+  - "biomechanics"
+  - "radiometric flir"
+  - "medical imaging"
+abstract: >-
+  ThermalSight is a specialized clinical and biomechanical thermal imaging research
+  suite designed for radiometric temperature extraction, multi-region polygonal segmentation,
+  and spatial-temporal thermal gradient evaluation (PPP, PPG, and PGA triad metrics).
+  It provides dual execution environments: an offline standalone desktop application
+  (Electron with native Python scientific engine) and an interactive trial web client
+  (Nano Engine) hosted on GitHub Pages.

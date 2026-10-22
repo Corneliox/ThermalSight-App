@@ -1,0 +1,35 @@
+POLYFORM NONCOMMERCIAL LICENSE 1.0.0
+TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+Copyright (c) 2026 ThermalSight Authors (Aditya, Corneliox, and Research Contributors)
+Asia University Biomedical Engineering & Biodesign Laboratory. All rights reserved.
+
+1. PERMISSION AND GRANT OF RIGHTS
+Subject to the terms and conditions of this license, each licensor grants you a non-exclusive, royalty-free, worldwide license to use, reproduce, modify, display, perform, and distribute this software and its documentation ("Work") for Noncommercial Purposes only.
+
+2. NONCOMMERCIAL PURPOSES RESTRICTION
+A "Noncommercial Purpose" is any use of the Work that does not have as its primary purpose generating commercial advantage, monetary compensation, or commercial distribution.
+Noncommercial Purposes include:
+(a) Personal research, academic study, and clinical educational purposes;
+(b) Scientific, academic, and non-profit research publications;
+(c) Internal testing and evaluation within non-profit, medical, or academic institutions.
+
+Any use of the Work for Commercial Purposes is strictly prohibited without prior written authorization, licensing agreement, and agreed contribution from the original authors.
+Commercial Purposes include, without limitation:
+(a) Selling, licensing, renting, or sublicensing the Work or any derivative work;
+(b) Providing the Work as a paid commercial service, cloud platform, or Software-as-a-Service (SaaS);
+(c) Incorporating the Work into proprietary commercial software, diagnostic hardware, or paid clinical diagnostic suites;
+(d) Using the Work in commercial clinical trials, fee-for-service diagnostic operations, or industry-sponsored commercial activities.
+
+3. ATTRIBUTION AND NOTICES
+You must retain all copyright notices, author attribution, and license notices in all copies or substantial portions of the Work, including source code, compiled binaries, user interfaces, exported analytical reports, and associated documentation.
+
+Any academic publication, clinical report, or presentation utilizing the Work, or data derived from the Work, must cite ThermalSight and the original authors as specified in the CITATION.cff file.
+
+4. CONTRIBUTION REQUIREMENT FOR EXTENDED USE
+Entities or individuals wishing to utilize the Work for commercial, industrial, or institutional deployments outside standard noncommercial research must obtain explicit written consent and enter into a formal collaboration or contribution agreement with the primary authors.
+
+5. NO WARRANTY AND LIMITATION OF LIABILITY
+THE WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE WORK OR THE USE OR OTHER DEALINGS IN THE WORK.
+
+THERMALSIGHT IS AN INVESTIGATIONAL RESEARCH AND BIOMECHANICAL ANALYTICAL SOFTWARE TOOL. IT IS NOT CERTIFIED AS A PRIMARY MEDICAL DIAGNOSTIC DEVICE. CLINICAL DECISIONS REMAIN THE SOLE RESPONSIBILITY OF QUALIFIED HEALTHCARE PROFESSIONALS.
