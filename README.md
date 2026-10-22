@@ -1,185 +1,161 @@
-# 🌡 ThermalSight
+# ThermalSight
 
-[![Version](https://img.shields.io/badge/stable%20version-1.8.5-brightgreen.svg)](https://github.com/Corneliox/ThermalSight-App/releases/tag/v1.8.5)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Web-brightgreen.svg)]()
-[![Web App](https://img.shields.io/badge/Live%20Demo-Firebase%20Hosting-orange.svg)](https://thermalsight-web-2026.web.app)
-[![GitHub Pages](https://img.shields.io/badge/GitHub%20Pages-Live%20Mirror-blue.svg)](https://corneliox.github.io/ThermalSight-App/)
-[![License](https://img.shields.io/badge/license-MIT-purple.svg)]()
+[![Production Release](https://img.shields.io/badge/Release-v1.8.5%20Stable-blue.svg)](https://github.com/Corneliox/ThermalSight-App/releases/tag/v1.8.5)
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm%20Noncommercial-purple.svg)](LICENSE)
+[![Platforms](https://img.shields.io/badge/Platforms-Windows%20%7C%20macOS%20%7C%20Web%20Trial-green.svg)](https://github.com/Corneliox/ThermalSight-App/releases)
+[![Web Demo](https://img.shields.io/badge/GitHub%20Pages-Trial%20Demo%20(Nano)-orange.svg)](https://corneliox.github.io/ThermalSight-App/)
 
-> [!NOTE]
-> **Production Stable Milestone: v1.8.5**  
-> The current official and verified stable production release is **ThermalSight v1.8.5**. Key capabilities:
-> - **Multi-Protocol Cohort Hierarchical Ingestion**: Single-action ingestion of entire cohort directories (e.g. `azmi/1_30`, `1_50`, `1-100`, etc.) with strict mathematical isolation per protocol (`<protocol>_result/`) guaranteeing zero cross-contamination of mean, min, max, and std statistics, complemented by a consolidated master comparison workbook (`Cohort_Protocols_Summary.xlsx`).
-> - **Interactive Cohort Navigation Bar**: Integrated cohort protocol switchers across both the Electron Desktop App and PPG/PGA Lab Workbench with live image count badges and batch recomputation triggers.
-> - **Determinate Progress Bar & Native Completion Dialogs**: Live responsive progress feedback during intensive thermal matrix recomputations, preventing UI freezes and providing one-click access to result folders.
-> - **100% Mathematically Rigorous Triad Metrics (PPP, PPG, PGA)**: Full directional statistics integration with weighted circular mean and vector coherence percentage for accurate diabetic foot thermal biomechanics analysis.
-
-**ThermalSight** is a high-precision biomedical and industrial thermal imaging suite designed for radiometric temperature analysis, multi-label region segmentation, time-series treadmill/pressure protocol tracking, and automated 8-point compass thermal gradient extraction.
-
-Available as both an offline desktop application (**Electron + Python backend**) and a zero-install, 100% client-side web application (**React + HTML5 Canvas engine**).
-
-🌐 **Live Web Application**:
-- **Primary (Firebase Hosting)**: [https://thermalsight-web-2026.web.app](https://thermalsight-web-2026.web.app)
-- **Mirror (GitHub Pages)**: [https://corneliox.github.io/ThermalSight-App/](https://corneliox.github.io/ThermalSight-App/)
+ThermalSight is a specialized biomedical infrared thermography and plantar biomechanics analytical suite. Engineered for clinical researchers and biomedical engineers, it provides automated radiometric decoding, multi-region polygonal segmentation, time-series vascular protocol tracking, and rigorous spatial-temporal thermal gradient extraction (PPP, PPG, and PGA triad metrics).
 
 ---
 
-## 📑 Table of Contents
+## Table of Contents
 
-- [Key Features](#-key-features)
-- [Mathematical Formulation](#-mathematical-formulation)
-- [Application Architecture](#-application-architecture)
-- [Output Package Structure](#-output-package-structure)
-- [Installation & Getting Started](#-installation--getting-started)
-  - [Web Application](#1-web-application)
-  - [Desktop Application (Windows / macOS)](#2-desktop-application-windows--macos)
-- [Workflow & Usage Guide](#-workflow--usage-guide)
-- [Keyboard Shortcuts](#-keyboard-shortcuts)
-- [Authors & Acknowledgments](#-authors--acknowledgments)
-- [License](#-license)
-
----
-
-## ✨ Key Features
-
-### 1. Radiometric FLIR Thermal Decoding
-- Sub-pixel float32 temperature matrix reconstruction from radiometric FLIR images.
-- Dynamic colormap visualization (**Inferno**, **Ironbow**, **Jet**, **Grayscale**) with contrast stretch and temperature span clipping.
-- Real-time bilinear temperature probing under the cursor.
-
-### 2. Multi-Label Polygon Region Segmentation (ROIs)
-- Multi-region polygon annotation with customizable label variables ($m_1, m_2, m_3, \dots, m_n$).
-- Automated pixel extraction, masked polygon cropping, standard deviation ($\sigma$), mean, minimum, and maximum temperature calculations.
-- Automatic calibration support via scale bar drawing ($\text{px}/\text{cm}$).
-
-### 3. Automated 8-Point Compass Star Gradient Engine
-- Automatically inscribes an 8-spoke compass star inside every segmented ROI.
-- Samples sub-pixel temperatures along 8 cardinal and intercardinal axes ($\text{N, NE, E, SE, S, SW, W, NW}$).
-- Computes directional thermal gradient magnitude ($G_k$ in $^\circ\text{C}/\text{cm}$), maximum gradient ($G_{\max}$), and dominant gradient direction (**Modus**).
-
-### 4. Whole-Scene Gradient & Quiver Vector Field Suite (Panel B Style)
-- **Whole-Scene Gradient Magnitude**: Continuous 2D spatial gradient magnitude map $\|\vec{\nabla} T\|$ in $^\circ\text{C}/\text{cm}$.
-- **Whole-Scene Gradient with ROI Labels**: Spatial gradient map with polygon/circle boundaries, centroids, and label badges overlaid.
-- **Biomechanical Quiver & Isotherm Contour Map (TPG & TGA)**: Publication-grade vector map on clean white background with multi-level isotherm contours, gradient quiver arrows pointing along $\vec{\nabla} T$, and anatomical circular ROI markers (T1, M1, M2, HL).
-
-### 5. Multi-Mode Relative Sequence Progression
-- Side-by-side time-series comparison across protocol steps (Step 1 to Step $N$, e.g., Treadmill Rest $\to$ 80 mmHg $\to$ 160 mmHg $\to$ Heat).
-- High-resolution montage generator:
-  - `comparison_overall_all_labels.png`: Full thermal view displaying all ROIs simultaneously.
-  - `comparison_relative_{label}.png`: Full thermal view focused specifically on a target label with relative baseline delta metrics.
-- Computes temporal differential deltas relative to Step 1 baseline:
-  $$\Delta T_{\text{center}}(t) = T_{\text{center}}(t) - T_{\text{center}}(1), \quad \Delta T_{\text{mean}}(t) = T_{\text{mean}}(t) - T_{\text{mean}}(1)$$
-
-### 6. 8-Axis Polar Radar Gradient Profiles
-- Polar radar diagrams overlaying directional gradient vectors across all sequence steps.
-- Visualizes heat dissipation trajectories and directional vascular response over time.
-- Direct export to scalable vector graphics (`radar_gradient_{label}_dark.svg` and `white.svg`).
+- [Abstract and Clinical Motivation](#abstract-and-clinical-motivation)
+- [System Architecture and Dual-Engine Design](#system-architecture-and-dual-engine-design)
+  - [Standalone Desktop Application (Full Scientific Engine)](#1-standalone-desktop-application-full-scientific-engine)
+  - [GitHub Pages Trial Web Demo (Nano Engine)](#2-github-pages-trial-web-demo-nano-engine)
+- [Key Features](#key-features)
+- [Mathematical and Methodological Framework](#mathematical-and-methodological-framework)
+  - [The Thermal Biomechanics Triad (PPP, PPG, PGA)](#1-the-thermal-biomechanics-triad-ppp-ppg-pga)
+  - [Directional Circular Statistics](#2-directional-circular-statistics)
+  - [8-Point Compass Star Gradient Formulation](#3-8-point-compass-star-gradient-formulation)
+- [Installation and Getting Started](#installation-and-getting-started)
+  - [Pre-Packaged Desktop Executables](#pre-packaged-desktop-executables)
+  - [Local Development and Source Build](#local-development-and-source-build)
+- [Operating Workflow](#operating-workflow)
+- [Keyboard Shortcuts](#keyboard-shortcuts)
+- [Authors and Academic Affiliations](#authors-and-academic-affiliations)
+- [Citation](#citation)
+- [License and Non-Commercial Policy](#license-and-non-commercial-policy)
 
 ---
 
-## 📐 Mathematical Formulation
+## Abstract and Clinical Motivation
 
-```
-                                  N (0°)
-                                    │
-                       NW (315°)    │    NE (45°)
-                              \     │     /
-                                \   │   /
-                                  \ │ /
-             W (270°) ──────────── (xc, yc) ──────────── E (90°)
-                                  / │ \
-                                /   │   \
-                              /     │     \
-                       SW (225°)    │    SE (135°)
-                                    │
-                                  S (180°)
-```
+Diabetic foot ulcers (DFU) and Charcot neuroarthropathy represent critical clinical challenges where impaired peripheral microvascular perfusion and mechanical shear stresses lead to tissue breakdown. Traditional thermal imaging assessments rely heavily on single-point mean temperatures, often overlooking localized inflammatory borders and directional vascular heat dissipation trajectories.
 
-### 1. 8-Spoke Compass Star Geometry
-Given the centroid $(x_c, y_c)$ of an ROI polygon and the maximum inscribed circle radius $R_{\text{px}} = \frac{\min(W_{\text{ROI}}, H_{\text{ROI}})}{2}$:
-For each direction $k \in \{\text{N, NE, E, SE, S, SW, W, NW}\}$ with angle $\theta_k \in \{0^\circ, 45^\circ, 90^\circ, 135^\circ, 180^\circ, 225^\circ, 270^\circ, 315^\circ\}$:
-
-$$x_k = x_c + R_{\text{px}} \cdot \sin(\theta_k)$$
-$$y_k = y_c - R_{\text{px}} \cdot \cos(\theta_k)$$
-
-### 2. Bilinear Sub-Pixel Temperature Interpolation
-Temperature at float coordinate $(x, y)$ is interpolated continuously from the 2D discrete matrix:
-$$T(x, y) = (1 - f_x)(1 - f_y) T[y_0, x_0] + f_x(1 - f_y) T[y_0, x_1] + (1 - f_x)f_y T[y_1, x_0] + f_x f_y T[y_1, x_1]$$
-where $x_0 = \lfloor x \rfloor, x_1 = x_0 + 1, f_x = x - x_0$, and $y_0 = \lfloor y \rfloor, y_1 = y_0 + 1, f_y = y - y_0$.
-
-### 3. Directional Thermal Gradient ($G_k$)
-With pixel calibration scale $S_{\text{px/cm}}$, physical radius distance is $R_{\text{cm}} = \frac{R_{\text{px}}}{S_{\text{px/cm}}}$.  
-The directional gradient from centroid $(x_c, y_c)$ toward compass vertex $k$ is:
-$$G_k = \frac{T(x_k, y_k) - T(x_c, y_c)}{R_{\text{cm}}} \quad \left[\frac{^\circ\text{C}}{\text{cm}}\right]$$
-
-### 4. Maximum Gradient & Dominant Modus Direction
-$$G_{\max} = \max_{k \in \text{COMPASS}} |G_k| \quad \left[\frac{^\circ\text{C}}{\text{cm}}\right]$$
-$$\text{Modus} = \arg\max_{k \in \text{COMPASS}} |T(x_k, y_k) - T(x_c, y_c)|$$
+ThermalSight addresses these diagnostic gaps by establishing a standardized, reproducible computational framework for:
+1. **Peak and Mean Plantar Perfusion (PPP)**: Quantifying absolute baseline tissue temperatures at high-risk biomechanical landmarks ($T_1$ Hallux, $M_1$ First Metatarsal Head, $M_2$ Second Metatarsal Head).
+2. **Plantar Perfusion Gradients (PPG)**: Measuring the spatial rate of temperature change across tissue boundaries via 2D Sobel operators and dynamic 8-spoke directional sampling to differentiate diffuse physiological warming from acute focal inflammation.
+3. **Plantar Gradient Angles (PGA)**: Determining the directional orientation of heat transfer relative to anatomical axes (Distal/Toes vs. Proximal/Heel, Medial vs. Lateral) using rigorous circular statistics.
 
 ---
 
-## 🏗 Application Architecture
+## System Architecture and Dual-Engine Design
+
+ThermalSight is implemented across two tiers to balance intensive clinical computing with immediate accessibility:
 
 ```
-                               ┌────────────────────────────────────────────────────────┐
-                               │                      THERMALSIGHT                      │
-                               └───────────────────────────┬────────────────────────────┘
-                                                           │
-                      ┌────────────────────────────────────┴───────────────────────────────────┐
-                      ▼                                                                        ▼
-         ┌─────────────────────────┐                                              ┌─────────────────────────┐
-         │     DESKTOP EDITION     │                                              │       WEB EDITION       │
-         │  (Electron + Python)    │                                              │  (100% Client-Side JS)  │
-         └────────────┬────────────┘                                              └────────────┬────────────┘
-                      │                                                                        │
-        ┌─────────────┴─────────────┐                                            ┌─────────────┴─────────────┐
-        ▼                           ▼                                            ▼                           ▼
- ┌──────────────┐            ┌──────────────┐                             ┌──────────────┐            ┌──────────────┐
- │  Electron    │            │ Python Core  │                             │  React +     │            │ thermalEngine│
- │  Main / IPC  │ ◄────────► │ (OpenCV,     │                             │  Vite UI     │ ◄────────► │ (HTML5 Canvas│
- │  Controller  │            │  NumPy,      │                             │  App         │            │  JS Client)  │
- │              │            │  Matplotlib) │                             │              │            │  LUT / Sobel)│
- └──────────────┘            └──────────────┘                             └──────────────┘            └──────────────┘
++-----------------------------------------------------------------------------------+
+|                                   ThermalSight                                    |
++-----------------------------------------+-----------------------------------------+
+|                                         |                                         |
+|  Standalone Desktop Suite (Recommended)|  GitHub Pages Web Demo (Trial / Nano)   |
+|  - Electron Shell + Native Python Engine|  - 100% Client-Side React + Vite        |
+|  - Full Radiometric FLIR Raw Decoding   |  - Canvas-based In-Browser Preview      |
+|  - Multi-Protocol Cohort Batch Analysis |  - Single Image Trial & Evaluation      |
+|  - Interactive Tkinter/Matplotlib Lab   |  - Zero Installation Required           |
+|  - Multi-Sheet Excel & Audit Trails     |  - High-Compute Features Restricted     |
+|                                         |                                         |
++-----------------------------------------+-----------------------------------------+
 ```
+
+### 1. Standalone Desktop Application (Full Scientific Engine)
+- **Engine**: Electron runtime integrated with an offline Python scientific environment (`numpy`, `scipy`, `opencv`, `openpyxl`, `flyr`, `matplotlib`).
+- **Use Case**: Production clinical research, institutional trials, batch dataset recomputation, and publication figure authoring.
+- **Full Capabilities**:
+  - Unpacks 16-bit radiometric FLIR JPEG metadata into true Kelvin/Celsius float32 thermal matrices.
+  - Hierarchical multi-protocol cohort ingestion with complete protocol isolation (e.g., `<protocol>_result/`).
+  - Native Excel workbook generation with multi-sheet audit trails, circular statistics, and clinical methodology guides.
+  - Windows file-lock resilience preventing data loss when workbooks are open in Microsoft Excel.
+
+### 2. GitHub Pages Trial Web Demo (Nano Engine)
+- **Live URL**: [https://corneliox.github.io/ThermalSight-App/](https://corneliox.github.io/ThermalSight-App/)
+- **Engine**: Client-side JavaScript running entirely in the browser using HTML5 Canvas.
+- **Resource Protection and Limitations**:
+  - To prevent excessive compute and memory loads on GitHub infrastructure and client browsers, the web deployment is strictly restricted to the **Nano Engine**.
+  - Advanced features—including raw radiometric FLIR metadata unpacking, multi-protocol batch recomputations, automated whole-foot segmentation, and the Python PPG/PGA Research Lab—are disabled on GitHub Pages.
+  - Users requiring full dataset evaluations must download the standalone Desktop Application.
 
 ---
 
-## 📦 Output Package Structure
+## Key Features
 
-When saving labels and exporting, ThermalSight generates a comprehensive analysis suite (`{FolderName}_Result/` or `{FolderName}_Result.zip`):
-
-```
-📂 {FolderName}_Result/
-├── 📄 annotations_session.json               # Full session metadata & polygon vertices
-├── 📄 master_summary_all_labels.csv          # Combined metrics & 8-directional gradients (UTF-8 BOM)
-├── 📄 m1_summary.csv                         # Step-by-step summary for ROI m1
-├── 📄 m2_summary.csv                         # Step-by-step summary for ROI m2
-├── 📊 graph_m1_dark.svg / white.svg          # Min-Max range band & mean curve
-├── 🕸 radar_gradient_m1_dark.svg / white.svg # 8-axis polar gradient radar profile
-├── 🖼 comparison_overall_all_labels.png      # Multi-step sequence strip (All ROIs)
-├── 🖼 comparison_relative_m1.png             # Multi-step sequence strip (m1 focus)
-├── 🖼 comparison_relative_m2.png             # Multi-step sequence strip (m2 focus)
-└── 📂 {FolderName}_isolated_labels/          # Cropped ROI images & raw pixel CSVs
-    ├── 🖼 isolated_{img}_m1_1.png             # Masked ROI PNG with 8-star overlay
-    ├── 📄 isolated_{img}_m1_1.csv             # Full 2D cropped temperature matrix
-    └── 📄 isolated_{img}_m1_1_gradient_star.csv # 9-point compass table with gradients
-```
+- **Radiometric FLIR Thermal Ingestion**: Reconstructs sub-pixel float32 temperature matrices from radiometric FLIR images without loss of decimal precision.
+- **Multi-Label Polygonal Region Segmentation**: Interactive polygon drawing with dynamic vertices, scale bar calibration (px/cm), and real-time bounding box extraction.
+- **Automated 8-Point Compass Star Engine**: Generates an inscribed 8-spoke directional star within each segmented ROI to extract cardinal and intercardinal thermal slopes ($N, NE, E, SE, S, SW, W, NW$).
+- **Vector Quiver and Isotherm Contours**: Publication-quality vector maps featuring 0.2 pt ultra-fine isothermal topography lines and 100% density gradient quiver arrows.
+- **Multi-Protocol Cohort Isolation**: Seamless ingestion of complex multi-protocol directory structures (e.g., resting, pressure, post-exercise steps) guaranteeing zero cross-protocol data contamination.
+- **Multi-Sheet Excel Reporting**: Automated output of `PPP_PPG_PGA_Statistical_Summary.xlsx` containing raw measurements, executive summaries, formula audit boxes, and clinical methodology documentation.
 
 ---
 
-## 🚀 Installation & Getting Started
+## Mathematical and Methodological Framework
 
-### 1. Web Application
-No installation required. Access directly in any modern browser:
-👉 **[https://thermalsight-web-2026.web.app](https://thermalsight-web-2026.web.app)**
+### 1. The Thermal Biomechanics Triad (PPP, PPG, PGA)
 
-### 2. Desktop Application (Windows / macOS)
+| Metric | Full Parameter Name | Clinical Question | Units | Mathematical Formulation |
+| :--- | :--- | :--- | :--- | :--- |
+| **PPP** | Peak and Mean Plantar Perfusion | What is the absolute tissue temperature of the target anatomical site? | $^\circ\text{C}$ | $T_{\text{mean}} = \frac{1}{N} \sum_{i=1}^N T_i, \quad T_{\text{peak}} = \max(T)$ |
+| **PPG** | Plantar Perfusion Gradient | How steep is the spatial thermal differential across the region? | $^\circ\text{C}/\text{cm}$ | $\|\vec{\nabla} T\| = \sqrt{G_x^2 + G_y^2}$ |
+| **PGA** | Plantar Gradient Angle | In which anatomical direction is thermal energy dissipating? | Degrees / Compass | $\theta = \operatorname{arctan2}(-G_y, G_x) \pmod{360^\circ}$ |
+
+### 2. Directional Circular Statistics
+
+Standard arithmetic averaging of angles fails near the $0^\circ / 360^\circ$ boundary. ThermalSight computes aggregate directional metrics using weighted circular trigonometry:
+
+$$\bar{C} = \sum_{j=1}^m w_j \cos(\theta_j), \quad \bar{S} = \sum_{j=1}^m w_j \sin(\theta_j)$$
+
+$$\bar{\theta} = \operatorname{arctan2}(\bar{S}, \bar{C}) \pmod{360^\circ}$$
+
+$$\text{Vector Coherence } R = \frac{\sqrt{\bar{C}^2 + \bar{S}^2}}{\sum_{j=1}^m w_j} \times 100\%$$
+
+Where $\theta_j$ is the local gradient angle and $w_j = \|\vec{\nabla} T\|_j$ is the local gradient magnitude, ensuring that dominant thermal flows contribute proportionally to the aggregate orientation.
+
+### 3. 8-Point Compass Star Gradient Formulation
+
+For each segmented anatomical region with centroid $(x_c, y_c)$ and inscribed radius $R_{\text{px}}$:
+
+```
+                              N (90° / Distal / Toes)
+                                        │
+                 NW (135°)              │              NE (45°)
+                       \                │                /
+                         \              │              /
+                           \            │            /
+    W (180° / Medial) ──────────────── (xc, yc) ──────────────── E (0° / Lateral)
+                           /            │            \
+                         /              │              \
+                       /                │                \
+                 SW (225°)              │              SE (315°)
+                                        │
+                             S (270° / Proximal / Heel)
+```
+
+Thermal values are sampled along each ray $k$ at uniform physical steps. The directional gradient magnitude $G_k$ is computed as:
+
+$$G_k = \frac{T(x_c + R_k \cos \theta_k, y_c - R_k \sin \theta_k) - T(x_c, y_c)}{R_k / S_{\text{px/cm}}}$$
+
+---
+
+## Installation and Getting Started
+
+### Pre-Packaged Desktop Executables
+
+Pre-compiled standalone installers for Windows (`.exe`) and macOS (`.dmg`) are available on the [Releases Page](https://github.com/Corneliox/ThermalSight-App/releases).
+
+1. Download the latest `thermalsight-Setup-*.exe` (Windows) or `thermalsight-*.dmg` (macOS).
+2. Execute the installer.
+3. Launch ThermalSight. The internal Python scientific environment is resolved automatically.
+
+### Local Development and Source Build
 
 #### Prerequisites
-- **Node.js** (v18 or newer)
-- **Python** (v3.10 or newer)
+- Node.js (v18.x or v20.x LTS) and npm
+- Python (v3.10, v3.11, or v3.12)
 
-#### Setup & Local Development
+#### Clone and Setup
 ```bash
 # Clone the repository
 git clone https://github.com/Corneliox/ThermalSight-App.git
@@ -189,13 +165,16 @@ cd ThermalSight-App
 cd src
 npm install
 
-# 2. Setup Python environment (for desktop backend)
+# 2. Setup Python environment
 cd ../backend
 python -m venv venv
-# On Windows:
+
+# Activate venv on Windows:
 .\venv\Scripts\activate
-# On macOS / Linux:
+# Activate venv on macOS / Linux:
 source venv/bin/activate
+
+# Install backend dependencies (with NumPy ABI protection)
 pip install -r requirements.txt
 
 # 3. Launch Desktop in Development Mode
@@ -203,52 +182,85 @@ cd ../src
 npm run dev
 ```
 
-#### Packaging Binaries
+#### Compiling Desktop Binaries
 ```bash
-# Build desktop executable installer (Windows .exe / macOS .dmg)
 cd src
 npm run dist
 ```
 
 ---
 
-## 🕹 Workflow & Usage Guide
+## Operating Workflow
 
-1. **Load Images**: Click **Select Image Folder** or drag & drop thermal JPEG files.
-2. **Set Calibration (Optional)**: Click **Calibrate** and draw a line along a known reference length to set physical pixels-per-centimeter ($S_{\text{px/cm}}$).
-3. **Segment Regions**:
-   - Select a label variable from the sidebar ($m_1, m_2, m_3, \dots$).
-   - Click vertices around the anatomical or industrial target to draw a polygon. Double-click or press `Enter` to close.
-4. **Inspect 8-Star Compass**:
-   - The 8-point compass star is automatically calculated with the incircle radius, centroid, directional spokes, and dominant modus.
-5. **Analyze Progression**:
-   - Navigate through the sequence steps using `Next` / `Prev` or arrow keys.
-6. **Export & Analytics**:
-   - Click **Save Label & Export** to generate the complete analytical suite and view the interactive time-series modal.
+1. **Import Cohort or Image**: Click **Load Folder / Cohort** to load a multi-protocol study directory, or drag and drop radiometric thermal images.
+2. **Physical Scale Calibration**: Select **Calibrate** and draw across a known reference scale bar to establish the physical scale ($S_{\text{px/cm}}$).
+3. **Region Annotation**: Select an anatomical label ($T_1, M_1, M_2, \dots$) and outline the target boundary. Press `Enter` or double-click to close the polygon.
+4. **Inspect Directional Vectors**: The 8-point compass star, inscribed radius, and whole-scene gradient field are computed automatically.
+5. **Recompute Metrics**: Click **Recompute & Export All Metrics** or open the **PPG/PGA Lab** to generate the publication-ready multi-sheet Excel workbook and 300 DPI vector figures.
 
 ---
 
-## ⌨ Keyboard Shortcuts
+## Keyboard Shortcuts
 
-| Shortcut | Action |
+| Key Binding | Function |
 | :--- | :--- |
-| `Left Arrow` / `[` / `b` | Previous image in sequence |
-| `Right Arrow` / `]` / `n` | Next image in sequence |
-| `Enter` / `Space` | Finish and close current polygon ROI |
-| `Escape` | Cancel current active polygon drawing |
-| `a` – `z` | Quick switch active segmentation label |
-| `Ctrl + S` / `Cmd + S` | Save labels and trigger export package |
+| `Left Arrow` / `[` / `b` | Navigate to previous image in sequence |
+| `Right Arrow` / `]` / `n` | Navigate to next image in sequence |
+| `Enter` / `Space` | Complete and close current polygon ROI |
+| `Escape` | Cancel active ROI polygon draft |
+| `a` through `z` | Fast-switch active segmentation label |
+| `Ctrl + S` / `Cmd + S` | Commit annotations and trigger export package |
 
 ---
 
-## 👨‍💻 Authors & Acknowledgments
+## Authors and Academic Affiliations
 
-- **Aditya & Research Team**
-- Department of Biomedical Engineering / Industrial Automation
-- Developed for thermal gradient evaluation, diabetes foot ulcer monitoring, vascular flow assessment, and industrial heat distribution research.
+- **Aditya Kusuma** (`Aditya42069`)  
+  Principal Researcher & Author  
+  Department of Biomedical Engineering, Asia University, Taiwan  
+  Research Focus: Diabetic Foot Complications, Infrared Plantar Thermography, Non-Invasive Vascular Assessment.
+
+- **Corneliox** (`Corneliox`)  
+  Lead Systems & Software Architect  
+  Biomedical Systems & Scientific Software Engineering  
+  Architecture Focus: High-Performance Electron/Python IPC, Directional Biomechanics Algorithms, UI/UX Engineering.
+
+### Institutional Affiliation
+- **Asia University Biomedical Engineering & Biodesign Laboratory**, Taichung, Taiwan.
 
 ---
 
-## 📄 License
+## Citation
 
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+If you use ThermalSight in your academic research, clinical studies, or software pipelines, please cite the software as follows:
+
+```bibtex
+@software{ThermalSight2026,
+  author = {Kusuma, Aditya and Corneliox},
+  title = {ThermalSight: Biomedical Infrared Thermography and Plantar Perfusion Biomechanics Analysis Suite},
+  url = {https://github.com/Corneliox/ThermalSight-App},
+  version = {1.8.5},
+  year = {2026},
+  publisher = {Asia University Biomedical Engineering & Biodesign Laboratory}
+}
+```
+
+A complete machine-readable citation definition is provided in [CITATION.cff](CITATION.cff).
+
+---
+
+## License and Non-Commercial Policy
+
+This project is licensed under the **PolyForm Noncommercial License 1.0.0** — see the [LICENSE](LICENSE) file for complete details.
+
+### Permitted Uses (Free and Open-Source)
+- Academic, scientific, clinical research, and educational use.
+- Non-commercial peer-reviewed scientific publications and academic presentations.
+- Non-profit evaluation within universities, hospitals, and medical research institutes.
+
+### Prohibited Uses (Requires Authorization)
+- Commercial use, paid diagnostic services, monetization, or fee-for-service clinical usage.
+- Sub-licensing, distribution in closed-source commercial packages, or integration into proprietary diagnostic hardware.
+- Commercial exploitation without prior written agreement and author contribution from the primary authors.
+
+For commercial licensing, institutional collaboration, or technology transfer inquiries, please contact the primary authors via the repository issue tracker or academic channels.
