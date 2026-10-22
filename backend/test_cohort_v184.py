@@ -229,6 +229,25 @@ class TestCohortProtocolsV184(unittest.TestCase):
                 fall_rows.append(str(val).strip())
             self.assertEqual(len(fall_rows), 6, "Fallback Excel must also have exactly 6 isolated rows")
 
+        # 5. Test Zero-Pandas Fallback Engine: simulate pandas binary mismatch / missing
+        orig_pandas_avail = ppg_workbench.PANDAS_AVAILABLE
+        orig_pd = ppg_workbench.pd
+        try:
+            ppg_workbench.PANDAS_AVAILABLE = False
+            ppg_workbench.pd = None
+            # Force recompute using MiniDataFrame and native openpyxl
+            success_nopd = app.recompute_and_export_all_metrics(silent=True)
+            self.assertTrue(success_nopd, "Recompute must succeed even without pandas")
+
+            # Verify that Excel and CSV were generated cleanly without pandas
+            wb_nopd = openpyxl.load_workbook(excel_out)
+            self.assertIn('Detailed_ROIs', wb_nopd.sheetnames)
+            self.assertIn('Executive_Summary', wb_nopd.sheetnames)
+            self.assertIn('Panduan_Metodologi', wb_nopd.sheetnames)
+        finally:
+            ppg_workbench.PANDAS_AVAILABLE = orig_pandas_avail
+            ppg_workbench.pd = orig_pd
+
         root.destroy()
 
 if __name__ == '__main__':

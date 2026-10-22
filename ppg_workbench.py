@@ -25,7 +25,14 @@ import subprocess
 from pathlib import Path
 import numpy as np
 import cv2
-import pandas as pd
+try:
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except Exception as ex_pd:
+    PANDAS_AVAILABLE = False
+    PANDAS_IMPORT_ERROR = str(ex_pd)
+    pd = None
+    print(f"[PPG WORKBENCH NOTICE] Pandas import notice: {ex_pd}. Activating lightweight native openpyxl/csv fallback engine.")
 import matplotlib
 if "--export-metrics" in sys.argv:
     matplotlib.use("Agg")
@@ -45,6 +52,127 @@ try:
     OPENPYXL_AVAILABLE = True
 except ImportError:
     OPENPYXL_AVAILABLE = False
+
+
+class MiniDataFrame:
+    """Lightweight zero-dependency tabular structure ensuring export works without pandas."""
+    def __init__(self, data=None):
+        if data is None:
+            self._rows = []
+        elif isinstance(data, list):
+            import copy
+            self._rows = [copy.deepcopy(r) if isinstance(r, dict) else r for r in data]
+        elif isinstance(data, dict):
+            import copy
+            self._rows = [copy.deepcopy(data)]
+        elif hasattr(data, "to_dict"):
+            self._rows = data.to_dict(orient="records")
+        else:
+            self._rows = list(data)
+
+    @property
+    def empty(self):
+        return len(self._rows) == 0
+
+    def __len__(self):
+        return len(self._rows)
+
+    def copy(self):
+        import copy
+        return MiniDataFrame(copy.deepcopy(self._rows))
+
+    def insert(self, loc, column, value):
+        for r in self._rows:
+            items = list(r.items())
+            items.insert(loc, (column, value))
+            r.clear()
+            r.update(dict(items))
+
+    def to_csv(self, path, index=False, encoding="utf-8-sig"):
+        if not self._rows:
+            Path(path).write_text("", encoding=encoding)
+            return
+        import csv
+        fieldnames = list(self._rows[0].keys())
+        with open(path, "w", newline="", encoding=encoding) as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(self._rows)
+
+    def to_dict(self, orient="records"):
+        import copy
+        return copy.deepcopy(self._rows)
+
+
+def make_dataframe(data):
+    if PANDAS_AVAILABLE and pd is not None:
+        try:
+            return pd.DataFrame(data)
+        except Exception:
+            pass
+    return MiniDataFrame(data)
+
+
+def concat_dataframes(frames):
+    if PANDAS_AVAILABLE and pd is not None:
+        try:
+            valid_dfs = [f for f in frames if isinstance(f, pd.DataFrame) and not f.empty]
+            if valid_dfs:
+                return pd.concat(valid_dfs, ignore_index=True)
+        except Exception:
+            pass
+    all_rows = []
+    for f in frames:
+        if f is None:
+            continue
+        if hasattr(f, "to_dict"):
+            all_rows.extend(f.to_dict(orient="records"))
+        elif isinstance(f, list):
+            all_rows.extend(f)
+    return make_dataframe(all_rows)
+
+
+def write_excel_workbook(target_path: Path, sheets_dict: dict) -> bool:
+    """
+    Writes a multi-sheet Excel workbook.
+    First tries pandas ExcelWriter; if pandas is unavailable or raises an exception,
+    seamlessly falls back to direct openpyxl Workbook writing.
+    """
+    if PANDAS_AVAILABLE and pd is not None:
+        try:
+            with pd.ExcelWriter(str(target_path), engine="openpyxl") as writer:
+                for s_name, data in sheets_dict.items():
+                    df = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data.to_dict(orient="records") if hasattr(data, "to_dict") else data)
+                    df.to_excel(writer, sheet_name=s_name, index=False)
+            return True
+        except Exception as ex_pd:
+            print(f"[EXCEL PANDAS NOTICE] {ex_pd}, falling back to native openpyxl...")
+
+    if OPENPYXL_AVAILABLE:
+        try:
+            wb = openpyxl.Workbook()
+            first = True
+            for s_name, data in sheets_dict.items():
+                if first:
+                    ws = wb.active
+                    ws.title = s_name
+                    first = False
+                else:
+                    ws = wb.create_sheet(title=s_name)
+
+                rows = data.to_dict(orient="records") if hasattr(data, "to_dict") else (data if isinstance(data, list) else [])
+                if rows:
+                    headers = list(rows[0].keys())
+                    ws.append(headers)
+                    for r in rows:
+                        ws.append([r.get(h) for h in headers])
+            wb.save(str(target_path))
+            return True
+        except Exception as ex_openpyxl:
+            print(f"[EXCEL OPENPYXL ERROR] {ex_openpyxl}")
+            return False
+
+    return False
 
 # Cross-platform folder open helper (BUG-3.1)
 def open_folder(path):
@@ -1648,18 +1776,21 @@ class PPGWorkbenchApp:
             csv_wide_path = parent_dir / "Cohort_Protocols_Summary.csv"
             csv_long_path = parent_dir / "Cohort_Protocols_Detailed.csv"
 
-            df_cohort_wide = pd.concat(all_wide_dfs, ignore_index=True) if all_wide_dfs else pd.DataFrame()
-            df_cohort_long = pd.concat(all_long_dfs, ignore_index=True) if all_long_dfs else pd.DataFrame()
+            df_cohort_wide = concat_dataframes(all_wide_dfs) if all_wide_dfs else make_dataframe([])
+            df_cohort_long = concat_dataframes(all_long_dfs) if all_long_dfs else make_dataframe([])
 
-            try:
-                with pd.ExcelWriter(str(master_excel), engine="openpyxl") as writer:
-                    if not df_cohort_wide.empty:
-                        df_cohort_wide.to_excel(writer, sheet_name="Protocol_Comparison", index=False)
-                    if not df_cohort_long.empty:
-                        df_cohort_long.to_excel(writer, sheet_name="All_Protocols_Detailed", index=False)
-                enhance_cohort_workbook(master_excel, parent_dir.name, total_protocols)
-            except Exception as e:
-                print(f"Master cohort excel notice: {e}")
+            cohort_sheets = {}
+            if not df_cohort_wide.empty:
+                cohort_sheets["Protocol_Comparison"] = df_cohort_wide
+            if not df_cohort_long.empty:
+                cohort_sheets["All_Protocols_Detailed"] = df_cohort_long
+
+            if cohort_sheets:
+                try:
+                    if write_excel_workbook(master_excel, cohort_sheets):
+                        enhance_cohort_workbook(master_excel, parent_dir.name, total_protocols)
+                except Exception as e:
+                    print(f"Master cohort excel notice: {e}")
 
             if not df_cohort_wide.empty:
                 df_cohort_wide.to_csv(str(csv_wide_path), index=False, encoding="utf-8-sig")
@@ -2890,7 +3021,7 @@ class PPGWorkbenchApp:
                 print(f"Error processing {stem}: {e}")
 
         # Build Long & Wide DataFrames
-        df_long = pd.DataFrame(detailed_rows)
+        df_long = make_dataframe(detailed_rows)
 
         # Build wide format
         wide_rows = {}
@@ -2907,7 +3038,7 @@ class PPGWorkbenchApp:
             wide_rows[key][f"{roi}_PGA_Direction"] = row["PGA_Direction_Compass"]
             wide_rows[key][f"{roi}_PGA_Coherence_Pct"] = row["PGA_Coherence_Pct"]
 
-        df_wide = pd.DataFrame(list(wide_rows.values()))
+        df_wide = make_dataframe(list(wide_rows.values()))
 
         # 1. Save Multi-Sheet Excel Workbook (via openpyxl) with File Lock Resilience
         excel_path = result_dir / "PPP_PPG_PGA_Statistical_Summary.xlsx"
@@ -2929,12 +3060,13 @@ class PPGWorkbenchApp:
                     pass
 
         try:
-            with pd.ExcelWriter(str(excel_target), engine="openpyxl") as writer:
-                df_long.to_excel(writer, sheet_name="Detailed_ROIs", index=False)
-                df_wide.to_excel(writer, sheet_name="Executive_Summary", index=False)
-            has_excel = True
-            # Enhance with Audit Trail Box & Methodology Guide Sheet
-            enhance_excel_workbook(excel_target)
+            has_excel = write_excel_workbook(excel_target, {
+                "Detailed_ROIs": df_long,
+                "Executive_Summary": df_wide
+            })
+            if has_excel:
+                # Enhance with Audit Trail Box & Methodology Guide Sheet
+                enhance_excel_workbook(excel_target)
 
             # If fallback was used and GUI is active, show helpful warning
             if excel_target != excel_path and not silent and not is_cohort_subtask and not getattr(self, "silent_mode", False):
