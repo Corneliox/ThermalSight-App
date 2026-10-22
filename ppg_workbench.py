@@ -22,6 +22,8 @@ import copy
 import shutil
 import argparse
 import subprocess
+import warnings
+warnings.filterwarnings("ignore")
 from pathlib import Path
 import numpy as np
 import cv2
