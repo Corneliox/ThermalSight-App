@@ -713,7 +713,8 @@ def enhance_cohort_workbook(excel_path: Path, cohort_name: str, total_protocols:
         # ── 1. Protocol_Comparison Sheet ──
         if "Protocol_Comparison" in wb.sheetnames:
             ws = wb["Protocol_Comparison"]
-            ws.views.sheetView[0].showGridLines = True
+            if ws.views.sheetView:
+                ws.views.sheetView[0].showGridLines = True
             header_fill = PatternFill(start_color="312E81", end_color="312E81", fill_type="solid")
             header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
             alt_fill = PatternFill(start_color="F5F3FF", end_color="F5F3FF", fill_type="solid")
@@ -751,7 +752,8 @@ def enhance_cohort_workbook(excel_path: Path, cohort_name: str, total_protocols:
         # ── 2. All_Protocols_Detailed Sheet ──
         if "All_Protocols_Detailed" in wb.sheetnames:
             ws = wb["All_Protocols_Detailed"]
-            ws.views.sheetView[0].showGridLines = True
+            if ws.views.sheetView:
+                ws.views.sheetView[0].showGridLines = True
             header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
             header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
             alt_fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
@@ -1721,93 +1723,166 @@ class PPGWorkbenchApp:
 
         all_long_dfs = []
         all_wide_dfs = []
+        master_excel_created = None
+        master_csv_wide_created = None
+        master_csv_long_created = None
 
-        for p_idx, proto in enumerate(protocols):
-            proto_name = proto['name']
-            if progress_win:
-                try:
-                    pbar['value'] = p_idx
-                    lbl_status.config(text=f"Protocol {p_idx + 1} of {total_protocols}: '{proto_name}' ({len(proto['images'])} images)...")
-                    progress_win.update()
-                    self.root.update_idletasks()
-                except Exception:
-                    pass
-
-            # Switch to this protocol
-            self.switch_to_protocol(p_idx, is_initial=False)
-
-            def img_callback(curr_img, tot_img, img_stem):
-                if progress_win and lbl_sub:
+        try:
+            for p_idx, proto in enumerate(protocols):
+                proto_name = proto['name']
+                if progress_win:
                     try:
-                        lbl_sub.config(text=f"Protocol '{proto_name}' ({p_idx+1}/{total_protocols}) - Image {curr_img}/{tot_img}: {img_stem}")
+                        pbar['value'] = p_idx
+                        lbl_status.config(text=f"Protocol {p_idx + 1} of {total_protocols}: '{proto_name}' ({len(proto['images'])} images)...")
                         progress_win.update()
                         self.root.update_idletasks()
                     except Exception:
                         pass
 
-            try:
-                res = self.recompute_and_export_all_metrics(
-                    silent=True,
-                    is_cohort_subtask=True,
-                    progress_callback=img_callback
-                )
-                if isinstance(res, tuple) and len(res) == 4 and res[0]:
-                    _, df_l, df_w, _ = res
-                    if df_l is not None and not df_l.empty:
-                        df_l_tagged = df_l.copy()
-                        df_l_tagged.insert(0, 'Protocol', proto_name)
-                        all_long_dfs.append(df_l_tagged)
-                    if df_w is not None and not df_w.empty:
-                        df_w_tagged = df_w.copy()
-                        df_w_tagged.insert(0, 'Protocol', proto_name)
-                        all_wide_dfs.append(df_w_tagged)
-            except Exception as ex:
-                print(f"[ERROR] Failed recomputing protocol '{proto_name}': {ex}", file=sys.stderr)
+                # Switch to this protocol
+                self.switch_to_protocol(p_idx, is_initial=False)
 
-        if all_wide_dfs or all_long_dfs:
+                def img_callback(curr_img, tot_img, img_stem):
+                    if progress_win and lbl_sub:
+                        try:
+                            lbl_sub.config(text=f"Protocol '{proto_name}' ({p_idx+1}/{total_protocols}) - Image {curr_img}/{tot_img}: {img_stem}")
+                            progress_win.update()
+                            self.root.update_idletasks()
+                        except Exception:
+                            pass
+
+                try:
+                    res = self.recompute_and_export_all_metrics(
+                        silent=True,
+                        is_cohort_subtask=True,
+                        progress_callback=img_callback
+                    )
+                    if isinstance(res, tuple) and len(res) == 4 and res[0]:
+                        _, df_l, df_w, _ = res
+                        if df_l is not None and not df_l.empty:
+                            df_l_tagged = df_l.copy()
+                            df_l_tagged.insert(0, 'Protocol', proto_name)
+                            all_long_dfs.append(df_l_tagged)
+                        if df_w is not None and not df_w.empty:
+                            df_w_tagged = df_w.copy()
+                            df_w_tagged.insert(0, 'Protocol', proto_name)
+                            all_wide_dfs.append(df_w_tagged)
+                except Exception as ex:
+                    print(f"[ERROR] Failed recomputing protocol '{proto_name}': {ex}", file=sys.stderr)
+
+            if all_wide_dfs or all_long_dfs:
+                if progress_win:
+                    try:
+                        pbar['value'] = total_protocols
+                        lbl_status.config(text="Generating Master Cohort Comparison Workbook...")
+                        progress_win.update()
+                        self.root.update_idletasks()
+                    except Exception:
+                        pass
+
+                master_excel = parent_dir / "Cohort_Protocols_Summary.xlsx"
+                master_excel_target = master_excel
+                csv_wide_path = parent_dir / "Cohort_Protocols_Summary.csv"
+                csv_wide_target = csv_wide_path
+                csv_long_path = parent_dir / "Cohort_Protocols_Detailed.csv"
+                csv_long_target = csv_long_path
+
+                # File lock resilience for Master Excel
+                if master_excel.exists():
+                    try:
+                        master_excel.unlink()
+                    except Exception as ex_del:
+                        print(f"[MASTER EXCEL NOTICE] Primary master file locked: {ex_del}")
+                        master_excel_target = parent_dir / "Cohort_Protocols_Summary_isolated.xlsx"
+                        try:
+                            if master_excel_target.exists():
+                                master_excel_target.unlink()
+                        except Exception:
+                            pass
+
+                # File lock resilience for Master CSVs
+                if csv_wide_path.exists():
+                    try:
+                        csv_wide_path.unlink()
+                    except Exception as ex_del_csv:
+                        print(f"[MASTER CSV NOTICE] Wide CSV locked: {ex_del_csv}")
+                        csv_wide_target = parent_dir / "Cohort_Protocols_Summary_isolated.csv"
+                        try:
+                            if csv_wide_target.exists():
+                                csv_wide_target.unlink()
+                        except Exception:
+                            pass
+
+                if csv_long_path.exists():
+                    try:
+                        csv_long_path.unlink()
+                    except Exception as ex_del_csv_l:
+                        print(f"[MASTER CSV NOTICE] Detailed CSV locked: {ex_del_csv_l}")
+                        csv_long_target = parent_dir / "Cohort_Protocols_Detailed_isolated.csv"
+                        try:
+                            if csv_long_target.exists():
+                                csv_long_target.unlink()
+                        except Exception:
+                            pass
+
+                df_cohort_wide = concat_dataframes(all_wide_dfs) if all_wide_dfs else make_dataframe([])
+                df_cohort_long = concat_dataframes(all_long_dfs) if all_long_dfs else make_dataframe([])
+
+                cohort_sheets = {}
+                if not df_cohort_wide.empty:
+                    cohort_sheets["Protocol_Comparison"] = df_cohort_wide
+                if not df_cohort_long.empty:
+                    cohort_sheets["All_Protocols_Detailed"] = df_cohort_long
+
+                if cohort_sheets:
+                    try:
+                        if write_excel_workbook(master_excel_target, cohort_sheets):
+                            enhance_cohort_workbook(master_excel_target, parent_dir.name, total_protocols)
+                            master_excel_created = master_excel_target
+                    except Exception as e:
+                        print(f"Master cohort excel notice: {e}")
+
+                try:
+                    if not df_cohort_wide.empty:
+                        df_cohort_wide.to_csv(str(csv_wide_target), index=False, encoding="utf-8-sig")
+                        master_csv_wide_created = csv_wide_target
+                except Exception as ex_csv:
+                    print(f"Master CSV wide write error: {ex_csv}")
+
+                try:
+                    if not df_cohort_long.empty:
+                        df_cohort_long.to_csv(str(csv_long_target), index=False, encoding="utf-8-sig")
+                        master_csv_long_created = csv_long_target
+                except Exception as ex_csv_l:
+                    print(f"Master CSV long write error: {ex_csv_l}")
+
+        finally:
             if progress_win:
                 try:
-                    pbar['value'] = total_protocols
-                    lbl_status.config(text="Generating Master Cohort Comparison Workbook...")
-                    progress_win.update()
-                    self.root.update_idletasks()
+                    progress_win.grab_release()
                 except Exception:
                     pass
-
-            master_excel = parent_dir / "Cohort_Protocols_Summary.xlsx"
-            csv_wide_path = parent_dir / "Cohort_Protocols_Summary.csv"
-            csv_long_path = parent_dir / "Cohort_Protocols_Detailed.csv"
-
-            df_cohort_wide = concat_dataframes(all_wide_dfs) if all_wide_dfs else make_dataframe([])
-            df_cohort_long = concat_dataframes(all_long_dfs) if all_long_dfs else make_dataframe([])
-
-            cohort_sheets = {}
-            if not df_cohort_wide.empty:
-                cohort_sheets["Protocol_Comparison"] = df_cohort_wide
-            if not df_cohort_long.empty:
-                cohort_sheets["All_Protocols_Detailed"] = df_cohort_long
-
-            if cohort_sheets:
                 try:
-                    if write_excel_workbook(master_excel, cohort_sheets):
-                        enhance_cohort_workbook(master_excel, parent_dir.name, total_protocols)
-                except Exception as e:
-                    print(f"Master cohort excel notice: {e}")
-
-            if not df_cohort_wide.empty:
-                df_cohort_wide.to_csv(str(csv_wide_path), index=False, encoding="utf-8-sig")
-            if not df_cohort_long.empty:
-                df_cohort_long.to_csv(str(csv_long_path), index=False, encoding="utf-8-sig")
-
-        if progress_win:
-            try:
-                progress_win.grab_release()
-                progress_win.destroy()
+                    progress_win.destroy()
+                except Exception:
+                    pass
                 progress_win = None
+            try:
+                self.root.update_idletasks()
             except Exception:
                 pass
 
-        self.switch_to_protocol(0, is_initial=False)
+        try:
+            self.switch_to_protocol(0, is_initial=False)
+        except Exception as ex_switch:
+            print(f"Notice switching back to protocol 0: {ex_switch}")
+
+        # Add notes if fallback isolated master file was generated
+        master_excel_display = "Cohort_Protocols_Summary.xlsx"
+        fallback_warning = ""
+        if master_excel_created and master_excel_created.name != "Cohort_Protocols_Summary.xlsx":
+            master_excel_display = f"{master_excel_created.name} (File utama terkunci oleh Microsoft Excel)"
+            fallback_warning = f"\n⚠️ Catatan: File utama 'Cohort_Protocols_Summary.xlsx' sedang terbuka di Microsoft Excel.\nHasil kohor terbaru berhasil disimpan ke file terpisah: '{master_excel_created.name}'.\n"
 
         completion_msg = (
             f"✓ Multi-Protocol Cohort Recomputation Successful!\n\n"
@@ -1815,7 +1890,7 @@ class PPGWorkbenchApp:
             f"Total Protocols Processed: {total_protocols}\n\n"
             f"Outputs Generated (100% Isolated Per Protocol):\n"
             + "\n".join(f"• 📁 {p['name']}_result/ (PPP_PPG_PGA_Statistical_Summary.xlsx)" for p in protocols)
-            + f"\n\n📊 Consolidated Master Comparison:\n• 📄 Cohort_Protocols_Summary.xlsx\n• 📄 Cohort_Protocols_Summary.csv\n\n"
+            + f"\n\n📊 Consolidated Master Comparison:\n• 📄 {master_excel_display}\n• 📄 Cohort_Protocols_Summary.csv{fallback_warning}\n\n"
             f"Would you like to open the cohort folder now?"
         )
         print(f"[COHORT RECOMPUTE SUCCESS] Finished {total_protocols} protocols in {parent_dir}")

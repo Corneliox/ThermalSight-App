@@ -250,5 +250,67 @@ class TestCohortProtocolsV184(unittest.TestCase):
 
         root.destroy()
 
+    def test_cohort_batch_recompute_master_lock_resilience(self):
+        """
+        Verify that recompute_and_export_all_protocols_cohort succeeds cleanly
+        even when Cohort_Protocols_Summary.xlsx is open and locked by Microsoft Excel,
+        falling back to Cohort_Protocols_Summary_isolated.xlsx without freezing the UI.
+        """
+        import json
+        import cv2
+        import tkinter as tk
+
+        cohort_root = os.path.join(self.test_dir, 'cohort_batch_lock')
+        os.makedirs(cohort_root, exist_ok=True)
+
+        proto_map = {
+            'p1': ['img1.jpg'],
+            'p2': ['img2.jpg'],
+        }
+
+        for proto, imgs in proto_map.items():
+            p_dir = os.path.join(cohort_root, proto)
+            os.makedirs(p_dir, exist_ok=True)
+            for img_name in imgs:
+                img_path = os.path.join(p_dir, img_name)
+                temp_arr = np.full((120, 160), 22.0, dtype=np.float32)
+                temp_arr[20:100, 20:140] = 34.0
+                norm_u8 = ((temp_arr - 20.0) / 20.0 * 255.0).clip(0, 255).astype(np.uint8)
+                cv2.imwrite(img_path, norm_u8)
+
+                res_dir = os.path.join(cohort_root, f'{proto}_result')
+                os.makedirs(res_dir, exist_ok=True)
+                with open(os.path.join(res_dir, 'annotations_session.json'), 'w', encoding='utf-8') as f:
+                    json.dump({
+                        'version': '1.8.5',
+                        'folderPath': p_dir,
+                        'segmentations': {
+                            img_path: [{'labelName': 'T1', 'cx': 40, 'cy': 40, 'points': [{'x': 35, 'y': 35}, {'x': 45, 'y': 45}]}]
+                        }
+                    }, f)
+
+        master_excel = os.path.join(cohort_root, 'Cohort_Protocols_Summary.xlsx')
+        with open(master_excel, 'w') as f:
+            f.write('dummy excel content')
+
+        root = tk.Tk()
+        root.withdraw()
+        app = ppg_workbench.PPGWorkbenchApp(root, cohort_arg=cohort_root, silent_mode=True)
+
+        # Lock the master Excel file to simulate Microsoft Excel holding it open
+        with open(master_excel, 'r+b') as locked_file:
+            success = app.recompute_and_export_all_protocols_cohort(silent=True)
+            self.assertTrue(success, 'Cohort batch recompute must return True even if master Excel is locked')
+
+            fallback_excel = os.path.join(cohort_root, 'Cohort_Protocols_Summary_isolated.xlsx')
+            self.assertTrue(os.path.exists(fallback_excel), 'Cohort_Protocols_Summary_isolated.xlsx must exist')
+
+            wb = openpyxl.load_workbook(fallback_excel)
+            self.assertIn('Protocol_Comparison', wb.sheetnames)
+            self.assertIn('All_Protocols_Detailed', wb.sheetnames)
+            self.assertIn('Panduan_Metodologi', wb.sheetnames)
+
+        root.destroy()
+
 if __name__ == '__main__':
     unittest.main()
