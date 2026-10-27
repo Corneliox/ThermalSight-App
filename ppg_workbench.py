@@ -195,16 +195,24 @@ sys.path.append(str(CURRENT_DIR / "backend"))
 try:
     from analyzer import load_temperature
 except ImportError:
+    try:
+        from analyzer import clean_flir_accessories
+    except ImportError:
+        def clean_flir_accessories(temp):
+            return temp
+
     def load_temperature(p):
+        temp = None
         try:
             import flyr
-            return flyr.unpack(str(p)).celsius.astype(np.float32)
+            temp = flyr.unpack(str(p)).celsius.astype(np.float32)
         except Exception:
             raw = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
             if raw is None:
                 raise ValueError(f"Cannot load image: {p}")
             # Map 8-bit grayscale to physiological plantar range 20.0°C - 38.0°C (BUG-1.7)
-            return (20.0 + (raw.astype(np.float32) / 255.0) * (38.0 - 20.0))
+            temp = 20.0 + (raw.astype(np.float32) / 255.0) * (38.0 - 20.0)
+        return clean_flir_accessories(temp)
 
 
 def strip_result_suffix(folder_name: str) -> str:

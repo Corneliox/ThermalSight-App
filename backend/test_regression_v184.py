@@ -52,6 +52,26 @@ class TestThermalSightRegressionV184(unittest.TestCase):
                 self.assertLess(float(np.max(t_arr)), 50.0, f"{fname} max temperature exceeded 50°C!")
                 self.assertGreater(float(np.min(t_arr)), 15.0, f"{fname} min temperature below 15°C!")
 
+    def test_flir_scale_arrow_and_reticle_removal(self):
+        """Verify that FLIR scale indicator arrow, tick marks, and center reticle are completely inpainted."""
+        scene = np.full((240, 320), 24.0, dtype=np.float32)
+        scene[40:200, 40:180] = 34.0
+        scene[100:120, 90:110] = 37.5  # Real foot hotspot
+
+        # Add FLIR artifacts
+        scene[10:20, 10:40] = 38.0  # Top-left text
+        cy, cx = 120, 160
+        scene[cy-8:cy+8, cx] = 20.0  # Center crosshair
+        scene[cy, cx-8:cx+8] = 20.0
+        scene[78:83, 283:288] = 38.0  # Scale indicator arrow in right column band
+        scene[:, 300:320] = np.linspace(20.0, 38.0, 240)[:, None]  # Colorbar
+
+        cleaned = analyzer.clean_flir_accessories(scene)
+        self.assertAlmostEqual(float(cleaned[110, 100]), 37.5, delta=0.2, msg="Foot hotspot must be preserved!")
+        self.assertLess(float(cleaned[80, 285]), 26.0, msg="FLIR scale arrow must be removed!")
+        self.assertAlmostEqual(float(cleaned[cy-4, cx]), 34.0, delta=1.0, msg="Center crosshair/reticle must be inpainted!")
+        self.assertLess(float(cleaned[100, 310]), 26.0, msg="Colorbar must be replaced with ambient background!")
+
     def test_gate1_inpainting_preserves_foot_hotspots(self):
         """Gate 1.3 (BUG-3.3): clean_flir_accessories must not erase 37.5°C foot hotspots."""
         temp = np.full((240, 320), 28.0, dtype=np.float32)

@@ -95,7 +95,7 @@ def load_temperature(filepath: str) -> np.ndarray:
 
 def clean_flir_accessories(temp: np.ndarray) -> np.ndarray:
     """
-    Stroke-level FLIR OSD, logo, reticle, and colorbar inpainting.
+    Comprehensive FLIR OSD, scale indicator arrow, logo, reticle, and colorbar inpainting.
     Removes camera UI accessories while strictly preserving exact foot tissue temperatures.
     """
     temp_work = temp.copy()
@@ -107,32 +107,30 @@ def clean_flir_accessories(temp: np.ndarray) -> np.ndarray:
 
     osd_stroke_mask = np.zeros((H, W), dtype=bool)
 
-    # 1. Top-left temperature text
+    # 1. Top-left temperature text (e.g. "35.0 °C")
     tl_box = np.zeros((H, W), dtype=bool)
-    tl_box[2:32, 2:85] = True
+    tl_box[2:36, 2:90] = True
     osd_stroke_mask |= tl_box & ((norm_u8 > 160) | (norm_u8 < 20))
 
     # 2. Bottom-left FLIR logo
     bl_box = np.zeros((H, W), dtype=bool)
-    bl_box[max(0, H - 45):H, 0:75] = True
+    bl_box[max(0, H - 45):H, 0:80] = True
     osd_stroke_mask |= bl_box & ((norm_u8 > 160) | (norm_u8 < 20))
 
-    # 3. Top-right scale limit text
-    tr_box = np.zeros((H, W), dtype=bool)
-    tr_box[2:32, int(W * 0.83):int(W * 0.95)] = True
-    osd_stroke_mask |= tr_box & ((norm_u8 > 160) | (norm_u8 < 20))
+    # 3. Full vertical right-side scale zone (scale limit text, tick marks, and FLIR scale indicator ARROW)
+    # Covering full vertical height in scale column band [W*0.84 : W*0.95]
+    scale_band = np.zeros((H, W), dtype=bool)
+    scale_band[:, int(W * 0.84):int(W * 0.95)] = True
+    osd_stroke_mask |= scale_band & ((norm_u8 > 160) | (norm_u8 < 20))
 
-    # 4. Bottom-right scale limit text
-    br_box = np.zeros((H, W), dtype=bool)
-    br_box[max(0, H - 45):H, int(W * 0.83):int(W * 0.95)] = True
-    osd_stroke_mask |= br_box & ((norm_u8 > 160) | (norm_u8 < 20))
-
-    # 5. Center reticle/crosshair (BUG-3.3: NEVER inpaint norm_u8 > 240 as crosshairs!)
-    # Only thin reticles at the exact image center if dark, avoiding foot tissue
+    # 4. Center reticle / crosshair / spot arrow
     cy, cx = H // 2, W // 2
     c_box = np.zeros((H, W), dtype=bool)
-    c_box[max(0, cy - 8):min(H, cy + 8), max(0, cx - 8):min(W, cx + 8)] = True
-    osd_stroke_mask |= c_box & (norm_u8 < 20)
+    c_box[max(0, cy - 15):min(H, cy + 15), max(0, cx - 15):min(W, cx + 15)] = True
+    k3 = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    top_hat_bright = norm_u8 - cv2.morphologyEx(norm_u8, cv2.MORPH_OPEN, k3)
+    top_hat_dark = cv2.morphologyEx(norm_u8, cv2.MORPH_CLOSE, k3) - norm_u8
+    osd_stroke_mask |= c_box & ((top_hat_bright > 30) | (top_hat_dark > 30) | (norm_u8 < 20))
 
     # Inpaint detected strokes seamlessly while preserving float32 precision for real tissue (BUG-1.2)
     if np.any(osd_stroke_mask):
@@ -142,8 +140,8 @@ def clean_flir_accessories(temp: np.ndarray) -> np.ndarray:
         replace_idx = (mask_d > 0)
         temp_work[replace_idx] = inpainted_f32[replace_idx]
 
-    # 6. Replicate ambient thermal background for rightmost colorbar strip
-    cb_start = int(W * 0.95)
+    # 5. Replicate ambient thermal background for rightmost colorbar strip
+    cb_start = int(W * 0.94)
     for c in range(cb_start, W):
         temp_work[:, c] = temp_work[:, cb_start - 1]
 
@@ -1229,52 +1227,8 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         log(f"  warning: failed to parse rois json: {e}")
         rois = []
 
-    # 1. Stroke-Level FLIR OSD & Reticle Inpainting (Zero Foot Heel Notch)
-    temp_work = temp.copy()
-    mn, mx = float(temp_work.min()), float(temp_work.max())
-    denom = max(1e-4, mx - mn)
-    norm_u8 = np.clip((temp_work - mn) / denom * 255.0, 0, 255).astype(np.uint8)
-
-    osd_stroke_mask = np.zeros((H, W), dtype=bool)
-    # Top-left temperature text (e.g. "35.0 °C")
-    tl_box = np.zeros((H, W), dtype=bool)
-    tl_box[4:28, 4:80] = True
-    osd_stroke_mask |= tl_box & ((norm_u8 > 160) | (norm_u8 < 20))
-
-    # Bottom-left FLIR logo
-    bl_box = np.zeros((H, W), dtype=bool)
-    bl_box[195:239, 0:72] = True
-    osd_stroke_mask |= bl_box & ((norm_u8 > 160) | (norm_u8 < 20))
-
-    # Top-right scale limit text
-    tr_box = np.zeros((H, W), dtype=bool)
-    tr_box[4:28, 270:320] = True
-    osd_stroke_mask |= tr_box & ((norm_u8 > 160) | (norm_u8 < 20))
-
-    # Bottom-right scale limit text
-    br_box = np.zeros((H, W), dtype=bool)
-    br_box[195:239, 270:320] = True
-    osd_stroke_mask |= br_box & ((norm_u8 > 160) | (norm_u8 < 20))
-
-    # Center reticle/crosshair if present (BUG-3.3: avoid inpainting hot foot tissue)
-    cy, cx = H // 2, W // 2
-    c_box = np.zeros((H, W), dtype=bool)
-    c_box[max(0, cy - 8):min(H, cy + 8), max(0, cx - 8):min(W, cx + 8)] = True
-    osd_stroke_mask |= c_box & (norm_u8 < 20)
-
-    # Inpaint detected strokes seamlessly while preserving float32 precision (BUG-1.2)
-    if np.any(osd_stroke_mask):
-        mask_d = cv2.dilate(osd_stroke_mask.astype(np.uint8), np.ones((5, 5), np.uint8))
-        inpainted_u8 = cv2.inpaint(norm_u8, mask_d, 7, cv2.INPAINT_TELEA)
-        inpainted_f32 = mn + (inpainted_u8.astype(np.float32) / 255.0) * denom
-        replace_idx = (mask_d > 0)
-        temp_work[replace_idx] = inpainted_f32[replace_idx]
-
-    # Blank out the extreme right edge colorbar strip outside the scene
-    if W >= 320:
-        temp_work[:, 310:320] = 23.5
-    elif W > 10:
-        temp_work[:, int(W * 0.968):] = 23.5
+    # 1. Clean FLIR Accessories & OSD (unified robust inpainting)
+    temp_work = clean_flir_accessories(temp)
 
     # 2. Determine Foot Side: Screen Left (avg_x < W/2) -> Right Foot in camera plantar view
     # 2. Determine Foot Side & Patch with Margin Tolerance (Thermal-Valley Split)

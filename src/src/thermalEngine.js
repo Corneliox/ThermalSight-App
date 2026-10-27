@@ -104,11 +104,9 @@ export function cleanFlirAccessoriesRgba(data, W, H) {
   const centerR = Math.floor(H / 2);
   const centerC = Math.floor(W / 2);
   for (let r = 0; r < H; r++) {
-    const inTl = (r >= 2 && r <= 32);
+    const inTl = (r >= 2 && r <= 36);
     const inBl = (r >= H - 45 && r < H);
-    const inTr = (r >= 2 && r <= 32);
-    const inBr = (r >= H - 45 && r < H);
-    const inCenter = (Math.abs(r - centerR) <= 8);
+    const inCenter = (Math.abs(r - centerR) <= 15);
 
     for (let c = 0; c < W; c++) {
       const idx = (r * W + c) * 4;
@@ -117,19 +115,19 @@ export function cleanFlirAccessoriesRgba(data, W, H) {
       const blu = data[idx + 2];
       const lum = 0.299 * red + 0.587 * grn + 0.114 * blu;
 
-      const isTl = inTl && (c >= 2 && c <= 85);
-      const isBl = inBl && (c >= 0 && c <= 75);
-      const isTr = inTr && (c >= Math.floor(W * 0.83) && c < Math.floor(W * 0.95));
-      const isBr = inBr && (c >= Math.floor(W * 0.83) && c < Math.floor(W * 0.95));
-      const isCenterBox = inCenter && (Math.abs(c - centerC) <= 8);
+      const isTl = inTl && (c >= 2 && c <= 90);
+      const isBl = inBl && (c >= 0 && c <= 80);
+      // Entire vertical scale zone on the right (scale limit text, ticks, and FLIR scale indicator ARROW)
+      const isScaleBand = (c >= Math.floor(W * 0.84) && c < Math.floor(W * 0.95));
+      const isCenterBox = inCenter && (Math.abs(c - centerC) <= 15);
 
-      if (isTl || isBl || isTr || isBr) {
+      if (isTl || isBl || isScaleBand) {
         if (lum > 160 || lum < 20) {
           isOsd[r * W + c] = 1;
         }
       } else if (isCenterBox) {
-        // BUG-3.3: Only remove dark reticle crosshairs (lum < 20), NEVER bright hotspots (lum > 240)!
-        if (lum < 20) {
+        // Detect center reticle / crosshair / spot arrow (dark or high-contrast thin stroke)
+        if (lum < 20 || (lum > 220 && Math.abs(red - grn) < 10 && Math.abs(grn - blu) < 10)) {
           isOsd[r * W + c] = 1;
         }
       }
@@ -155,7 +153,7 @@ export function cleanFlirAccessoriesRgba(data, W, H) {
   }
 
   // 3. Inpaint dilated mask using directional non-masked boundary interpolation
-  const cbStart = Math.floor(W * 0.95);
+  const cbStart = Math.floor(W * 0.94);
   for (let r = 0; r < H; r++) {
     for (let c = 0; c < cbStart; c++) {
       if (dilatedMask[r * W + c] === 0) continue;
@@ -251,6 +249,10 @@ export function loadThermalImageData(imageSource) {
       ctx.drawImage(img, 0, 0, W, H);
       const imgData = ctx.getImageData(0, 0, W, H);
       const data = imgData.data;
+
+      // Automatically inpaint FLIR OSD, scale indicator arrow, logo, and colorbar
+      cleanFlirAccessoriesRgba(data, W, H);
+      ctx.putImageData(imgData, 0, 0);
 
       const cleanImageDataUrl = canvas.toDataURL('image/png');
 

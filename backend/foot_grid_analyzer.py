@@ -47,6 +47,12 @@ def load_temp_matrix(source_path: Path) -> tuple[np.ndarray, str]:
         df = pd.read_csv(str(analysis_csv), header=None)
         return df.values.astype(np.float32), stem
 
+    try:
+        from analyzer import load_temperature
+        return load_temperature(str(p)), stem
+    except Exception:
+        pass
+
     if FLYR_AVAILABLE and p.suffix.lower() in [".jpg", ".jpeg"]:
         try:
             temp = flyr.unpack(str(p)).celsius.astype(np.float32)
@@ -56,7 +62,9 @@ def load_temp_matrix(source_path: Path) -> tuple[np.ndarray, str]:
             
     raw = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
     if raw is not None:
-        return raw.astype(np.float32), stem
+        # Scale 8-bit grayscale to 20-38C
+        temp = 20.0 + (raw.astype(np.float32) / 255.0) * (38.0 - 20.0)
+        return temp, stem
         
     raise ValueError(f"Unable to load temperature data from: {source_path}")
 
