@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'src/**'
-      - '.github/workflows/deploy-pages.yaml'
   workflow_dispatch:
 
 permissions:

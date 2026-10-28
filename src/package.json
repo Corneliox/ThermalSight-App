@@ -1,9 +1,9 @@
 {
   "name": "thermalsight",
   "version": "1.8.5",
-  "description": "Thermal Analysis Student Explorer",
-  "author": "Aditya",
-  "repository": "https://github.com/Aditya42069/ThermalSight-App",
+  "description": "Biomedical Infrared Thermography & Plantar Perfusion Analysis Suite",
+  "author": "Aditya Kusuma & Corneliox",
+  "repository": "https://github.com/Corneliox/ThermalSight-App",
   "main": "main.js",
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
