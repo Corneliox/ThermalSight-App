@@ -1102,6 +1102,7 @@ def render_single_plantar_figure(
     quiver_alpha: float = 1.0,
     quiver_headwidth: float = None,
     quiver_headlength: float = None,
+    show_fscan_box: bool = False,
 ):
     cmap_thermal = LinearSegmentedColormap.from_list("flir_whitehot", [
         (0.00, "#000000"), (0.12, "#180036"), (0.28, "#4f046e"),
@@ -1124,6 +1125,13 @@ def render_single_plantar_figure(
     ax1.tick_params(colors="black", labelsize=9)
 
     for name, gx, gy, r_rad in mapped_rois:
+        if show_fscan_box:
+            box_side = 9.0 if n_rows > 16 else 1.0
+            rect_a = plt.Rectangle((gx - box_side / 2.0, gy - box_side / 2.0), box_side, box_side,
+                                   edgecolor="#38bdf8", facecolor="none", lw=1.5, linestyle="--", zorder=9)
+            ax1.add_patch(rect_a)
+            ax1.plot([gx - 0.8, gx + 0.8], [gy, gy], color="#38bdf8", lw=0.8, zorder=10)
+            ax1.plot([gx, gx], [gy - 0.8, gy + 0.8], color="#38bdf8", lw=0.8, zorder=10)
         c_out = plt.Circle((gx, gy), r_rad, edgecolor="#00e5ff", facecolor="none", lw=1.8 if n_rows <= 16 else 2.0, zorder=10)
         c_in = plt.Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=1.2 if n_rows <= 16 else 1.3, zorder=11)
         ax1.add_patch(c_out)
@@ -1196,6 +1204,13 @@ def render_single_plantar_figure(
     ax2.tick_params(colors="black", labelsize=9)
 
     for name, gx, gy, r_rad in mapped_rois:
+        if show_fscan_box:
+            box_side = 9.0 if n_rows > 16 else 1.0
+            rect_b = plt.Rectangle((gx - box_side / 2.0, gy - box_side / 2.0), box_side, box_side,
+                                   edgecolor="#0284c7", facecolor="none", lw=1.5, linestyle="--", zorder=9)
+            ax2.add_patch(rect_b)
+            ax2.plot([gx - 0.8, gx + 0.8], [gy, gy], color="#0284c7", lw=0.8, zorder=10)
+            ax2.plot([gx, gx], [gy - 0.8, gy + 0.8], color="#0284c7", lw=0.8, zorder=10)
         c_out = plt.Circle((gx, gy), r_rad, edgecolor="red", facecolor="none", lw=1.8 if n_rows <= 16 else 2.0, zorder=10)
         c_in = plt.Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=1.0, linestyle=":", zorder=11)
         ax2.add_patch(c_out)
@@ -1532,6 +1547,18 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         label_fontsize=label_fontsize
     )
 
+    # 5. [ALPHA] fscan_harmonized: Step = 1, show_fscan_box = True (2.54 cm x 2.54 cm / 9x9 physical box)
+    out_png_5 = out_dir / f"{stem}_{foot_side}_5_fscan_harmonized.png"
+    render_single_plantar_figure(
+        out_png_5, grid_dense, grid_disp, grid_contour, mask_dense,
+        sobel_x, sobel_y, grad_mag, mapped_rois, n_rows, n_cols, fig_size,
+        title_a="(A)\n\nPPP (Thermal Intensity)\n[ALPHA] F-Scan 9x9 Box (2.54 cm)",
+        title_b="(B)\n\nPPG & PGA (Hairline Vectors)\nF-Scan Grid (2.54 mm Pitch)",
+        step=1, thresh=0.02, show_dots=True, arrow_mode="power_law",
+        quiver_width=0.0019, quiver_alpha=0.75, quiver_headwidth=2.5, quiver_headlength=3.0,
+        label_fontsize=label_fontsize, show_fscan_box=True
+    )
+
     # Set primary output file {stem}_{foot_side}_whitehot.png based on requested mode (defaulting to key_vectors)
     out_png = out_dir / f"{stem}_{foot_side}_whitehot.png"
     if mode in ["empty_center", "1_empty_center"]:
@@ -1540,6 +1567,8 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         shutil.copy2(str(out_png_2), str(out_png))
     elif mode in ["hairline_dense", "4_hairline_dense", "hairline", "dense_hairline"]:
         shutil.copy2(str(out_png_4), str(out_png))
+    elif mode in ["fscan_harmonized", "fscan_9x9", "alpha_fscan", "fscan"]:
+        shutil.copy2(str(out_png_5), str(out_png))
     elif mode in ["coarse_9x9", "9x9_coarse"]:
         render_single_plantar_figure(
             out_png, grid_dense, grid_disp, grid_contour, mask_dense,
@@ -1560,7 +1589,8 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         "path_1_empty_center": str(out_png_1),
         "path_2_dense_dots": str(out_png_2),
         "path_3_key_vectors": str(out_png_3),
-        "path_4_hairline_dense": str(out_png_4)
+        "path_4_hairline_dense": str(out_png_4),
+        "path_5_fscan_harmonized": str(out_png_5)
     })
 
 

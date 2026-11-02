@@ -1,6 +1,7 @@
 # ThermalSight
 
 [![Production Release](https://img.shields.io/badge/Release-v1.8.5%20Stable-blue.svg)](https://github.com/Corneliox/ThermalSight-App/releases/tag/v1.8.5)
+[![Alpha Preview](https://img.shields.io/badge/Preview-v1.9.0--alpha%20(F--Scan%20Grid)-purple.svg)](https://github.com/Corneliox/ThermalSight-App/tree/main)
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm%20Noncommercial-purple.svg)](LICENSE)
 [![Platforms](https://img.shields.io/badge/Platforms-Windows%20%7C%20macOS%20%7C%20Web%20Trial-green.svg)](https://github.com/Corneliox/ThermalSight-App/releases)
 [![Web Demo](https://img.shields.io/badge/GitHub%20Pages-Trial%20Demo%20(Nano)-orange.svg)](https://corneliox.github.io/ThermalSight-App/)

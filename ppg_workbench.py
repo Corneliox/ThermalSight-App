@@ -41,7 +41,7 @@ if "--export-metrics" in sys.argv:
 else:
     matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
-from matplotlib.patches import Circle
+from matplotlib.patches import Circle, Rectangle
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
 import tkinter as tk
@@ -687,6 +687,9 @@ def enhance_excel_workbook(excel_path: Path):
         ws_guide.column_dimensions["E"].width = 16
         ws_guide.column_dimensions["F"].width = 35
         ws_guide.column_dimensions["G"].width = 35
+
+        if "Executive_Summary" in wb.sheetnames:
+            wb.active = wb["Executive_Summary"]
 
         wb.save(str(excel_path))
     except Exception as e:
@@ -2425,7 +2428,12 @@ class PPGWorkbenchApp:
             c_color = "#F59E0B" if is_sel else "red"
             ring_color = "#FBBF24" if is_sel else "#00e5ff"
 
-            # On Panel A
+            # On Panel A: F-Scan Harmonized 9x9 Square Box (2.54 cm x 2.54 cm) & Inscribed Circle
+            box_side = 9.0
+            rect_a = Rectangle((gx - box_side / 2.0, gy - box_side / 2.0), box_side, box_side,
+                               edgecolor="#38bdf8", facecolor="none", lw=1.5 if is_sel else 1.1,
+                               linestyle="--", zorder=9)
+            self.ax1.add_patch(rect_a)
             c_out_a = Circle((gx, gy), r_rad, edgecolor=ring_color, facecolor="none", lw=2.0 if is_sel else 1.8, zorder=10)
             c_in_a = Circle((gx, gy), r_rad * 0.82, edgecolor=c_color, facecolor="none", lw=1.2, zorder=11)
             self.ax1.add_patch(c_out_a)
@@ -2436,7 +2444,11 @@ class PPGWorkbenchApp:
                           ha="center", va="center", zorder=15,
                           bbox=dict(boxstyle="round,pad=0.15", facecolor="#000000", alpha=0.65, edgecolor="none"))
 
-            # On Panel B
+            # On Panel B: F-Scan Harmonized 9x9 Square Box
+            rect_b = Rectangle((gx - box_side / 2.0, gy - box_side / 2.0), box_side, box_side,
+                               edgecolor="#0284c7", facecolor="none", lw=1.5 if is_sel else 1.1,
+                               linestyle="--", zorder=9)
+            self.ax2.add_patch(rect_b)
             c_out_b = Circle((gx, gy), r_rad, edgecolor=c_color, facecolor="none", lw=1.8 if is_sel else 1.6, zorder=10)
             c_in_b = Circle((gx, gy), r_rad * 0.82, edgecolor=c_color, facecolor="none", lw=0.9, linestyle=":", zorder=11)
             self.ax2.add_patch(c_out_b)
@@ -3079,6 +3091,9 @@ class PPGWorkbenchApp:
                 for name, gx, gy, r_rad in mapped_rois:
                     if not self.is_label_visible(name):
                         continue
+                    box_side = 9.0
+                    fax1.add_patch(Rectangle((gx - box_side / 2.0, gy - box_side / 2.0), box_side, box_side,
+                                             edgecolor="#38bdf8", facecolor="none", lw=1.2, linestyle="--", zorder=9))
                     fax1.add_patch(Circle((gx, gy), r_rad, edgecolor="#00e5ff", facecolor="none", lw=1.8, zorder=10))
                     fax1.add_patch(Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=1.2, zorder=11))
                     fax1.plot(gx, gy, "o", color="red", markeredgecolor="white", markeredgewidth=0.8, markersize=4.0, zorder=12)
@@ -3086,6 +3101,8 @@ class PPGWorkbenchApp:
                     fax1.text(gx, gy + ty1, name, color="white", fontsize=11, fontweight="bold", ha="center", va="center", zorder=15,
                               bbox=dict(boxstyle="round,pad=0.15", facecolor="#000000", alpha=0.65, edgecolor="none"))
 
+                    fax2.add_patch(Rectangle((gx - box_side / 2.0, gy - box_side / 2.0), box_side, box_side,
+                                             edgecolor="#0284c7", facecolor="none", lw=1.2, linestyle="--", zorder=9))
                     fax2.add_patch(Circle((gx, gy), r_rad, edgecolor="red", facecolor="none", lw=1.6, zorder=10))
                     fax2.add_patch(Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=0.9, linestyle=":", zorder=11) )
                     fax2.plot(gx, gy, "o", color="red", markersize=3.8, zorder=12)
@@ -3146,8 +3163,8 @@ class PPGWorkbenchApp:
 
         try:
             has_excel = write_excel_workbook(excel_target, {
-                "Detailed_ROIs": df_long,
-                "Executive_Summary": df_wide
+                "Executive_Summary": df_wide,
+                "Detailed_ROIs": df_long
             })
             if has_excel:
                 # Enhance with Audit Trail Box & Methodology Guide Sheet

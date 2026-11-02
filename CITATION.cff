@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use ThermalSight in your academic research, clinical studies, or publications, please cite it as below."
 title: "ThermalSight: Biomedical Infrared Thermography and Plantar Perfusion Biomechanics Analysis Suite"
-version: 1.8.5
+version: 1.9.0-alpha
 date-released: 2026-10-22
 url: "https://github.com/Corneliox/ThermalSight-App"
 repository-code: "https://github.com/Corneliox/ThermalSight-App"

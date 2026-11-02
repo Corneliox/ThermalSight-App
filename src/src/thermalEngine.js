@@ -2342,6 +2342,9 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     titleB = '(B)\n\nPPG & PGA (Per-Pixel Arrows)';
     isCoarse = true;
     isRoiBounded = false;
+  } else if (mode === 'fscan_harmonized' || mode === 'alpha_fscan') {
+    titleA = '(A)\n\nPPP (Thermal Intensity)\n[ALPHA] F-Scan 9x9 Box (2.54 cm)';
+    titleB = '(B)\n\nPPG & PGA (Hairline Vectors)\nF-Scan Grid (2.54 mm Pitch)';
   } else if (mode === 'legacy' || mode === 'paper_fixed') {
     nRows = 104;
     nCols = 54;
@@ -2627,6 +2630,14 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     const ry = panelTop + (m.gy - 0.5) * cellH;
     const radPx = Math.max(14, (m.rFinal || 1.0) * cellW);
 
+    if (mode === 'fscan_harmonized' || mode === 'alpha_fscan') {
+      const boxSidePx = 9.0 * cellW;
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 3.0;
+      ctx.setLineDash([8, 6]);
+      ctx.strokeRect(rx - boxSidePx / 2, ry - boxSidePx / 2, boxSidePx, boxSidePx);
+      ctx.setLineDash([]);
+    }
     ctx.strokeStyle = '#00e5ff';
     ctx.lineWidth = isCoarse ? 3 : 5;
     ctx.beginPath();
@@ -2719,7 +2730,8 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
   // 3: key_vectors (FLIR0202 paper style, step 4, alpha 1.0)
   // 4: hairline_dense (Step 1, hairline width 1.0, alpha 0.75)
   const modeClean = String(gridMode || 'key_vectors').toLowerCase();
-  const isHairline = modeClean === 'hairline_dense' || modeClean === '4_hairline_dense' || modeClean === 'dense_hairline' || modeClean === 'hairline';
+  const isFscan = modeClean === 'fscan_harmonized' || modeClean === 'alpha_fscan' || modeClean === 'fscan';
+  const isHairline = modeClean === 'hairline_dense' || modeClean === '4_hairline_dense' || modeClean === 'dense_hairline' || modeClean === 'hairline' || isFscan;
   const isDenseDots = modeClean === 'dense_dots' || modeClean === '2_dense_with_dots';
   const showDots = isDenseDots || isHairline;
   const isEmptyCenter = modeClean === 'empty_center' || modeClean === '1_empty_center';
@@ -2797,6 +2809,14 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     const ry = panelTop + (m.gy - 0.5) * cellH;
     const radPx = Math.max(14, (m.rFinal || 1.0) * cellW);
 
+    if (mode === 'fscan_harmonized' || mode === 'alpha_fscan') {
+      const boxSidePx = 9.0 * cellW;
+      ctx.strokeStyle = '#0284c7';
+      ctx.lineWidth = 3.0;
+      ctx.setLineDash([8, 6]);
+      ctx.strokeRect(rx - boxSidePx / 2, ry - boxSidePx / 2, boxSidePx, boxSidePx);
+      ctx.setLineDash([]);
+    }
     ctx.strokeStyle = '#ff0000';
     ctx.lineWidth = isCoarse ? 3 : 5;
     ctx.beginPath();

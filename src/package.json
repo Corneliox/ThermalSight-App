@@ -1,6 +1,6 @@
 {
   "name": "thermalsight",
-  "version": "1.8.5",
+  "version": "1.9.0-alpha",
   "description": "Biomedical Infrared Thermography & Plantar Perfusion Analysis Suite",
   "author": "Aditya Kusuma & Corneliox",
   "repository": "https://github.com/Corneliox/ThermalSight-App",

@@ -3579,6 +3579,7 @@ export default function App() {
                       }}
                     >
                       <option value="key_vectors">3. Key Significant Vectors (FLIR0202 Style, Alpha 1.0) [Default]</option>
+                      <option value="fscan_harmonized">5. [ALPHA] F-Scan Aligned 9x9 Box (2.54 cm × 2.54 cm Frame)</option>
                       <option value="hairline_dense">4. Hairline Dense Grid (Step 1, Width 0.0019, Alpha 0.75)</option>
                       <option value="dense_dots">2. Dense Dots & Arrows (Step 2, Width 0.0030, Alpha 1.0)</option>
                       <option value="empty_center">1. Empty Middle Zone (Threshold 0.18, Alpha 1.0)</option>

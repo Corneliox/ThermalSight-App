@@ -36,11 +36,11 @@ def load_temp_matrix(source_path: Path) -> tuple[np.ndarray, str]:
     """Loads Float32 temperature matrix from either .csv or FLIR .jpg."""
     p = Path(source_path)
     stem = p.stem.replace("_temp", "")
-    
+
     if p.suffix.lower() == ".csv":
         df = pd.read_csv(str(p), header=None)
         return df.values.astype(np.float32), stem
-    
+
     # Check if pre-extracted _temp.csv exists in sibling analysis folder
     analysis_csv = p.parent / f"{p.name}_analysis" / f"{p.stem}_temp.csv"
     if analysis_csv.exists():
@@ -59,56 +59,73 @@ def load_temp_matrix(source_path: Path) -> tuple[np.ndarray, str]:
             return temp, stem
         except Exception as e:
             print(f"[WARN] flyr unpack failed for {p.name}: {e}", file=sys.stderr)
-            
+
     raw = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
     if raw is not None:
         # Scale 8-bit grayscale to 20-38C
         temp = 20.0 + (raw.astype(np.float32) / 255.0) * (38.0 - 20.0)
         return temp, stem
-        
+
     raise ValueError(f"Unable to load temperature data from: {source_path}")
 
 
-def isolate_right_foot(temp: np.ndarray) -> tuple[np.ndarray, dict]:
+def isolate_right_foot(temp: np.ndarray, side: str = "right") -> tuple[np.ndarray, dict]:
     """
-    Detects and isolates the Right Foot cluster.
-    In plantar thermal photography (soles facing camera),
-    the right foot is situated on the right side of the image (X > midpoint).
+    Detects and isolates the target foot cluster (default: Right Foot).
+    In standard plantar thermal photography (patient supine, soles facing camera),
+    the patient's Right Foot is situated on the left side of the image (X < valley_idx),
+    and the Left Foot is on the right side (X > valley_idx), matching analyzer.py & ppg_workbench.py.
     """
     H, W = temp.shape
     col_prof = np.mean(temp, axis=0)
-    
-    # Locate central inter-foot valley between col 35% and 65%
-    c_start = int(W * 0.35)
-    c_end = int(W * 0.65)
+
+    # Locate central inter-foot valley between col 30% and 70%
+    c_start = int(W * 0.30)
+    c_end = int(W * 0.70)
     valley_idx = int(np.argmin(col_prof[c_start:c_end])) + c_start
-    
-    # Extract right side patch
-    right_patch = temp[:, valley_idx:]
-    
-    # Dynamic thresholding for warm foot tissue
-    p35 = float(np.percentile(right_patch, 35))
-    thresh = max(26.0, p35)
-    mask = right_patch > thresh
-    
+    margin = int(W * 0.08)
+    is_right = (str(side).lower().strip() != "left")
+
+    if is_right:
+        x_offset = 0
+        x_end = min(W, valley_idx + margin)
+        foot_patch = temp[:, x_offset:x_end]
+    else:
+        x_offset = max(0, valley_idx - margin)
+        x_end = W
+        foot_patch = temp[:, x_offset:x_end]
+
+    # Dynamic thresholding for warm foot tissue with connected component selection
+    p35 = float(np.percentile(foot_patch, 35))
+    thresh = max(25.5, min(27.0, p35))
+    mask = (foot_patch > thresh).astype(np.uint8)
+    num_l, lbls, stats, _ = cv2.connectedComponentsWithStats(mask)
+    if num_l > 1:
+        lg = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        mask = (lbls == lg)
+    else:
+        mask = mask.astype(bool)
+
     ys, xs = np.where(mask)
-    if len(ys) < 100:
-        # Fallback to simple right-half crop
+    if len(ys) < 50:
+        # Fallback to simple half-image crop
         ymin, ymax = 0, H - 1
-        xmin, xmax = valley_idx, W - 1
+        xmin = 0 if is_right else valley_idx
+        xmax = valley_idx - 1 if is_right else W - 1
     else:
         pad_y = 4
         pad_x = 4
         ymin = max(0, int(np.min(ys)) - pad_y)
         ymax = min(H - 1, int(np.max(ys)) + pad_y)
-        xmin = max(valley_idx, int(np.min(xs)) + valley_idx - pad_x)
-        xmax = min(W - 1, int(np.max(xs)) + valley_idx + pad_x)
-        
+        xmin = max(x_offset, int(np.min(xs)) + x_offset - pad_x)
+        xmax = min(x_end - 1, int(np.max(xs)) + x_offset + pad_x)
+
     foot_crop = temp[ymin:ymax+1, xmin:xmax+1]
     bbox_info = {
         "ymin": ymin, "ymax": ymax,
         "xmin": xmin, "xmax": xmax,
         "valley_x": valley_idx,
+        "foot_side": "RightFoot" if is_right else "LeftFoot",
         "height_px": ymax - ymin + 1,
         "width_px": xmax - xmin + 1
     }
@@ -117,36 +134,36 @@ def isolate_right_foot(temp: np.ndarray) -> tuple[np.ndarray, dict]:
 
 def compute_discrete_foot_grid(foot_crop: np.ndarray, n_rows=12, n_cols=6, px_per_cm=10.0):
     """
-    Divides the isolated right foot into an M x N grid and computes
+    Divides the isolated foot into an M x N grid and computes
     PPP, PPG, and PGA per cell.
     """
     H_f, W_f = foot_crop.shape
     dx_cm = 1.0 / max(0.1, px_per_cm)
     dy_cm = 1.0 / max(0.1, px_per_cm)
-    
+
     # Smooth slightly to eliminate sensor grain
     smooth = cv2.GaussianBlur(foot_crop, (5, 5), 1.2)
-    
-    # Spatial derivatives in °C / cm
+
+    # Spatial derivatives in °C / cm (negate sobel_y so North/Toes = +90° and South/Heel = 270°)
     sobel_x = (cv2.Sobel(smooth, cv2.CV_64F, 1, 0, ksize=3) / 8.0) / dx_cm
     sobel_y = (cv2.Sobel(smooth, cv2.CV_64F, 0, 1, ksize=3) / 8.0) / dy_cm
     grad_mag_map = np.sqrt(sobel_x**2 + sobel_y**2)
-    grad_ang_map = np.arctan2(sobel_y, sobel_x) # Radians
-    
+    grad_ang_map = np.arctan2(-sobel_y, sobel_x) # Radians (Cartesian: +pi/2 = North/Toes)
+
     ppp_grid  = np.full((n_rows, n_cols), np.nan)
     ppp_peak  = np.full((n_rows, n_cols), np.nan)
     ppg_grid  = np.full((n_rows, n_cols), np.nan)
-    pga_grid  = np.full((n_rows, n_cols), np.nan) # degrees
+    pga_grid  = np.full((n_rows, n_cols), np.nan) # degrees [0, 360)
     pga_rad   = np.full((n_rows, n_cols), np.nan)
-    
+
     r_step = H_f / float(n_rows)
     c_step = W_f / float(n_cols)
-    
+
     foot_min = float(np.percentile(foot_crop, 20))
     threshold = max(26.0, foot_min)
-    
+
     table_rows = []
-    
+
     # Anatomical zone mapping based on row index
     def get_zone_name(r, nr):
         pct = (r + 0.5) / nr
@@ -158,18 +175,18 @@ def compute_discrete_foot_grid(foot_crop: np.ndarray, n_rows=12, n_cols=6, px_pe
     for r in range(n_rows):
         r1, r2 = int(round(r * r_step)), int(round((r + 1) * r_step))
         r2 = max(r1 + 1, min(H_f, r2))
-        
+
         for c in range(n_cols):
             c1, c2 = int(round(c * c_step)), int(round((c + 1) * c_step))
             c2 = max(c1 + 1, min(W_f, c2))
-            
+
             blk_temp = foot_crop[r1:r2, c1:c2]
             blk_gx   = sobel_x[r1:r2, c1:c2]
             blk_gy   = sobel_y[r1:r2, c1:c2]
-            
+
             act_mask = blk_temp >= threshold
             num_act = int(np.sum(act_mask))
-            
+
             # Require at least 25% of block or 8 active pixels
             if num_act >= max(8, int(0.25 * blk_temp.size)):
                 mean_t = float(np.mean(blk_temp[act_mask]))
@@ -177,15 +194,15 @@ def compute_discrete_foot_grid(foot_crop: np.ndarray, n_rows=12, n_cols=6, px_pe
                 gx_m   = float(np.mean(blk_gx[act_mask]))
                 gy_m   = float(np.mean(blk_gy[act_mask]))
                 mag_m  = float(np.sqrt(gx_m**2 + gy_m**2))
-                ang_rad = float(np.arctan2(gy_m, gx_m))
-                ang_deg = float(np.degrees(ang_rad))
-                
+                ang_rad = float(np.arctan2(-gy_m, gx_m))
+                ang_deg = float((np.degrees(ang_rad) + 360.0) % 360.0)
+
                 ppp_grid[r, c] = mean_t
                 ppp_peak[r, c] = peak_t
                 ppg_grid[r, c] = mag_m
                 pga_grid[r, c] = ang_deg
                 pga_rad[r, c]  = ang_rad
-                
+
                 table_rows.append({
                     "Row": r + 1,
                     "Col": c + 1,
@@ -205,7 +222,7 @@ def compute_discrete_foot_grid(foot_crop: np.ndarray, n_rows=12, n_cols=6, px_pe
                     "PPG_Gradient_C_cm": np.nan,
                     "PGA_Angle_Deg": np.nan
                 })
-                
+
     return {
         "ppp_grid": ppp_grid,
         "ppp_peak": ppp_peak,
@@ -225,26 +242,26 @@ def render_ppp_heatmap(grid_data: dict, out_path: Path, stem: str):
     """
     ppp = grid_data["ppp_grid"]
     n_rows, n_cols = ppp.shape
-    
+
     fig, ax = plt.subplots(figsize=(6.5, 9.5), dpi=160, facecolor="#0e1117")
     ax.set_facecolor("#0e1117")
-    
+
     masked_ppp = np.ma.masked_invalid(ppp)
-    
+
     cmap = plt.colormaps["inferno"].resampled(256)
     cmap.set_bad("#1c2230")
-    
+
     vmin = np.nanmin(ppp) if not np.all(np.isnan(ppp)) else 25.0
     vmax = np.nanmax(ppp) if not np.all(np.isnan(ppp)) else 35.0
-    
+
     im = ax.imshow(masked_ppp, cmap=cmap, vmin=vmin, vmax=vmax, aspect="auto")
-    
+
     # Cell grid borders
     ax.set_xticks(np.arange(-0.5, n_cols, 1), minor=True)
     ax.set_yticks(np.arange(-0.5, n_rows, 1), minor=True)
     ax.grid(which="minor", color="#2a3346", linestyle="-", linewidth=1.5)
     ax.tick_params(which="minor", size=0)
-    
+
     # Add numerical text inside each block
     for r in range(n_rows):
         for c in range(n_cols):
@@ -254,26 +271,26 @@ def render_ppp_heatmap(grid_data: dict, out_path: Path, stem: str):
                 txt_color = "#000000" if norm_val > 0.65 else "#ffffff"
                 ax.text(c, r, f"{val:.1f}°", ha="center", va="center",
                         fontsize=9.5, fontweight="bold", color=txt_color)
-                        
+
     # Anatomical axis guides
     ax.set_xticks(range(n_cols))
     ax.set_xticklabels([f"C{c+1}" for c in range(n_cols)], color="#a0aec0", fontsize=9, fontweight="bold")
     ax.set_yticks(range(n_rows))
     ax.set_yticklabels([f"R{r+1}" for r in range(n_rows)], color="#a0aec0", fontsize=9, fontweight="bold")
-    
+
     # Colorbar
     cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     cbar.set_label("PPP: Mean Temperature (°C)", color="white", fontsize=10, fontweight="bold", labelpad=8)
     cbar.ax.tick_params(labelsize=9, colors="white")
-    
+
     # Header & Zone Annotations
     ax.set_title(f"{stem} — Right Foot PPP Heatmap\n(Discrete Block Matrix: {n_rows}×{n_cols})",
                  color="white", fontsize=12, fontweight="bold", pad=12)
-    
+
     # Foot orientation badge
     ax.text(n_cols/2 - 0.5, -0.9, "▲ TOES (ANTERIOR)", color="#00ffff", fontsize=10, fontweight="bold", ha="center")
     ax.text(n_cols/2 - 0.5, n_rows - 0.15, "▼ HEEL (POSTERIOR)", color="#ffbb00", fontsize=10, fontweight="bold", ha="center")
-    
+
     plt.tight_layout()
     fig.savefig(str(out_path), bbox_inches="tight", facecolor="#0e1117")
     plt.close(fig)
@@ -289,37 +306,37 @@ def render_ppg_pga_heatmap(grid_data: dict, out_path: Path, stem: str):
     ppg = grid_data["ppg_grid"]
     pga_rad = grid_data["pga_rad"]
     n_rows, n_cols = ppg.shape
-    
+
     fig, ax = plt.subplots(figsize=(6.5, 9.5), dpi=160, facecolor="#0e1117")
     ax.set_facecolor("#0e1117")
-    
+
     masked_ppg = np.ma.masked_invalid(ppg)
     cmap = plt.colormaps["viridis"].resampled(256)
     cmap.set_bad("#1c2230")
-    
+
     vmin = 0.0
     vmax = float(np.nanpercentile(ppg, 95)) if not np.all(np.isnan(ppg)) else 1.5
     vmax = max(0.5, vmax)
-    
+
     im = ax.imshow(masked_ppg, cmap=cmap, vmin=vmin, vmax=vmax, aspect="auto")
-    
+
     # Cell grid borders
     ax.set_xticks(np.arange(-0.5, n_cols, 1), minor=True)
     ax.set_yticks(np.arange(-0.5, n_rows, 1), minor=True)
     ax.grid(which="minor", color="#2a3346", linestyle="-", linewidth=1.5)
     ax.tick_params(which="minor", size=0)
-    
+
     # Draw Flow Arrows for PGA within each active block
     for r in range(n_rows):
         for c in range(n_cols):
             mag = ppg[r, c]
             ang = pga_rad[r, c]
             if not np.isnan(mag) and not np.isnan(ang):
-                # Normalized arrow vector
+                # Normalized arrow vector (negate dy because imshow row 0 = Toes at top, row n_rows-1 = Heel at bottom)
                 scale = 0.38 * min(1.0, max(0.25, mag / vmax))
                 dx = np.cos(ang) * scale
-                dy = np.sin(ang) * scale
-                
+                dy = -np.sin(ang) * scale
+
                 # Flow arrow with white/yellow glow
                 ax.arrow(c, r, dx, dy,
                          head_width=0.18, head_length=0.15,
@@ -327,7 +344,7 @@ def render_ppg_pga_heatmap(grid_data: dict, out_path: Path, stem: str):
                 # Magnitude label below arrow
                 ax.text(c, r + 0.36, f"{mag:.2f}", ha="center", va="center",
                         fontsize=7.5, fontweight="bold", color="#ffffff", zorder=6)
-                        
+
     # Compass Wheel Inset
     ax_comp = fig.add_axes([0.76, 0.77, 0.16, 0.16], projection="polar")
     theta = np.linspace(0, 2*np.pi, 256)
@@ -340,58 +357,58 @@ def render_ppg_pga_heatmap(grid_data: dict, out_path: Path, stem: str):
     ax_comp.set_title("PGA Angle", fontsize=8, color="#ffffff", pad=2, fontweight="bold")
     ax_comp.spines["polar"].set_color("#4a5568")
     ax_comp.set_facecolor("#0e1117")
-    
+
     # Axes formatting
     ax.set_xticks(range(n_cols))
     ax.set_xticklabels([f"C{c+1}" for c in range(n_cols)], color="#a0aec0", fontsize=9, fontweight="bold")
     ax.set_yticks(range(n_rows))
     ax.set_yticklabels([f"R{r+1}" for r in range(n_rows)], color="#a0aec0", fontsize=9, fontweight="bold")
-    
+
     cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     cbar.set_label("PPG: Gradient Magnitude (°C/cm)", color="white", fontsize=10, fontweight="bold", labelpad=8)
     cbar.ax.tick_params(labelsize=9, colors="white")
-    
+
     ax.set_title(f"{stem} — Right Foot PPG & PGA Heatmap\n(Vector Field & Discrete Magnitude: {n_rows}×{n_cols})",
                  color="white", fontsize=12, fontweight="bold", pad=12)
-                 
+
     ax.text(n_cols/2 - 0.5, -0.9, "▲ TOES (ANTERIOR)", color="#00ffff", fontsize=10, fontweight="bold", ha="center")
     ax.text(n_cols/2 - 0.5, n_rows - 0.15, "▼ HEEL (POSTERIOR)", color="#ffbb00", fontsize=10, fontweight="bold", ha="center")
-    
+
     plt.tight_layout()
     fig.savefig(str(out_path), bbox_inches="tight", facecolor="#0e1117")
     plt.close(fig)
     print(f"[OK] Saved PPG & PGA Grid Heatmap: {out_path.name}")
 
 
-def process_subject(source_path: Path, out_dir: Path = None, n_rows=12, n_cols=6, px_per_cm=10.0):
+def process_subject(source_path: Path, out_dir: Path = None, n_rows=12, n_cols=6, px_per_cm=10.0, side="right"):
     """Processes a single subject file and exports both images and metrics CSV."""
     source_path = Path(source_path)
     temp, stem = load_temp_matrix(source_path)
-    
+
     if out_dir is None:
         out_dir = source_path.parent / f"{stem}.jpg_Result" / f"{stem}_grid_analysis"
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 1. Isolate Right Foot
-    foot_crop, bbox = isolate_right_foot(temp)
-    
+
+    # 1. Isolate target foot (default: Right Foot on left side of plantar image)
+    foot_crop, bbox = isolate_right_foot(temp, side=side)
+
     # 2. Compute Discrete Block Matrices
     grid_res = compute_discrete_foot_grid(foot_crop, n_rows, n_cols, px_per_cm)
-    
+
     # 3. Export Image 1: PPP Heatmap
     p1 = out_dir / f"{stem}_right_foot_grid_ppp.png"
     render_ppp_heatmap(grid_res, p1, stem)
-    
+
     # 4. Export Image 2: PPG & PGA Vector Flow Heatmap
     p2 = out_dir / f"{stem}_right_foot_grid_ppg_pga.png"
     render_ppg_pga_heatmap(grid_res, p2, stem)
-    
+
     # 5. Export CSV Table
     csv_p = out_dir / f"{stem}_right_foot_grid_metrics.csv"
     grid_res["table_df"].to_csv(str(csv_p), index=False)
     print(f"[OK] Saved Grid Metrics CSV: {csv_p.name}")
-    
+
     return {
         "stem": stem,
         "ppp_img": str(p1),
@@ -408,28 +425,29 @@ def main():
     parser.add_argument("--rows", type=int, default=12, help="Number of grid rows along foot length (default: 12)")
     parser.add_argument("--cols", type=int, default=6, help="Number of grid columns along foot width (default: 6)")
     parser.add_argument("--px_cm", type=float, default=10.0, help="Pixel per cm calibration scale (default: 10.0)")
-    
+    parser.add_argument("--side", default="right", choices=["right", "left"], help="Target foot side (default: right)")
+
     args = parser.parse_args()
     inp = Path(args.input)
-    
+
     if inp.is_dir():
         candidates = list(inp.glob("FLIR*.jpg")) or list(inp.glob("*_temp.csv")) or list(inp.glob("*.jpg"))
         if not candidates:
             candidates = list(inp.rglob("FLIR*.jpg")) or list(inp.rglob("*_temp.csv"))
-            
+
         print(f"[*] Found {len(candidates)} subject file(s) for batch processing in {inp.name}...")
         results = []
         for f in candidates:
             if "isolated" in f.name or "quiver" in f.name or "heatmap" in f.name:
                 continue
             try:
-                r = process_subject(f, args.out, args.rows, args.cols, args.px_cm)
+                r = process_subject(f, args.out, args.rows, args.cols, args.px_cm, side=args.side)
                 results.append(r)
             except Exception as e:
                 print(f"[ERROR] Failed processing {f.name}: {e}", file=sys.stderr)
         print(f"\n[DONE] Successfully generated discrete grid heatmaps for {len(results)} subject(s)!")
     else:
-        process_subject(inp, args.out, args.rows, args.cols, args.px_cm)
+        process_subject(inp, args.out, args.rows, args.cols, args.px_cm, side=args.side)
 
 
 if __name__ == "__main__":
