@@ -2345,6 +2345,9 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
   } else if (mode === 'fscan_harmonized' || mode === 'alpha_fscan') {
     titleA = '(A)\n\nPPP (Thermal Intensity)\n[ALPHA] F-Scan 9x9 Box (2.54 cm)';
     titleB = '(B)\n\nPPG & PGA (Hairline Vectors)\nF-Scan Grid (2.54 mm Pitch)';
+  } else if (mode === 'fscan_macro_3x3' || mode === 'macro_3x3') {
+    titleA = '(A)\n\nPPP (Thermal Intensity)\n[ALPHA] F-Scan 3x3 Macro Frame';
+    titleB = '(B)\n\nPPG & PGA (3x3 Pooled Vectors)\nEach Cell = 3x3 Avg (8.47 mm Block)';
   } else if (mode === 'legacy' || mode === 'paper_fixed') {
     nRows = 104;
     nCols = 54;
@@ -2630,13 +2633,31 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     const ry = panelTop + (m.gy - 0.5) * cellH;
     const radPx = Math.max(14, (m.rFinal || 1.0) * cellW);
 
-    if (mode === 'fscan_harmonized' || mode === 'alpha_fscan') {
+    const isFscanBoxA = (mode === 'fscan_harmonized' || mode === 'alpha_fscan' || mode === 'fscan_macro_3x3' || mode === 'macro_3x3');
+    if (isFscanBoxA) {
       const boxSidePx = 9.0 * cellW;
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 3.0;
       ctx.setLineDash([8, 6]);
       ctx.strokeRect(rx - boxSidePx / 2, ry - boxSidePx / 2, boxSidePx, boxSidePx);
       ctx.setLineDash([]);
+
+      if (mode === 'fscan_macro_3x3' || mode === 'macro_3x3') {
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([4, 4]);
+        for (const delta of [-1.5, 1.5]) {
+          ctx.beginPath();
+          ctx.moveTo(rx + delta * cellW, ry - boxSidePx / 2);
+          ctx.lineTo(rx + delta * cellW, ry + boxSidePx / 2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(rx - boxSidePx / 2, ry + delta * cellH);
+          ctx.lineTo(rx + boxSidePx / 2, ry + delta * cellH);
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+      }
     }
     ctx.strokeStyle = '#00e5ff';
     ctx.lineWidth = isCoarse ? 3 : 5;
@@ -2809,13 +2830,31 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     const ry = panelTop + (m.gy - 0.5) * cellH;
     const radPx = Math.max(14, (m.rFinal || 1.0) * cellW);
 
-    if (mode === 'fscan_harmonized' || mode === 'alpha_fscan') {
+    const isFscanBoxB = (mode === 'fscan_harmonized' || mode === 'alpha_fscan' || mode === 'fscan_macro_3x3' || mode === 'macro_3x3');
+    if (isFscanBoxB) {
       const boxSidePx = 9.0 * cellW;
       ctx.strokeStyle = '#0284c7';
       ctx.lineWidth = 3.0;
       ctx.setLineDash([8, 6]);
       ctx.strokeRect(rx - boxSidePx / 2, ry - boxSidePx / 2, boxSidePx, boxSidePx);
       ctx.setLineDash([]);
+
+      if (mode === 'fscan_macro_3x3' || mode === 'macro_3x3') {
+        ctx.strokeStyle = '#0284c7';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([4, 4]);
+        for (const delta of [-1.5, 1.5]) {
+          ctx.beginPath();
+          ctx.moveTo(rx + delta * cellW, ry - boxSidePx / 2);
+          ctx.lineTo(rx + delta * cellW, ry + boxSidePx / 2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(rx - boxSidePx / 2, ry + delta * cellH);
+          ctx.lineTo(rx + boxSidePx / 2, ry + delta * cellH);
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+      }
     }
     ctx.strokeStyle = '#ff0000';
     ctx.lineWidth = isCoarse ? 3 : 5;

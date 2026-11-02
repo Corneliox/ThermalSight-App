@@ -1103,6 +1103,7 @@ def render_single_plantar_figure(
     quiver_headwidth: float = None,
     quiver_headlength: float = None,
     show_fscan_box: bool = False,
+    fscan_mode: str = "none",
 ):
     cmap_thermal = LinearSegmentedColormap.from_list("flir_whitehot", [
         (0.00, "#000000"), (0.12, "#180036"), (0.28, "#4f046e"),
@@ -1125,13 +1126,19 @@ def render_single_plantar_figure(
     ax1.tick_params(colors="black", labelsize=9)
 
     for name, gx, gy, r_rad in mapped_rois:
-        if show_fscan_box:
+        if show_fscan_box or fscan_mode in ["9x9", "3x3"]:
             box_side = 9.0 if n_rows > 16 else 1.0
             rect_a = plt.Rectangle((gx - box_side / 2.0, gy - box_side / 2.0), box_side, box_side,
                                    edgecolor="#38bdf8", facecolor="none", lw=1.5, linestyle="--", zorder=9)
             ax1.add_patch(rect_a)
             ax1.plot([gx - 0.8, gx + 0.8], [gy, gy], color="#38bdf8", lw=0.8, zorder=10)
             ax1.plot([gx, gx], [gy - 0.8, gy + 0.8], color="#38bdf8", lw=0.8, zorder=10)
+
+            # 3x3 internal grid subdivisions when in macro 3x3 mode
+            if fscan_mode == "3x3" and n_rows > 16:
+                for delta in [-1.5, 1.5]:
+                    ax1.plot([gx + delta, gx + delta], [gy - 4.5, gy + 4.5], color="#38bdf8", lw=0.7, linestyle=":", alpha=0.7, zorder=8)
+                    ax1.plot([gx - 4.5, gx + 4.5], [gy + delta, gy + delta], color="#38bdf8", lw=0.7, linestyle=":", alpha=0.7, zorder=8)
         c_out = plt.Circle((gx, gy), r_rad, edgecolor="#00e5ff", facecolor="none", lw=1.8 if n_rows <= 16 else 2.0, zorder=10)
         c_in = plt.Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=1.2 if n_rows <= 16 else 1.3, zorder=11)
         ax1.add_patch(c_out)
@@ -1168,6 +1175,11 @@ def render_single_plantar_figure(
     m = grad_mag[::step, ::step]
     foot_sub = mask_dense[::step, ::step]
     mask_q = foot_sub & (m >= thresh)
+    if fscan_mode == "3x3" and n_rows > 16:
+        # Suppress dense background quiver inside ROI 9x9 boxes so 3x3 macro vectors stand out cleanly
+        for name, gx, gy, r_rad in mapped_rois:
+            in_box = (np.abs(x_q - gx) <= 4.5) & (np.abs(y_q - gy) <= 4.5)
+            mask_q = mask_q & (~in_box)
 
     if show_dots:
         dot_sz = 1.3 if step == 1 else (2.0 if step == 2 else 2.8)
@@ -1204,13 +1216,61 @@ def render_single_plantar_figure(
     ax2.tick_params(colors="black", labelsize=9)
 
     for name, gx, gy, r_rad in mapped_rois:
-        if show_fscan_box:
+        if show_fscan_box or fscan_mode in ["9x9", "3x3"]:
             box_side = 9.0 if n_rows > 16 else 1.0
             rect_b = plt.Rectangle((gx - box_side / 2.0, gy - box_side / 2.0), box_side, box_side,
                                    edgecolor="#0284c7", facecolor="none", lw=1.5, linestyle="--", zorder=9)
             ax2.add_patch(rect_b)
             ax2.plot([gx - 0.8, gx + 0.8], [gy, gy], color="#0284c7", lw=0.8, zorder=10)
             ax2.plot([gx, gx], [gy - 0.8, gy + 0.8], color="#0284c7", lw=0.8, zorder=10)
+
+            # 3x3 internal grid subdivisions and 9 macro-averaged vectors
+            if fscan_mode == "3x3" and n_rows > 16:
+                for delta in [-1.5, 1.5]:
+                    ax2.plot([gx + delta, gx + delta], [gy - 4.5, gy + 4.5], color="#0284c7", lw=0.8, linestyle=":", alpha=0.8, zorder=8)
+                    ax2.plot([gx - 4.5, gx + 4.5], [gy + delta, gy + delta], color="#0284c7", lw=0.8, linestyle=":", alpha=0.8, zorder=8)
+
+                # Compute 3x3 macro averaged pooling vectors
+                macro_xs, macro_ys, macro_us, macro_vs, macro_mags = [], [], [], [], []
+                for r_idx in range(3):
+                    for c_idx in range(3):
+                        cx_cell = gx - 3.0 + c_idx * 3.0
+                        cy_cell = gy - 3.0 + r_idx * 3.0
+
+                        x_min_c = max(0, int(round(cx_cell - 1.5)))
+                        x_max_c = min(n_cols, int(round(cx_cell + 1.5)))
+                        y_min_c = max(0, int(round(cy_cell - 1.5)))
+                        y_max_c = min(n_rows, int(round(cy_cell + 1.5)))
+
+                        u_b = sobel_x[y_min_c:y_max_c, x_min_c:x_max_c]
+                        v_b = sobel_y[y_min_c:y_max_c, x_min_c:x_max_c]
+                        m_b = grad_mag[y_min_c:y_max_c, x_min_c:x_max_c]
+
+                        avg_u = float(np.mean(u_b)) if u_b.size > 0 else 0.0
+                        avg_v = float(np.mean(v_b)) if v_b.size > 0 else 0.0
+                        avg_m = np.sqrt(avg_u**2 + avg_v**2)
+
+                        macro_xs.append(cx_cell)
+                        macro_ys.append(cy_cell)
+                        macro_us.append(avg_u)
+                        macro_vs.append(avg_v)
+                        macro_mags.append(avg_m)
+
+                m_xs = np.array(macro_xs)
+                m_ys = np.array(macro_ys)
+                m_us = np.array(macro_us)
+                m_vs = np.array(macro_vs)
+                m_mg = np.array(macro_mags)
+
+                ax2.plot(m_xs, m_ys, "o", color="#0b4db7", markersize=3.2, alpha=0.9, zorder=11)
+                nrm_m = np.sqrt(m_us**2 + m_vs**2) + 1e-6
+                valid_m = (m_mg >= 0.005)
+                u_p_m = (m_us / nrm_m) * 1.8
+                v_p_m = (m_vs / nrm_m) * 1.8
+                ax2.quiver(m_xs[valid_m], m_ys[valid_m], u_p_m[valid_m], v_p_m[valid_m],
+                           color="#0b4db7", angles="xy", scale_units="xy", scale=1.0,
+                           width=0.0052, headwidth=3.6, headlength=4.2, alpha=1.0, zorder=12)
+
         c_out = plt.Circle((gx, gy), r_rad, edgecolor="red", facecolor="none", lw=1.8 if n_rows <= 16 else 2.0, zorder=10)
         c_in = plt.Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=1.0, linestyle=":", zorder=11)
         ax2.add_patch(c_out)
@@ -1556,7 +1616,19 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         title_b="(B)\n\nPPG & PGA (Hairline Vectors)\nF-Scan Grid (2.54 mm Pitch)",
         step=1, thresh=0.02, show_dots=True, arrow_mode="power_law",
         quiver_width=0.0019, quiver_alpha=0.75, quiver_headwidth=2.5, quiver_headlength=3.0,
-        label_fontsize=label_fontsize, show_fscan_box=True
+        label_fontsize=label_fontsize, show_fscan_box=True, fscan_mode="9x9"
+    )
+
+    # 6. [ALPHA] fscan_macro_3x3: 3x3 Macro-Averaged Pooling per ROI Box (9 pooled vectors, area 3x3 avg)
+    out_png_6 = out_dir / f"{stem}_{foot_side}_6_fscan_macro_3x3.png"
+    render_single_plantar_figure(
+        out_png_6, grid_dense, grid_disp, grid_contour, mask_dense,
+        sobel_x, sobel_y, grad_mag, mapped_rois, n_rows, n_cols, fig_size,
+        title_a="(A)\n\nPPP (Thermal Intensity)\n[ALPHA] F-Scan 3x3 Macro Frame",
+        title_b="(B)\n\nPPG & PGA (3x3 Pooled Vectors)\nEach Cell = 3x3 Avg (8.47 mm Block)",
+        step=2, thresh=0.02, show_dots=False, arrow_mode="power_law",
+        quiver_width=0.0020, quiver_alpha=0.40, quiver_headwidth=2.5, quiver_headlength=3.0,
+        label_fontsize=label_fontsize, show_fscan_box=True, fscan_mode="3x3"
     )
 
     # Set primary output file {stem}_{foot_side}_whitehot.png based on requested mode (defaulting to key_vectors)
@@ -1569,6 +1641,8 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         shutil.copy2(str(out_png_4), str(out_png))
     elif mode in ["fscan_harmonized", "fscan_9x9", "alpha_fscan", "fscan"]:
         shutil.copy2(str(out_png_5), str(out_png))
+    elif mode in ["fscan_macro_3x3", "macro_3x3", "3x3_macro", "fscan_3x3", "3x3", "alpha_3x3"]:
+        shutil.copy2(str(out_png_6), str(out_png))
     elif mode in ["coarse_9x9", "9x9_coarse"]:
         render_single_plantar_figure(
             out_png, grid_dense, grid_disp, grid_contour, mask_dense,
@@ -1590,7 +1664,8 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         "path_2_dense_dots": str(out_png_2),
         "path_3_key_vectors": str(out_png_3),
         "path_4_hairline_dense": str(out_png_4),
-        "path_5_fscan_harmonized": str(out_png_5)
+        "path_5_fscan_harmonized": str(out_png_5),
+        "path_6_fscan_macro_3x3": str(out_png_6)
     })
 
 

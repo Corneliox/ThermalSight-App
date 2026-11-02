@@ -1322,7 +1322,12 @@ class PPGWorkbenchApp:
         self.var_show_dots = tk.BooleanVar(value=True)
         chk_dots = tk.Checkbutton(p, text="Anchor Dots in Flat Zones (100% Nodes)", variable=self.var_show_dots,
                                   font=("Arial", 8), bg="#FFFFFF", activebackground="#FFFFFF", command=self.update_plot)
-        chk_dots.pack(anchor="w", padx=14, pady=(0, 8))
+        chk_dots.pack(anchor="w", padx=14, pady=(0, 4))
+
+        self.var_macro_3x3 = tk.BooleanVar(value=True)
+        chk_macro = tk.Checkbutton(p, text="[ALPHA] F-Scan 3x3 Macro Pooling (9 Vectors)", variable=self.var_macro_3x3,
+                                   font=("Arial", 8, "bold"), fg="#0284C7", bg="#FFFFFF", activebackground="#FFFFFF", command=self.update_plot)
+        chk_macro.pack(anchor="w", padx=14, pady=(0, 8))
 
         # 7. EXPORT ACTIONS
         section_header("7. Publication Figure & Metrics Export")
@@ -2403,8 +2408,16 @@ class PPGWorkbenchApp:
         v_sub = self.sobel_y[::step, ::step]
         nrm = np.sqrt(u_sub**2 + v_sub**2) + 1e-6
 
+        is_macro = getattr(self, "var_macro_3x3", None) and self.var_macro_3x3.get()
         is_arrow = foot_sub & (m_sub >= 0.012)
         is_dot = foot_sub & (m_sub < 0.012)
+        if is_macro:
+            # Suppress dense background quiver inside ROI 9x9 boxes
+            mapped_for_mask = self.get_mapped_rois(filtered=True)
+            for name, gx, gy, r_rad, _ in mapped_for_mask:
+                in_box = (np.abs(x_q - gx) <= 4.5) & (np.abs(y_q - gy) <= 4.5)
+                is_arrow = is_arrow & (~in_box)
+                is_dot = is_dot & (~in_box)
 
         u_plot = ((u_sub / nrm) * a_scale)[is_arrow]
         v_plot = ((v_sub / nrm) * a_scale)[is_arrow]
@@ -2434,6 +2447,11 @@ class PPGWorkbenchApp:
                                edgecolor="#38bdf8", facecolor="none", lw=1.5 if is_sel else 1.1,
                                linestyle="--", zorder=9)
             self.ax1.add_patch(rect_a)
+
+            if is_macro:
+                for delta in [-1.5, 1.5]:
+                    self.ax1.plot([gx + delta, gx + delta], [gy - 4.5, gy + 4.5], color="#38bdf8", lw=0.7, linestyle=":", alpha=0.7, zorder=8)
+                    self.ax1.plot([gx - 4.5, gx + 4.5], [gy + delta, gy + delta], color="#38bdf8", lw=0.7, linestyle=":", alpha=0.7, zorder=8)
             c_out_a = Circle((gx, gy), r_rad, edgecolor=ring_color, facecolor="none", lw=2.0 if is_sel else 1.8, zorder=10)
             c_in_a = Circle((gx, gy), r_rad * 0.82, edgecolor=c_color, facecolor="none", lw=1.2, zorder=11)
             self.ax1.add_patch(c_out_a)
@@ -2449,6 +2467,51 @@ class PPGWorkbenchApp:
                                edgecolor="#0284c7", facecolor="none", lw=1.5 if is_sel else 1.1,
                                linestyle="--", zorder=9)
             self.ax2.add_patch(rect_b)
+
+            if is_macro:
+                for delta in [-1.5, 1.5]:
+                    self.ax2.plot([gx + delta, gx + delta], [gy - 4.5, gy + 4.5], color="#0284c7", lw=0.8, linestyle=":", alpha=0.8, zorder=8)
+                    self.ax2.plot([gx - 4.5, gx + 4.5], [gy + delta, gy + delta], color="#0284c7", lw=0.8, linestyle=":", alpha=0.8, zorder=8)
+
+                # Compute 3x3 macro averaged pooling vectors
+                macro_xs, macro_ys, macro_us, macro_vs, macro_mags = [], [], [], [], []
+                for r_idx in range(3):
+                    for c_idx in range(3):
+                        cx_cell = gx - 3.0 + c_idx * 3.0
+                        cy_cell = gy - 3.0 + r_idx * 3.0
+                        x_min_c = max(0, int(round(cx_cell - 1.5)))
+                        x_max_c = min(self.n_cols, int(round(cx_cell + 1.5)))
+                        y_min_c = max(0, int(round(cy_cell - 1.5)))
+                        y_max_c = min(self.n_rows, int(round(cy_cell + 1.5)))
+
+                        u_b = self.sobel_x[y_min_c:y_max_c, x_min_c:x_max_c]
+                        v_b = self.sobel_y[y_min_c:y_max_c, x_min_c:x_max_c]
+                        m_b = self.grad_mag[y_min_c:y_max_c, x_min_c:x_max_c]
+
+                        avg_u = float(np.mean(u_b)) if u_b.size > 0 else 0.0
+                        avg_v = float(np.mean(v_b)) if v_b.size > 0 else 0.0
+                        avg_m = np.sqrt(avg_u**2 + avg_v**2)
+
+                        macro_xs.append(cx_cell)
+                        macro_ys.append(cy_cell)
+                        macro_us.append(avg_u)
+                        macro_vs.append(avg_v)
+                        macro_mags.append(avg_m)
+
+                m_xs = np.array(macro_xs)
+                m_ys = np.array(macro_ys)
+                m_us = np.array(macro_us)
+                m_vs = np.array(macro_vs)
+                m_mg = np.array(macro_mags)
+
+                self.ax2.plot(m_xs, m_ys, "o", color="#0b4db7", markersize=3.2, alpha=0.9, zorder=11)
+                nrm_m = np.sqrt(m_us**2 + m_vs**2) + 1e-6
+                valid_m = (m_mg >= 0.005)
+                u_p_m = (m_us / nrm_m) * 1.8
+                v_p_m = (m_vs / nrm_m) * 1.8
+                self.ax2.quiver(m_xs[valid_m], m_ys[valid_m], u_p_m[valid_m], v_p_m[valid_m],
+                                color="#0b4db7", angles="xy", scale_units="xy", scale=1.0,
+                                width=0.0052, headwidth=3.6, headlength=4.2, alpha=1.0, zorder=12)
             c_out_b = Circle((gx, gy), r_rad, edgecolor=c_color, facecolor="none", lw=1.8 if is_sel else 1.6, zorder=10)
             c_in_b = Circle((gx, gy), r_rad * 0.82, edgecolor=c_color, facecolor="none", lw=0.9, linestyle=":", zorder=11)
             self.ax2.add_patch(c_out_b)
@@ -3103,6 +3166,42 @@ class PPGWorkbenchApp:
 
                     fax2.add_patch(Rectangle((gx - box_side / 2.0, gy - box_side / 2.0), box_side, box_side,
                                              edgecolor="#0284c7", facecolor="none", lw=1.2, linestyle="--", zorder=9))
+                    if getattr(self, "var_macro_3x3", None) and self.var_macro_3x3.get():
+                        for delta in [-1.5, 1.5]:
+                            fax1.plot([gx + delta, gx + delta], [gy - 4.5, gy + 4.5], color="#38bdf8", lw=0.6, linestyle=":", alpha=0.7, zorder=8)
+                            fax1.plot([gx - 4.5, gx + 4.5], [gy + delta, gy + delta], color="#38bdf8", lw=0.6, linestyle=":", alpha=0.7, zorder=8)
+                            fax2.plot([gx + delta, gx + delta], [gy - 4.5, gy + 4.5], color="#0284c7", lw=0.6, linestyle=":", alpha=0.7, zorder=8)
+                            fax2.plot([gx - 4.5, gx + 4.5], [gy + delta, gy + delta], color="#0284c7", lw=0.6, linestyle=":", alpha=0.7, zorder=8)
+
+                        # 9 macro vectors on high-res figure
+                        macro_xs, macro_ys, macro_us, macro_vs, macro_mags = [], [], [], [], []
+                        for r_idx in range(3):
+                            for c_idx in range(3):
+                                cx_cell = gx - 3.0 + c_idx * 3.0
+                                cy_cell = gy - 3.0 + r_idx * 3.0
+                                x_min_c = max(0, int(round(cx_cell - 1.5)))
+                                x_max_c = min(n_cols, int(round(cx_cell + 1.5)))
+                                y_min_c = max(0, int(round(cy_cell - 1.5)))
+                                y_max_c = min(n_rows, int(round(cy_cell + 1.5)))
+                                u_b = self.sobel_x[y_min_c:y_max_c, x_min_c:x_max_c]
+                                v_b = self.sobel_y[y_min_c:y_max_c, x_min_c:x_max_c]
+                                m_b = self.grad_mag[y_min_c:y_max_c, x_min_c:x_max_c]
+                                avg_u = float(np.mean(u_b)) if u_b.size > 0 else 0.0
+                                avg_v = float(np.mean(v_b)) if v_b.size > 0 else 0.0
+                                macro_xs.append(cx_cell)
+                                macro_ys.append(cy_cell)
+                                macro_us.append(avg_u)
+                                macro_vs.append(avg_v)
+                                macro_mags.append(np.sqrt(avg_u**2 + avg_v**2))
+                        m_xs, m_ys = np.array(macro_xs), np.array(macro_ys)
+                        m_us, m_vs = np.array(macro_us), np.array(macro_vs)
+                        m_mg = np.array(macro_mags)
+                        fax2.plot(m_xs, m_ys, "o", color="#0b4db7", markersize=3.0, alpha=0.9, zorder=11)
+                        nrm_m = np.sqrt(m_us**2 + m_vs**2) + 1e-6
+                        valid_m = (m_mg >= 0.005)
+                        fax2.quiver(m_xs[valid_m], m_ys[valid_m], (m_us / nrm_m)[valid_m] * 1.8, (m_vs / nrm_m)[valid_m] * 1.8,
+                                    color="#0b4db7", angles="xy", scale_units="xy", scale=1.0,
+                                    width=0.0048, headwidth=3.6, headlength=4.2, alpha=1.0, zorder=12)
                     fax2.add_patch(Circle((gx, gy), r_rad, edgecolor="red", facecolor="none", lw=1.6, zorder=10))
                     fax2.add_patch(Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=0.9, linestyle=":", zorder=11) )
                     fax2.plot(gx, gy, "o", color="red", markersize=3.8, zorder=12)
