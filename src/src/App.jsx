@@ -264,7 +264,7 @@ export default function App() {
 
   // Live Terminal Logs State
   const [terminalLogs, setTerminalLogs] = useState([
-    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.8.5 Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
+    { id: 1, type: 'info', text: 'ThermalSight Web & Client Engine v1.9.0-alpha Initialized (100% Client-Side JS)', timestamp: new Date().toLocaleTimeString() }
   ]);
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const terminalEndRef = useRef(null);
@@ -2444,7 +2444,7 @@ export default function App() {
         <div className="modal-overlay">
           <div className="modal-card" style={{ maxWidth: '580px', textAlign: 'center', padding: '32px' }}>
             <h3 style={{ fontSize: '24px', fontWeight: '700', color: 'var(--text0)', marginBottom: '4px' }}>ThermalSight</h3>
-            <span className="brand-badge" style={{ fontSize: '12px', padding: '4px 12px' }}>v1.8.5 Stable Release</span>
+            <span className="brand-badge" style={{ fontSize: '12px', padding: '4px 12px' }}>v1.9.0-alpha Preview</span>
             
             <p style={{ color: 'var(--text1)', fontSize: '13px', margin: '14px 0 20px', lineHeight: '1.6' }}>
               Biomedical Infrared Thermography, Directional Gradient Statistics (PPP, PPG, PGA), and Multi-Protocol Plantar Perfusion Analysis Suite.
@@ -2772,7 +2772,7 @@ export default function App() {
       <header className="app-header">
         <div className="header-brand">
           <span className="brand-name">ThermalSight</span>
-          <span className="brand-badge">{isWeb ? 'Trial Web Demo (Nano Engine)' : 'v1.8.5'}</span>
+          <span className="brand-badge">{isWeb ? 'Trial Web Demo (Nano Engine)' : 'v1.9.0-alpha'}</span>
         </div>
         <div className="header-actions">
           {isWeb && (
