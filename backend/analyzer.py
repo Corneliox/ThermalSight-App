@@ -1124,10 +1124,9 @@ def render_single_plantar_figure(
     ax1.tick_params(colors="black", labelsize=9)
 
     for name, gx, gy, r_rad in mapped_rois:
-        c_out = plt.Circle((gx, gy), r_rad, edgecolor="#00e5ff", facecolor="none", lw=1.8 if n_rows <= 16 else 2.0, zorder=10)
-        c_in = plt.Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=1.2 if n_rows <= 16 else 1.3, zorder=11)
-        ax1.add_patch(c_out)
-        ax1.add_patch(c_in)
+        # Single red annotation circle (v1.8.6 update)
+        c_circ = plt.Circle((gx, gy), r_rad, edgecolor="red", facecolor="none", lw=1.8 if n_rows <= 16 else 2.0, zorder=10)
+        ax1.add_patch(c_circ)
         ax1.plot(gx, gy, "o", color="red", markeredgecolor="white", markeredgewidth=0.8, markersize=4.5, zorder=12)
         ty = (0.75 if gy < n_rows * 0.55 else -0.75) if n_rows <= 16 else (6.5 if gy < n_rows * 0.55 else -5.5)
         ax1.text(gx, gy + ty, name, color="white", fontsize=label_fontsize, fontweight="bold",
@@ -1196,10 +1195,9 @@ def render_single_plantar_figure(
     ax2.tick_params(colors="black", labelsize=9)
 
     for name, gx, gy, r_rad in mapped_rois:
-        c_out = plt.Circle((gx, gy), r_rad, edgecolor="red", facecolor="none", lw=1.8 if n_rows <= 16 else 2.0, zorder=10)
-        c_in = plt.Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=1.0, linestyle=":", zorder=11)
-        ax2.add_patch(c_out)
-        ax2.add_patch(c_in)
+        # Single red annotation circle (v1.8.6 update)
+        c_circ = plt.Circle((gx, gy), r_rad, edgecolor="red", facecolor="none", lw=1.8 if n_rows <= 16 else 2.0, zorder=10)
+        ax2.add_patch(c_circ)
         ax2.plot(gx, gy, "o", color="red", markersize=4.5, zorder=12)
         ty = (0.75 if gy < n_rows * 0.55 else -0.75) if n_rows <= 16 else (6.5 if gy < n_rows * 0.55 else -5.5)
         ax2.text(gx, gy + ty, name, color="black", fontsize=label_fontsize, fontweight="bold", ha="center", va="center", zorder=15)

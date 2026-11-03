@@ -1792,19 +1792,12 @@ export async function generateFullGradientQuiverContourCanvas(resOrMatrix, W = 3
       return;
     }
 
-    // Double red concentric rings (Panel B style)
-    ctx.strokeStyle = '#e60000';
+    // Single red annotation circle (v1.8.6 update)
+    ctx.strokeStyle = '#ef4444';
     ctx.lineWidth = 2.0;
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, 2 * Math.PI);
     ctx.stroke();
-
-    ctx.lineWidth = 1.0;
-    ctx.setLineDash([2, 2]);
-    ctx.beginPath();
-    ctx.arc(cx, cy, r * 0.85, 0, 2 * Math.PI);
-    ctx.stroke();
-    ctx.setLineDash([]);
 
     // Center red dot
     ctx.fillStyle = '#e60000';
@@ -2627,16 +2620,11 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     const ry = panelTop + (m.gy - 0.5) * cellH;
     const radPx = Math.max(14, (m.rFinal || 1.0) * cellW);
 
-    ctx.strokeStyle = '#00e5ff';
-    ctx.lineWidth = isCoarse ? 3 : 5;
+    // Single Red Annotation Circle (v1.8.6 update)
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = isCoarse ? 3 : 4;
     ctx.beginPath();
     ctx.arc(rx, ry, radPx, 0, Math.PI * 2);
-    ctx.stroke();
-
-    ctx.strokeStyle = '#ff0000';
-    ctx.lineWidth = isCoarse ? 2 : 3;
-    ctx.beginPath();
-    ctx.arc(rx, ry, radPx * 0.82, 0, Math.PI * 2);
     ctx.stroke();
 
     ctx.fillStyle = '#ffffff';
@@ -2797,18 +2785,12 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
     const ry = panelTop + (m.gy - 0.5) * cellH;
     const radPx = Math.max(14, (m.rFinal || 1.0) * cellW);
 
-    ctx.strokeStyle = '#ff0000';
-    ctx.lineWidth = isCoarse ? 3 : 5;
+    // Single Red Annotation Circle (v1.8.6 update)
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = isCoarse ? 3 : 4;
     ctx.beginPath();
     ctx.arc(rx, ry, radPx, 0, Math.PI * 2);
     ctx.stroke();
-
-    ctx.setLineDash([4, 4]);
-    ctx.lineWidth = isCoarse ? 1.8 : 2.5;
-    ctx.beginPath();
-    ctx.arc(rx, ry, radPx * 0.82, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
 
     ctx.fillStyle = '#ff0000';
     ctx.beginPath();

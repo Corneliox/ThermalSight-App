@@ -1,5 +1,5 @@
 """
-ThermalSight PPG & PGA Interactive Workbench (v1.8.5)
+ThermalSight PPG & PGA Interactive Workbench (v1.8.6)
 Standalone companion tool for:
 1. Multi-image session carousel (Next / Prev / Dropdown navigation)
 2. Interactive foot mask paint & erase brush
@@ -609,7 +609,7 @@ def enhance_excel_workbook(excel_path: Path):
         # Subtitle
         ws_guide.merge_cells("A2:G2")
         sub_cell = ws_guide["A2"]
-        sub_cell.value = "ThermalSight v1.8.5 • Diabetic Foot Thermal Biomechanics Evaluation Suite"
+        sub_cell.value = "ThermalSight v1.8.6 • Diabetic Foot Thermal Biomechanics Evaluation Suite"
         sub_cell.fill = PatternFill(start_color="312E81", end_color="312E81", fill_type="solid")
         sub_cell.font = Font(name="Calibri", size=11, italic=True, color="E0E7FF")
         sub_cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -804,7 +804,7 @@ def enhance_cohort_workbook(excel_path: Path, cohort_name: str, total_protocols:
             ws_guide.column_dimensions['B'].width = 30
             ws_guide.column_dimensions['C'].width = 80
 
-            ws_guide.cell(row=1, column=2, value="PANDUAN INTERPRETASI HASIL KOHOR MULTI-PROTOKOL (ThermalSight v1.8.5)").font = Font(name="Calibri", size=14, bold=True, color="312E81")
+            ws_guide.cell(row=1, column=2, value="PANDUAN INTERPRETASI HASIL KOHOR MULTI-PROTOKOL (ThermalSight v1.8.6)").font = Font(name="Calibri", size=14, bold=True, color="312E81")
             guide_rows = [
                 ("Prinsip Kohor", f"Folder kohor '{cohort_name}' memuat {total_protocols} protokol eksperimen independen."),
                 ("Isolasi Data", "Setiap protokol dievaluasi secara terpisah pada masing-masing subfolder '_result'. Nilai rata-rata (mean), min, max, dan deviasi standar dihitung murni dalam protokol masing-masing tanpa pencampuran."),
@@ -831,12 +831,12 @@ class PPGWorkbenchApp:
     def __init__(self, root, session_arg=None, image_arg=None, cohort_arg=None, silent_mode=False):
         self.root = root
         self.silent_mode = silent_mode
-        self.root.title("ThermalSight — PPG & PGA Interactive Research Workbench v1.8.5")
+        self.root.title("ThermalSight — PPG & PGA Interactive Research Workbench v1.8.6")
         self.root.geometry("1560x960")
         self.root.minsize(1220, 780)
         self.root.configure(bg="#F1F5F9")
 
-        # Multi-Protocol Cohort Hierarchy State (v1.8.5)
+        # Multi-Protocol Cohort Hierarchy State (v1.8.6)
         self.cohort_info = None
         self.current_protocol_idx = 0
 
@@ -931,7 +931,7 @@ class PPGWorkbenchApp:
         title_lbl = tk.Label(top_bar, text="ThermalSight PPG & PGA Workbench", font=("Arial", 15, "bold"), fg="#FFFFFF", bg="#0F172A")
         title_lbl.pack(side=tk.LEFT, padx=18, pady=10)
 
-        sub_lbl = tk.Label(top_bar, text="v1.8.5 Ground-Truth Annotation & Topography Lab", font=("Arial", 10), fg="#94A3B8", bg="#0F172A")
+        sub_lbl = tk.Label(top_bar, text="v1.8.6 Ground-Truth Annotation & Topography Lab", font=("Arial", 10), fg="#94A3B8", bg="#0F172A")
         sub_lbl.pack(side=tk.LEFT, padx=5, pady=13)
 
         btn_open_json = tk.Button(top_bar, text="📋 Load Session JSON", font=("Arial", 9, "bold"), bg="#334155", fg="white",
@@ -1572,7 +1572,7 @@ class PPGWorkbenchApp:
                 self._direct_load_json(str(sess_json))
             else:
                 self.session_json_path = None
-                self.session_data = {"version": "1.8.5", "folderPath": str(p), "segmentations": {}, "foot_masks": {}}
+                self.session_data = {"version": "1.8.6", "folderPath": str(p), "segmentations": {}, "foot_masks": {}}
                 self.image_list = imgs
                 self.current_img_idx = 0
                 self.combo_images['values'] = [Path(x).name for x in self.image_list]
@@ -1661,7 +1661,7 @@ class PPGWorkbenchApp:
         elif proto['images']:
             self.session_json_path = None
             self.session_data = {
-                "version": "1.8.5",
+                "version": "1.8.6",
                 "folderPath": str(proto['folder'].resolve()),
                 "segmentations": {},
                 "foot_masks": {}
@@ -2428,22 +2428,18 @@ class PPGWorkbenchApp:
             c_color = "#F59E0B" if is_sel else "red"
             ring_color = "#FBBF24" if is_sel else "#00e5ff"
 
-            # On Panel A
-            c_out_a = Circle((gx, gy), r_rad, edgecolor=ring_color, facecolor="none", lw=2.0 if is_sel else 1.8, zorder=10)
-            c_in_a = Circle((gx, gy), r_rad * 0.82, edgecolor=c_color, facecolor="none", lw=1.2, zorder=11)
-            self.ax1.add_patch(c_out_a)
-            self.ax1.add_patch(c_in_a)
+            # On Panel A: Single Annotation Circle in Red (v1.8.6 update)
+            c_a = Circle((gx, gy), r_rad, edgecolor=c_color, facecolor="none", lw=2.0 if is_sel else 1.8, zorder=10)
+            self.ax1.add_patch(c_a)
             self.ax1.plot(gx, gy, "o", color=c_color, markeredgecolor="white", markeredgewidth=1.0, markersize=5.0 if is_sel else 4.0, zorder=12)
             ty_a = 5.5 if gy < self.n_rows * 0.55 else -4.5
             self.ax1.text(gx, gy + ty_a, name, color="white", fontsize=12, fontweight="bold",
                           ha="center", va="center", zorder=15,
                           bbox=dict(boxstyle="round,pad=0.15", facecolor="#000000", alpha=0.65, edgecolor="none"))
 
-            # On Panel B
-            c_out_b = Circle((gx, gy), r_rad, edgecolor=c_color, facecolor="none", lw=1.8 if is_sel else 1.6, zorder=10)
-            c_in_b = Circle((gx, gy), r_rad * 0.82, edgecolor=c_color, facecolor="none", lw=0.9, linestyle=":", zorder=11)
-            self.ax2.add_patch(c_out_b)
-            self.ax2.add_patch(c_in_b)
+            # On Panel B: Single Annotation Circle in Red (v1.8.6 update)
+            c_b = Circle((gx, gy), r_rad, edgecolor=c_color, facecolor="none", lw=2.0 if is_sel else 1.8, zorder=10)
+            self.ax2.add_patch(c_b)
             self.ax2.plot(gx, gy, "o", color=c_color, markersize=4.2 if is_sel else 3.8, zorder=12)
             ty_b = 5.5 if gy < self.n_rows * 0.55 else -4.5
             self.ax2.text(gx, gy + ty_b, name, color="black", fontsize=12, fontweight="bold", ha="center", va="center", zorder=15)
@@ -3082,15 +3078,15 @@ class PPGWorkbenchApp:
                 for name, gx, gy, r_rad in mapped_rois:
                     if not self.is_label_visible(name):
                         continue
-                    fax1.add_patch(Circle((gx, gy), r_rad, edgecolor="#00e5ff", facecolor="none", lw=1.8, zorder=10))
-                    fax1.add_patch(Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=1.2, zorder=11))
+                    # Single Red Annotation Circle (v1.8.6 update)
+                    fax1.add_patch(Circle((gx, gy), r_rad, edgecolor="red", facecolor="none", lw=1.8, zorder=10))
                     fax1.plot(gx, gy, "o", color="red", markeredgecolor="white", markeredgewidth=0.8, markersize=4.0, zorder=12)
                     ty1 = 5.5 if gy < n_rows * 0.55 else -4.5
                     fax1.text(gx, gy + ty1, name, color="white", fontsize=11, fontweight="bold", ha="center", va="center", zorder=15,
                               bbox=dict(boxstyle="round,pad=0.15", facecolor="#000000", alpha=0.65, edgecolor="none"))
 
-                    fax2.add_patch(Circle((gx, gy), r_rad, edgecolor="red", facecolor="none", lw=1.6, zorder=10))
-                    fax2.add_patch(Circle((gx, gy), r_rad * 0.82, edgecolor="red", facecolor="none", lw=0.9, linestyle=":", zorder=11) )
+                    # Single Red Annotation Circle (v1.8.6 update)
+                    fax2.add_patch(Circle((gx, gy), r_rad, edgecolor="red", facecolor="none", lw=1.8, zorder=10))
                     fax2.plot(gx, gy, "o", color="red", markersize=3.8, zorder=12)
                     ty2 = 5.5 if gy < n_rows * 0.55 else -4.5
                     fax2.text(gx, gy + ty2, name, color="black", fontsize=11, fontweight="bold", ha="center", va="center", zorder=15)
