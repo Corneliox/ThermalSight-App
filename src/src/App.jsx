@@ -3440,7 +3440,7 @@ export default function App() {
               {/* DYNAMIC RADIUS INHERITANCE / MODE STATUS HINT WITH 9-GRID FALLBACK */}
               {drawMode === 'circle' ? (
                 <div className="radius-sync-controls" style={{ marginBottom: '10px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
                     <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text0)' }}>
                       🔒 Radius: <strong style={{ color: 'var(--cyan)' }}>{circleRadiusCm.toFixed(2)} cm</strong> ({Math.round(activeRefRadius)} px)
                     </span>
@@ -3449,12 +3449,21 @@ export default function App() {
                       <button className="btn-secondary btn-tiny" onClick={() => adjustCircleRadiusPercent(0.05)} title="Increase radius 5%">+</button>
                     </div>
                   </div>
+                  {/* DIAMETER DISPLAY RIGHT BELOW RADIUS */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', background: 'rgba(167, 139, 250, 0.08)', padding: '4px 8px', borderRadius: '4px', border: '1px solid rgba(167, 139, 250, 0.25)' }}>
+                    <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text0)' }}>
+                      ⌀ Diameter: <strong style={{ color: '#a78bfa' }}>{(circleRadiusCm * 2).toFixed(2)} cm</strong> ({Math.round(activeRefRadius * 2)} px)
+                    </span>
+                    <span style={{ fontSize: '10px', color: '#a78bfa', fontWeight: '600' }}>
+                      (2× Radius)
+                    </span>
+                  </div>
                   <div style={{ display: 'flex', gap: '4px' }}>
                     <button
                       className="btn-secondary btn-tiny"
                       style={{ flex: 1, fontSize: '10px', padding: '3px 4px' }}
                       onClick={fitCircleTo1GridCell}
-                      title="Fallback: Fit circle to 1 grid cell (0.25 cm radius)"
+                      title="Fallback: Fit circle to 1 grid cell (0.25 cm radius / 0.50 cm diameter)"
                     >
                       ⊞ 1-Cell Grid
                     </button>
@@ -3462,7 +3471,7 @@ export default function App() {
                       className="btn-secondary btn-tiny"
                       style={{ flex: 1, fontSize: '10px', padding: '3px 4px' }}
                       onClick={fitCircleTo9GridBlock}
-                      title="Fallback: Fit circle to 3x3 block in 9-Grid (0.75 cm radius)"
+                      title="Fallback: Fit circle to 3x3 block in 9-Grid (0.75 cm radius / 1.50 cm diameter)"
                     >
                       ⊞ 9-Grid (3×3)
                     </button>
@@ -3544,6 +3553,12 @@ export default function App() {
                           </div>
                           <button className="btn-ghost btn-tiny" onClick={() => deleteRoi(activeImagePath, roi.id)}>🗑</button>
                         </div>
+                        {roi.radius !== undefined && (
+                          <div style={{ fontSize: '10px', color: 'var(--text1)', marginTop: '2px', display: 'flex', gap: '8px', paddingLeft: '14px' }}>
+                            <span>Radius: <strong style={{ color: 'var(--cyan)' }}>{(roi.radius_cm || (activePxPerCm ? (roi.radius / activePxPerCm) : (roi.radius * 0.1))).toFixed(2)} cm</strong></span>
+                            <span>Diameter: <strong style={{ color: '#a78bfa' }}>{((roi.radius_cm || (activePxPerCm ? (roi.radius / activePxPerCm) : (roi.radius * 0.1))) * 2).toFixed(2)} cm</strong></span>
+                          </div>
+                        )}
                         {star && (
                           <div style={{ fontSize: '10px', color: 'var(--text2)', marginTop: '4px', background: 'var(--bg0)', padding: '4px 6px', borderRadius: '4px', border: '1px solid var(--border)' }}>
                             <div>Gradient Max: <strong style={{ color: 'var(--accent2)' }}>{star.gradient_max.toFixed(2)} °C/cm</strong></div>

@@ -1205,7 +1205,10 @@ class PPGWorkbenchApp:
         lbl_bsize.pack(anchor="w", pady=(6, 0))
         self.scale_brush_size = tk.Scale(box_mode, from_=1.0, to_=12.0, resolution=0.5, orient=tk.HORIZONTAL, bg="#F8FAFC", highlightthickness=0)
         self.scale_brush_size.set(3.5)
-        self.scale_brush_size.pack(fill=tk.X, pady=(0, 6))
+        self.scale_brush_size.pack(fill=tk.X, pady=(0, 2))
+        self.lbl_bdiam = tk.Label(box_mode, text="Brush Diameter: 7.0 Cells (2× Radius)", font=("Arial", 8, "bold"), fg="#7C3AED", bg="#F8FAFC")
+        self.lbl_bdiam.pack(anchor="w", pady=(0, 6))
+        self.scale_brush_size.config(command=lambda val: self.lbl_bdiam.config(text=f"Brush Diameter: {float(val)*2:.1f} Cells (2× Radius)"))
 
         frame_brush_btns = tk.Frame(box_mode, bg="#F8FAFC")
         frame_brush_btns.pack(fill=tk.X)
