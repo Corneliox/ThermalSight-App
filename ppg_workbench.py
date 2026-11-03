@@ -1300,6 +1300,20 @@ class PPGWorkbenchApp:
         self.combo_cmap.bind("<<ComboboxSelected>>", lambda e: self.update_plot())
         self.combo_cmap.pack(fill=tk.X, padx=14, pady=(0, 8))
 
+        # 5. PLANTAR GRID STANDARD
+        section_header("5. Plantar Grid Standard")
+        self.var_grid_layout = tk.StringVar(value="fscan_21x60")
+        r_fscan = tk.Radiobutton(p, text="F-Scan Sensel (21x60, 5.08 mm) [Approved]",
+                                 variable=self.var_grid_layout, value="fscan_21x60",
+                                 font=("Arial", 8, "bold"), fg="#0284C7", bg="#FFFFFF", activebackground="#FFFFFF",
+                                 command=self.on_grid_layout_change)
+        r_fscan.pack(anchor="w", padx=14)
+        r_dense = tk.Radiobutton(p, text="Dense Full Scale Grid (104 Rows)",
+                                 variable=self.var_grid_layout, value="dense_104",
+                                 font=("Arial", 8), bg="#FFFFFF", activebackground="#FFFFFF",
+                                 command=self.on_grid_layout_change)
+        r_dense.pack(anchor="w", padx=14, pady=(0, 4))
+
         # 6. QUIVER VECTOR FLOW
         section_header("6. Quiver Vector Field (1:1 Grid)")
         self.var_step = tk.IntVar(value=1)  # User preferred: Step 1 (1:1 Full Grid)
@@ -1342,6 +1356,11 @@ class PPGWorkbenchApp:
         btn_export_pdf = tk.Button(p, text="📑 Save Vector PDF (Editable)", font=("Arial", 9),
                                    bg="#475569", fg="white", relief="flat", padx=10, pady=5, command=self.export_pdf)
         btn_export_pdf.pack(fill=tk.X, padx=14, pady=(0, 16))
+
+    def on_grid_layout_change(self):
+        if self.foot_crop is not None:
+            self._setup_foot_crop_and_grid()
+            self.update_plot()
 
     def on_tool_mode_change(self):
         mode = self.tool_mode.get()
@@ -2186,8 +2205,12 @@ class PPGWorkbenchApp:
 
         self.ch, self.cw = self.foot_crop.shape
         aspect = float(self.cw) / float(max(1, self.ch))
-        self.n_rows = 104
-        self.n_cols = max(20, int(round(self.n_rows * aspect)))
+        if getattr(self, "var_grid_layout", None) and self.var_grid_layout.get() == "fscan_21x60":
+            self.n_rows = 60
+            self.n_cols = 21
+        else:
+            self.n_rows = 104
+            self.n_cols = max(20, int(round(104 * aspect)))
 
         self.mask_crop_u8 = self.mask_crop.astype(np.uint8)
         self.mask_history = [self.mask_crop_u8.copy()]
@@ -2441,19 +2464,30 @@ class PPGWorkbenchApp:
             c_color = "#F59E0B" if is_sel else "red"
             ring_color = "#FBBF24" if is_sel else "#00e5ff"
 
-            # On Panel A: F-Scan Harmonized 9x9 Square Box (2.54 cm x 2.54 cm) & Inscribed Circle
-            box_side = 9.0
+            is_fscan = (getattr(self, "var_grid_layout", None) and self.var_grid_layout.get() == "fscan_21x60")
+            box_side = 3.0 if is_fscan else 9.0
+            r_in = 1.5 if is_fscan else (r_rad * 0.82)
+            r_out = 1.85 if is_fscan else r_rad
+
+            # On Panel A: Sensel Grid Box & Concentric Circles
+            box_edge_a = "#111827" if is_fscan else "#38bdf8"
             rect_a = Rectangle((gx - box_side / 2.0, gy - box_side / 2.0), box_side, box_side,
-                               edgecolor="#38bdf8", facecolor="none", lw=1.5 if is_sel else 1.1,
-                               linestyle="--", zorder=9)
+                               edgecolor="#F59E0B" if is_sel else box_edge_a, facecolor="none",
+                               lw=1.5 if is_sel else (1.3 if is_fscan else 1.1),
+                               linestyle="-" if is_fscan else "--", zorder=9)
             self.ax1.add_patch(rect_a)
 
-            if is_macro:
+            if is_fscan:
+                for delta in [-0.5, 0.5]:
+                    self.ax1.plot([gx + delta, gx + delta], [gy - 1.5, gy + 1.5], color="black", lw=0.6, zorder=9)
+                    self.ax1.plot([gx - 1.5, gx + 1.5], [gy + delta, gy + delta], color="black", lw=0.6, zorder=9)
+            elif is_macro:
                 for delta in [-1.5, 1.5]:
                     self.ax1.plot([gx + delta, gx + delta], [gy - 4.5, gy + 4.5], color="#38bdf8", lw=0.7, linestyle=":", alpha=0.7, zorder=8)
                     self.ax1.plot([gx - 4.5, gx + 4.5], [gy + delta, gy + delta], color="#38bdf8", lw=0.7, linestyle=":", alpha=0.7, zorder=8)
-            c_out_a = Circle((gx, gy), r_rad, edgecolor=ring_color, facecolor="none", lw=2.0 if is_sel else 1.8, zorder=10)
-            c_in_a = Circle((gx, gy), r_rad * 0.82, edgecolor=c_color, facecolor="none", lw=1.2, zorder=11)
+
+            c_out_a = Circle((gx, gy), r_out, edgecolor="#FBBF24" if is_sel else ("white" if is_fscan else ring_color), facecolor="none", lw=1.3 if is_fscan else (2.0 if is_sel else 1.8), zorder=11 if is_fscan else 10)
+            c_in_a = Circle((gx, gy), r_in, edgecolor="#F59E0B" if is_sel else ("red" if is_fscan else c_color), facecolor="none", lw=1.8 if is_fscan else 1.2, zorder=10 if is_fscan else 11)
             self.ax1.add_patch(c_out_a)
             self.ax1.add_patch(c_in_a)
             self.ax1.plot(gx, gy, "o", color=c_color, markeredgecolor="white", markeredgewidth=1.0, markersize=5.0 if is_sel else 4.0, zorder=12)
@@ -2462,11 +2496,17 @@ class PPGWorkbenchApp:
                           ha="center", va="center", zorder=15,
                           bbox=dict(boxstyle="round,pad=0.15", facecolor="#000000", alpha=0.65, edgecolor="none"))
 
-            # On Panel B: F-Scan Harmonized 9x9 Square Box
+            # On Panel B: Sensel Grid Box & Concentric Circles
+            box_edge_b = "#0284c7"
             rect_b = Rectangle((gx - box_side / 2.0, gy - box_side / 2.0), box_side, box_side,
-                               edgecolor="#0284c7", facecolor="none", lw=1.5 if is_sel else 1.1,
-                               linestyle="--", zorder=9)
+                               edgecolor="#F59E0B" if is_sel else box_edge_b, facecolor="none",
+                               lw=1.5 if is_sel else (1.3 if is_fscan else 1.1),
+                               linestyle="-" if is_fscan else "--", zorder=9)
             self.ax2.add_patch(rect_b)
+            if is_fscan:
+                for delta in [-0.5, 0.5]:
+                    self.ax2.plot([gx + delta, gx + delta], [gy - 1.5, gy + 1.5], color="#0284c7", lw=0.6, linestyle=":", alpha=0.7, zorder=9)
+                    self.ax2.plot([gx - 1.5, gx + 1.5], [gy + delta, gy + delta], color="#0284c7", lw=0.6, linestyle=":", alpha=0.7, zorder=9)
 
             if is_macro:
                 for delta in [-1.5, 1.5]:
@@ -2512,8 +2552,8 @@ class PPGWorkbenchApp:
                 self.ax2.quiver(m_xs[valid_m], m_ys[valid_m], u_p_m[valid_m], v_p_m[valid_m],
                                 color="#0b4db7", angles="xy", scale_units="xy", scale=1.0,
                                 width=0.0052, headwidth=3.6, headlength=4.2, alpha=1.0, zorder=12)
-            c_out_b = Circle((gx, gy), r_rad, edgecolor=c_color, facecolor="none", lw=1.8 if is_sel else 1.6, zorder=10)
-            c_in_b = Circle((gx, gy), r_rad * 0.82, edgecolor=c_color, facecolor="none", lw=0.9, linestyle=":", zorder=11)
+            c_out_b = Circle((gx, gy), r_out, edgecolor="#FBBF24" if is_sel else ("red" if is_fscan else c_color), facecolor="none", lw=1.3 if is_fscan else (1.8 if is_sel else 1.6), zorder=10)
+            c_in_b = Circle((gx, gy), r_in, edgecolor="#F59E0B" if is_sel else ("red" if is_fscan else c_color), facecolor="none", lw=1.8 if is_fscan else 0.9, linestyle="-" if is_fscan else ":", zorder=11)
             self.ax2.add_patch(c_out_b)
             self.ax2.add_patch(c_in_b)
             self.ax2.plot(gx, gy, "o", color=c_color, markersize=4.2 if is_sel else 3.8, zorder=12)
@@ -2581,7 +2621,8 @@ class PPGWorkbenchApp:
             rcy = raw_cy - self.ymin
             gx = (rcx / self.cw) * self.n_cols + 0.5
             gy = (rcy / self.ch) * self.n_rows + 0.5
-            r_final = 4.5
+            is_fscan = (getattr(self, "var_grid_layout", None) and self.var_grid_layout.get() == "fscan_21x60")
+            r_final = 1.5 if is_fscan else 4.5
             mapped.append((name, gx, gy, r_final, r))
 
         return mapped
@@ -2954,8 +2995,13 @@ class PPGWorkbenchApp:
 
                 ch, cw = foot_crop.shape
                 aspect = float(cw) / float(max(1, ch))
-                n_rows = 104
-                n_cols = max(20, int(round(n_rows * aspect)))
+                is_fscan = (getattr(self, "var_grid_layout", None) and self.var_grid_layout.get() == "fscan_21x60")
+                if is_fscan:
+                    n_rows = 60
+                    n_cols = 21
+                else:
+                    n_rows = 104
+                    n_cols = max(20, int(round(n_rows * aspect)))
 
                 # Inpaint & Gradients (BUG-1.2: strictly preserve float32 inside foot mask)
                 mask_dense = cv2.resize(mask_crop_u8, (n_cols, n_rows), interpolation=cv2.INTER_NEAREST).astype(bool)
@@ -3021,11 +3067,12 @@ class PPGWorkbenchApp:
                     cx_idx = int(np.clip(round(gx - 0.5), 0, n_cols - 1))
                     cy_idx = int(np.clip(round(gy - 0.5), 0, n_rows - 1))
 
-                    # 9x9 box bounds: +/- 4 cells
-                    gx_min = max(0, cx_idx - 4)
-                    gx_max = min(n_cols, cx_idx + 5)
-                    gy_min = max(0, cy_idx - 4)
-                    gy_max = min(n_rows, cy_idx + 5)
+                    # Sensel ROI bounds: 3x3 cells if 60 rows, 9x9 cells if 104 rows
+                    cell_half = 1 if (n_rows == 60) else 4
+                    gx_min = max(0, cx_idx - cell_half)
+                    gx_max = min(n_cols, cx_idx + cell_half + 1)
+                    gy_min = max(0, cy_idx - cell_half)
+                    gy_max = min(n_rows, cy_idx + cell_half + 1)
 
                     patch_temps = grid_smooth[gy_min:gy_max, gx_min:gx_max]
                     patch_mags = grad_mag[gy_min:gy_max, gx_min:gx_max]
@@ -3183,9 +3230,9 @@ class PPGWorkbenchApp:
                                 x_max_c = min(n_cols, int(round(cx_cell + 1.5)))
                                 y_min_c = max(0, int(round(cy_cell - 1.5)))
                                 y_max_c = min(n_rows, int(round(cy_cell + 1.5)))
-                                u_b = self.sobel_x[y_min_c:y_max_c, x_min_c:x_max_c]
-                                v_b = self.sobel_y[y_min_c:y_max_c, x_min_c:x_max_c]
-                                m_b = self.grad_mag[y_min_c:y_max_c, x_min_c:x_max_c]
+                                u_b = sobel_x[y_min_c:y_max_c, x_min_c:x_max_c]
+                                v_b = sobel_y[y_min_c:y_max_c, x_min_c:x_max_c]
+                                m_b = grad_mag[y_min_c:y_max_c, x_min_c:x_max_c]
                                 avg_u = float(np.mean(u_b)) if u_b.size > 0 else 0.0
                                 avg_v = float(np.mean(v_b)) if v_b.size > 0 else 0.0
                                 macro_xs.append(cx_cell)
@@ -3217,6 +3264,22 @@ class PPGWorkbenchApp:
                 fig_path = result_dir / f"Fig1_PPGPGA_{stem}.png"
                 fig_out.savefig(str(fig_path), dpi=300, bbox_inches="tight", facecolor="white")
                 plt.close(fig_out)
+
+                # Batch Export F-Scan Hardware Matched Sensel Matrix (5.08 mm, 21x60)
+                try:
+                    from backend.analyzer import render_fscan_sensel_21x60_figure
+                    fscan_fig_path = result_dir / f"Fig1_FScan_Sensel_Matched_{stem}.png"
+                    render_fscan_sensel_21x60_figure(
+                        fscan_fig_path,
+                        foot_crop,
+                        mask_crop_u8 > 0,
+                        rois,
+                        xmin,
+                        ymin,
+                        foot_side=foot_side
+                    )
+                except Exception as ex_fscan:
+                    print(f"Warning: could not render F-Scan sensel figure for {stem}: {ex_fscan}")
 
             except Exception as e:
                 print(f"Error processing {stem}: {e}")
