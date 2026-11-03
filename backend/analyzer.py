@@ -1287,6 +1287,193 @@ def render_single_plantar_figure(
 
 
 
+
+def render_fscan_sensel_21x60_figure(
+    out_png: Path,
+    foot_crop: np.ndarray,
+    mask_crop: np.ndarray,
+    rois: list,
+    xmin: int,
+    ymin: int,
+    foot_side: str = "RightFoot",
+):
+    """
+    Renders 100% faithful replication of the F-Scan Hardware Sensel Matrix Figure (21 cols x 60 rows, 5.08 mm pitch)
+    matching the reference paper figure with 3x3 sensel ROI boxes and double concentric circles.
+    """
+    ch, cw = foot_crop.shape
+    is_right = (foot_side == "RightFoot")
+
+    # In F-Scan right foot insole standard, Medial border (T1, M1) is on the left (cols 4-8), Lateral on right
+    foot_crop_disp = cv2.flip(foot_crop, 1) if is_right else foot_crop.copy()
+    mask_crop_disp = cv2.flip(mask_crop.astype(np.uint8), 1).astype(bool) if is_right else mask_crop.copy()
+
+    n_cols = 21
+    n_rows = 60
+    foot_sensel_h = 47
+    foot_sensel_w = 15
+    top_offset = 8
+    left_offset = 3
+
+    foot_resampled = cv2.resize(foot_crop_disp, (foot_sensel_w, foot_sensel_h), interpolation=cv2.INTER_AREA)
+    mask_resampled = cv2.resize(mask_crop_disp.astype(np.uint8), (foot_sensel_w, foot_sensel_h), interpolation=cv2.INTER_NEAREST).astype(bool)
+
+    grid_60x21 = np.full((n_rows, n_cols), 23.5, dtype=np.float32)
+    mask_60x21 = np.zeros((n_rows, n_cols), dtype=bool)
+
+    grid_60x21[top_offset:top_offset+foot_sensel_h, left_offset:left_offset+foot_sensel_w] = foot_resampled
+    mask_60x21[top_offset:top_offset+foot_sensel_h, left_offset:left_offset+foot_sensel_w] = mask_resampled
+
+    # Map ROIs
+    mapped_rois = []
+    for r in rois:
+        name = str(r.get("labelName", "ROI")).upper()
+        rx = float(r.get("cx", 0)) - xmin
+        ry = float(r.get("cy", 0)) - ymin
+        rx_calc = (cw - rx) if is_right else rx
+
+        gx = left_offset + (rx_calc / max(1.0, float(cw - 1))) * float(foot_sensel_w - 1)
+        gy = top_offset + (ry / max(1.0, float(ch - 1))) * float(foot_sensel_h - 1)
+        mapped_rois.append((name, int(round(gx)), int(round(gy))))
+
+    # Check Heel (HL)
+    if not any(m[0] == "HL" for m in mapped_rois):
+        hl_ys, hl_xs = np.where(mask_60x21)
+        heel_pts = hl_ys > 46
+        if np.any(heel_pts):
+            hl_gx = float(np.mean(hl_xs[heel_pts]))
+            hl_gy = float(np.mean(hl_ys[heel_pts]))
+            mapped_rois.append(("HL", int(round(hl_gx)), int(round(hl_gy))))
+
+    # Gradients on 5.08 mm sensel spacing
+    sobel_x = cv2.Sobel(grid_60x21, cv2.CV_64F, 1, 0, ksize=3) / (8.0 * 0.508)
+    sobel_y = cv2.Sobel(grid_60x21, cv2.CV_64F, 0, 1, ksize=3) / (8.0 * 0.508)
+    grad_mag = np.sqrt(sobel_x**2 + sobel_y**2)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8.0, 12.0), dpi=250, facecolor="white")
+
+    # Panel A: PPP
+    ax1.set_facecolor("#111827")
+    x_edges = np.arange(0.5, n_cols + 1.5, 1)
+    y_edges = np.arange(0.5, n_rows + 1.5, 1)
+    Xe, Ye = np.meshgrid(x_edges, y_edges)
+
+    colors = [
+        (0.00, "#0f172a"),
+        (0.15, "#1e3a8a"),
+        (0.35, "#0284c7"),
+        (0.55, "#10b981"),
+        (0.72, "#eab308"),
+        (0.88, "#f97316"),
+        (1.00, "#ef4444")
+    ]
+    cmap_fscan = LinearSegmentedColormap.from_list("fscan_pcolormesh", colors)
+
+    ax1.pcolormesh(Xe, Ye, grid_60x21, cmap=cmap_fscan,
+                   vmin=23.8, vmax=np.max(grid_60x21),
+                   edgecolors="#1e2238", linewidth=0.35, shading="flat")
+
+    ax1.set_xlim(0.5, n_cols + 0.5)
+    ax1.set_ylim(n_rows + 0.5, 0.5)
+    ax1.set_aspect("equal")
+    ax1.set_xticks(range(5, n_cols + 1, 5))
+    ax1.set_yticks(range(5, n_rows + 1, 5))
+    ax1.tick_params(colors="black", labelsize=9)
+
+    for name, gx, gy in mapped_rois:
+        # 3x3 Sensel Square Box (3 sensels = 15.24 mm)
+        box_rect = plt.Rectangle((gx - 1.5, gy - 1.5), 3.0, 3.0,
+                                 edgecolor="black", facecolor="none", lw=1.3, zorder=9)
+        ax1.add_patch(box_rect)
+        for d in [-0.5, 0.5]:
+            ax1.plot([gx + d, gx + d], [gy - 1.5, gy + 1.5], color="black", lw=0.6, zorder=9)
+            ax1.plot([gx - 1.5, gx + 1.5], [gy + d, gy + d], color="black", lw=0.6, zorder=9)
+
+        c_in = plt.Circle((gx, gy), 1.5, edgecolor="red", facecolor="none", lw=1.8, zorder=10)
+        c_out = plt.Circle((gx, gy), 1.85, edgecolor="white", facecolor="none", lw=1.2, zorder=11)
+        ax1.add_patch(c_in)
+        ax1.add_patch(c_out)
+        ax1.plot(gx, gy, "o", color="red", markeredgecolor="white", markeredgewidth=0.8, markersize=3.8, zorder=12)
+
+        if name == "T1":
+            tx, ty, ha, va = gx, gy - 2.8, "center", "bottom"
+        elif name == "M1":
+            tx, ty, ha, va = gx - 0.2, gy + 3.2, "center", "top"
+        elif name == "M2":
+            tx, ty, ha, va = gx + 0.2, gy + 3.2, "center", "top"
+        elif name == "HL":
+            tx, ty, ha, va = gx + 4.2, gy + 0.5, "left", "center"
+        else:
+            tx, ty, ha, va = gx, gy - 2.8, "center", "bottom"
+
+        ax1.text(tx, ty, name, color="white", fontsize=16, fontweight="bold", ha=ha, va=va, zorder=15)
+
+    ax1.set_title("(A)\n\nPPP", fontsize=17, fontweight="bold", pad=12)
+
+    # Panel B: PPG & PGA
+    ax2.set_facecolor("white")
+    grid_smooth = cv2.GaussianBlur(grid_60x21, (5, 5), 1.0)
+    grid_contour = grid_smooth.copy()
+    grid_contour[~mask_60x21] = np.nan
+
+    valid_c = grid_contour[np.isfinite(grid_contour)]
+    cmin, cmax = float(np.min(valid_c)), float(np.max(valid_c))
+    levels = np.linspace(cmin + 0.35, cmax, 14)
+    ax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), grid_contour,
+                levels=levels, cmap="turbo", linewidths=0.85, alpha=0.90)
+
+    foot_outline = mask_60x21.astype(np.uint8)
+    ax2.contour(np.arange(1, n_cols + 1), np.arange(1, n_rows + 1), foot_outline,
+                levels=[0.5], colors="#94a3b8", linewidths=0.6, linestyles="--")
+
+    y_q, x_q = np.mgrid[1:n_rows+1:1, 1:n_cols+1:1]
+    u = sobel_x
+    v = sobel_y
+    m = grad_mag
+    foot_active = mask_60x21 & (m >= 0.035)
+
+    nrm = np.sqrt(u**2 + v**2) + 1e-6
+    u_p = (u / nrm) * 0.95
+    v_p = (v / nrm) * 0.95
+
+    ax2.plot(x_q[foot_active], y_q[foot_active], '.', color="#3b82f6", markersize=1.2, alpha=0.5, zorder=6)
+    ax2.quiver(x_q[foot_active], y_q[foot_active], u_p[foot_active], v_p[foot_active],
+               color="#1d4ed8", angles="xy", scale_units="xy", scale=1.0,
+               width=0.0035, headwidth=2.8, headlength=3.4, alpha=0.85, zorder=8)
+
+    for name, gx, gy in mapped_rois:
+        c_in2 = plt.Circle((gx, gy), 1.5, edgecolor="red", facecolor="none", lw=1.8, zorder=10)
+        c_out2 = plt.Circle((gx, gy), 1.85, edgecolor="red", facecolor="none", lw=0.9, linestyle=":", zorder=11)
+        ax2.add_patch(c_in2)
+        ax2.add_patch(c_out2)
+        ax2.plot(gx, gy, "o", color="red", markersize=3.8, zorder=12)
+
+        if name == "T1":
+            tx, ty, ha, va = gx, gy - 2.8, "center", "bottom"
+        elif name == "M1":
+            tx, ty, ha, va = gx - 0.2, gy + 3.2, "center", "top"
+        elif name == "M2":
+            tx, ty, ha, va = gx + 0.2, gy + 3.2, "center", "top"
+        elif name == "HL":
+            tx, ty, ha, va = gx + 4.2, gy + 0.5, "left", "center"
+        else:
+            tx, ty, ha, va = gx, gy - 2.8, "center", "bottom"
+
+        ax2.text(tx, ty, name, color="black", fontsize=16, fontweight="bold", ha=ha, va=va, zorder=15)
+
+    ax2.set_xlim(0.5, n_cols + 0.5)
+    ax2.set_ylim(n_rows + 0.5, 0.5)
+    ax2.set_aspect("equal")
+    ax2.set_xticks(range(5, n_cols + 1, 5))
+    ax2.set_yticks(range(5, n_rows + 1, 5))
+    ax2.tick_params(colors="black", labelsize=9)
+    ax2.set_title("(B)\n\nPPG & PGA", fontsize=17, fontweight="bold", pad=12)
+
+    plt.tight_layout()
+    fig.savefig(str(out_png), bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
 def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid_mode_str: str = "9x9"):
     out_dir = Path(out_dir_str)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1619,6 +1806,15 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         label_fontsize=label_fontsize, show_fscan_box=True, fscan_mode="9x9"
     )
 
+    # 7. [ALPHA] fscan_sensel_21x60: 21x60 Insole Sensel Matrix (5.08 mm Sensels, 3x3 Sensel ROIs)
+    out_png_7 = out_dir / f"{stem}_{foot_side}_7_fscan_sensel_matched.png"
+    try:
+        render_fscan_sensel_21x60_figure(
+            out_png_7, foot_crop, mask_crop, rois, xmin, ymin, foot_side=foot_side
+        )
+    except Exception as e:
+        log(f"  warning: failed to render sensel matched figure: {e}")
+
     # 6. [ALPHA] fscan_macro_3x3: 3x3 Macro-Averaged Pooling per ROI Box (9 pooled vectors, area 3x3 avg)
     out_png_6 = out_dir / f"{stem}_{foot_side}_6_fscan_macro_3x3.png"
     render_single_plantar_figure(
@@ -1643,6 +1839,9 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         shutil.copy2(str(out_png_5), str(out_png))
     elif mode in ["fscan_macro_3x3", "macro_3x3", "3x3_macro", "fscan_3x3", "3x3", "alpha_3x3"]:
         shutil.copy2(str(out_png_6), str(out_png))
+    elif mode in ["fscan_sensel_21x60", "sensel_21x60", "fscan_sensel", "sensel", "hardware_matched", "7_fscan_sensel", "fscan_508mm"]:
+        if out_png_7.exists():
+            shutil.copy2(str(out_png_7), str(out_png))
     elif mode in ["coarse_9x9", "9x9_coarse"]:
         render_single_plantar_figure(
             out_png, grid_dense, grid_disp, grid_contour, mask_dense,
@@ -1665,7 +1864,8 @@ def cmd_plantar_fig1(image_path: str, rois_json_str: str, out_dir_str: str, grid
         "path_3_key_vectors": str(out_png_3),
         "path_4_hairline_dense": str(out_png_4),
         "path_5_fscan_harmonized": str(out_png_5),
-        "path_6_fscan_macro_3x3": str(out_png_6)
+        "path_6_fscan_macro_3x3": str(out_png_6),
+        "path_7_fscan_sensel_matched": str(out_png_7)
     })
 
 

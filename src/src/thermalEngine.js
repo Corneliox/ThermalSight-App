@@ -2348,6 +2348,12 @@ export async function generatePlantarPaperFig1Package(results, W = 320, H = 240,
   } else if (mode === 'fscan_macro_3x3' || mode === 'macro_3x3') {
     titleA = '(A)\n\nPPP (Thermal Intensity)\n[ALPHA] F-Scan 3x3 Macro Frame';
     titleB = '(B)\n\nPPG & PGA (3x3 Pooled Vectors)\nEach Cell = 3x3 Avg (8.47 mm Block)';
+  } else if (mode === 'fscan_sensel_21x60' || mode === 'sensel_21x60' || mode === 'hardware_matched') {
+    titleA = '(A)\n\nPPP';
+    titleB = '(B)\n\nPPG & PGA';
+    nRows = 60;
+    nCols = 21;
+    isCoarse = true;
   } else if (mode === 'legacy' || mode === 'paper_fixed') {
     nRows = 104;
     nCols = 54;
